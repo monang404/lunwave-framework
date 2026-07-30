@@ -17,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 lunawave-doctor = "lunawave_framework.automation.doctor:main"
+lunawave = "lunawave_framework.cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
