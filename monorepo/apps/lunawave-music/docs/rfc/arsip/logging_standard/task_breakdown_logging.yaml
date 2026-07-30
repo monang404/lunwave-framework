@@ -1,0 +1,822 @@
+# task_breakdown_logging.yaml
+# v1 — 2026-07-22
+# Fitur: logging_standard_migration (structured logging: category/component/
+# correlation/event-key, sesuai LOGGING_STANDARD.md)
+# Sumber standar: docs/rfc/logging_standard/LOGGING_STANDARD.md (spesifikasi target)
+# Sumber gap: docs/rfc/logging_standard/logging_audit.md (kondisi saat ini, 146 file
+# .py, ~17.9k baris, 44 file logging, ~111 call logger)
+# Sumber rencana: docs/rfc/logging_standard/implementasi_plan_logging_advance.md
+# (Fase 0-7, diterjemahkan jadi sesi 1-9 di bawah)
+#
+# STATUS: final — semua keputusan desain (severity, kategori, field, event key)
+# sudah disepakati di LOGGING_STANDARD.md dan implementasi_plan_logging_advance.md.
+# Tidak ada keputusan produk baru yang perlu diambil; file ini murni urutan
+# eksekusi migrasi. Satu-satunya gate manusia: task L7.4 (menyentuh
+# engine/playback/controller.py, ditandai "risiko tinggi" di AI_CONTEXT.md).
+#
+# ATURAN EKSEKUSI UNTUK AGENT:
+# 1. Ikuti `execution_order` di akhir file secara sekuensial per sesi. Task
+#    dalam satu `session` dengan `parallel_ok: true` boleh dikerjakan tidak
+#    berurutan relatif satu sama lain (asal depends_on terpenuhi) — tapi
+#    tetap tidak boleh melompati sesi.
+# 2. Sesi 3 (L3.x) WAJIB dikerjakan berurutan sesuai urutan file di
+#    implementasi_plan §4.1 (dari call logger paling sedikit ke paling
+#    banyak) — tujuannya memvalidasi pola component/category di file kecil
+#    dulu sebelum diterapkan ke 37 file sisanya di sesi 4.
+# 3. Jangan eksekusi task dengan `requires_human_confirmation: true` tanpa
+#    berhenti dan meminta konfirmasi eksplisit user PERSIS sebelum task itu.
+#    `engine/playback/controller.py` ada di AI_CONTEXT.md sebagai file
+#    "risiko tinggi, closure kompleks" — bukan governance-locked seperti
+#    index.html, tapi tetap butuh kehati-hatian ekstra.
+# 4. Prinsip non-negotiable dari LOGGING_STANDARD.md §8 (rahasia tidak
+#    pernah masuk log) WAJIB dipatuhi di SEMUA task, khususnya sesi 2
+#    (auth.py) — dilarang keras menulis field password/token/stored_hash
+#    dalam bentuk apa pun, termasuk di level DEBUG.
+# 5. Setelah tiap task: jalankan `post_commands`, cek `dod` semua true, lalu
+#    prepend entry `docs/PATCHLOG.md` (ID: PATCH-YYYY-MM-DD-NNN — cek
+#    frontmatter `latest_patch_id` untuk nomor urut terbaru SEBELUM menulis)
+#    kecuali task punya `patchlog: skip`. Task bertanda `patchlog_group`
+#    ditulis SATU entry gabungan untuk seluruh anggota grup tsb.
+# 6. Field `files` dengan prefix `CAUTION:` = file berisiko tinggi menurut
+#    AI_CONTEXT.md, tidak governance-locked tapi butuh review ekstra hati-hati
+#    sebelum commit (lihat aturan 3).
+# 7. Sesi dengan `parallel_ok: false` ("dedicated") wajib dikerjakan sendirian
+#    tanpa task lain disisipkan di sesi yang sama, karena tiap sub-task
+#    menambah ke pola/file yang sama secara bertahap.
+# 8. Non-breaking per commit (prinsip migrasi #3 di implementasi_plan): tiap
+#    task harus meninggalkan aplikasi dalam keadaan berjalan normal — dilarang
+#    "big bang" ganti banyak call logger sekaligus di luar scope task ybs.
+# 9. DILARANG log-and-swallow tanpa error_type (anti-pattern §12.4), dan
+#    DILARANG duplikasi log exception yang sama di banyak lapisan tanpa
+#    informasi baru (anti-pattern §12.5) — lihat sesi 8 (L8.1) untuk
+#    pembersihan pola ini yang sudah ada.
+
+meta:
+  source_features: ["logging_standard_migration"]
+  source_rfc: "docs/rfc/logging_standard/LOGGING_STANDARD.md"
+  source_audit: "docs/rfc/logging_standard/logging_audit.md"
+  source_plan: "docs/rfc/logging_standard/implementasi_plan_logging_advance.md"
+  locked_files_global:
+    - web/static/index.html          # AI_CONTEXT.md: tidak boleh disentuh tanpa izin eksplisit — tidak relevan ke fitur ini
+    - server/handlers/websocket.py   # AI_CONTEXT.md: jangan dipecah/direfactor tanpa persetujuan eksplisit — task logging di file ini (jika ada) hanya boleh MENAMBAH log, bukan restrukturisasi
+  caution_files_global:
+    - engine/playback/controller.py  # AI_CONTEXT.md: "risiko tinggi, closure kompleks" — bukan locked, tapi wajib requires_human_confirmation sebelum disentuh (lihat L7.4)
+  conventions:
+    patchlog_id_format: "PATCH-YYYY-MM-DD-NNN"
+    ai_agent_flag_required_on: [doctor.py, verify_docs.py, architecture_lint.py, verify_structure.py, find_owner.py, patchlog.py]
+    ai_agent_flag: "--json"
+    bundle_cmd_template: >
+      zip -rq lunawave-{TASK_ID}.zip . -x ".git/*" -x "*__pycache__*"
+      -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+      -x "*.DS_Store" -x "lunawave-T-*.zip" -x "lunawave-R-*.zip"
+
+decisions:
+  L-D1:
+    question: "Logger diikat per komponen logis atau per nama modul Python (__name__)?"
+    chosen: "per_komponen_logis"
+    rationale: >
+      LOGGING_STANDARD.md §4 anti-pattern #7 melarang kategori/nama logger
+      mengikuti path file. `structlog.get_logger(component=<nama_logis>)`
+      dipilih (bukan bind per-call yang diulang ratusan kali) karena mengikat
+      sekali per modul dan menutup G11 sekaligus. Nilai component mengikuti
+      contoh §5.1 (playback.controller, radio.engine, ws.auth, dst),
+      independen dari path file.
+    status: resolved
+  L-D2:
+    question: "auth_login_rejected pakai level INFO atau WARNING?"
+    chosen: "INFO"
+    rationale: >
+      Satu percobaan login gagal adalah kejadian normal yang diharapkan
+      terjadi sesekali (§3 definisi INFO: progres alur bisnis yang sah).
+      WARNING baru dipakai saat ambang rate-limit terlampaui
+      (auth_rate_limited) — bukan di tiap percobaan gagal individual.
+    status: resolved
+  L-D3:
+    question: "Field korelasi (session_id/request_id/correlation_id) dibuat baru di tiap task turunan, atau diwariskan?"
+    chosen: "diwariskan_eksplisit"
+    rationale: >
+      Anti-pattern §12.9 melarang membuat correlation id baru di tengah alur
+      yang sudah punya satu. Task async turunan (radio prefetch,
+      download progress hook) WAJIB menerima id yang sudah ada sebagai
+      parameter/context, bukan generate ulang — session_id dan request_id
+      bertumpuk di contextvars (tidak saling menimpa), sesuai §5.2.
+    status: resolved
+  L-D4:
+    question: "Kapan pemanggil boleh log ulang exception yang sudah dicatat resolver.py di boundary?"
+    chosen: "hanya_jika_field_baru"
+    rationale: >
+      §12.5 melarang duplikasi log tanpa informasi baru. Pemanggil
+      (download_manager.py, stream_prefetch.py, track_loader.py) berhenti
+      logging exception yang sama dari resolver.py KECUALI pemanggil
+      menambah field yang resolver.py sendiri tidak punya (mis. video_id
+      mana yang sedang di-download saat resolve gagal di tengah unduhan).
+    status: resolved
+  L-D5:
+    question: "CRITICAL dipakai untuk kegagalan operasional biasa atau hanya ancaman keberlangsungan proses?"
+    chosen: "hanya_ancaman_keberlangsungan_proses"
+    rationale: >
+      §3 aturan pembeda ERROR vs CRITICAL: "apakah proses masih bisa
+      melayani permintaan lain setelah ini?" MPV reconnect gagal total
+      (observer.py:148), gagal bind port (app.py), dan gagal init DB saat
+      boot adalah CRITICAL. Resolve satu video_id gagal (resolver.py:100)
+      TETAP ERROR meski fallback juga gagal, karena proses lain tetap jalan.
+    status: resolved
+
+# ---------------------------------------------------------------------------
+# PETA SESI
+# ---------------------------------------------------------------------------
+sessions:
+  - session: 1
+    label: "Fase 0 — Infrastruktur bersama (log_categories.py, log_context.py)"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      File baru murni (belum dipakai modul manapun), tidak ada perubahan
+      behavior. Prasyarat WAJIB untuk semua sesi lain (implementasi_plan §2,
+      "infrastruktur dulu, isi kemudian") — tanpa ini, sesi 3-4 akan
+      menghasilkan pola category/component yang tidak konsisten antar file.
+    patchlog_group: "1 entry gabungan untuk L1.1..L1.2 (infra belum dipakai modul manapun)"
+    tasks: [L0.1, L1.1, L1.2]
+
+  - session: 2
+    label: "Fase 1 — Logging keamanan (server/handlers/auth.py)"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED. G1 kritis (audit): nol logging di auth.py saat ini. Sesi
+      keamanan disendirikan supaya tiap titik (login, rate-limit, sesi)
+      diverifikasi satu per satu terhadap larangan §8/§12.1 (rahasia tidak
+      boleh masuk log) sebelum lanjut ke migrasi massal sesi 3-4.
+    tasks: [L2.1]
+
+  - session: 3
+    label: "Fase 2a — Rollout component/category ke file kecil (validasi pola)"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED, berurutan sesuai implementasi_plan §4.1 (call logger
+      paling sedikit dulu). Tujuannya memvalidasi pola
+      get_logger(component=...) + category=LC_* di file kecil sebelum
+      diterapkan mekanis ke 37 file sisanya (sesi 4) — supaya kalau ada
+      kesalahan pola, dampaknya masih kecil.
+    patchlog_group: "1 entry gabungan untuk L3.1..L3.7 (rollout pola yang sama, urutan implementasi_plan §4.1 poin 1-7)"
+    tasks: [L3.1, L3.2, L3.3, L3.4, L3.5, L3.6, L3.7]
+
+  - session: 4
+    label: "Fase 2b — Rollout ke 37 file sisa + severity CRITICAL (G2, G3, G7)"
+    parallel_ok: true
+    risk: medium
+    rationale: >
+      Pola sudah tervalidasi di sesi 3. 37 file sisa (per domain: playback →
+      queue → cache → security → system, implementasi_plan §4.1 poin 8)
+      relatif independen satu sama lain sehingga boleh dikerjakan tidak
+      berurutan. Perbaikan severity (G7) dan penambahan CRITICAL (G2) di
+      file yang sudah disentuh sesi 3 digabung ke sesi ini karena sama-sama
+      "gerbang" sebelum sesi 5-9 (implementasi_plan: "Fase 2 adalah gerbang").
+    tasks: [L4.1, L4.2, L4.3]
+
+  - session: 5
+    label: "Fase 3 — Korelasi async (session_id/request_id/correlation_id)"
+    parallel_ok: true
+    risk: medium
+    rationale: >
+      G4 tinggi. Empat titik pemasangan (WS session, command execute, radio
+      cycle, download) independen satu sama lain — boleh paralel — tapi
+      semua bergantung pada helper log_context.py dari sesi 1 (L1.2).
+    tasks: [L5.1, L5.2, L5.3, L5.4]
+
+  - session: 6
+    label: "Fase 4 — Event key + structured field (71 call f-string)"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      G5 tinggi. Penggantian f-string/kalimat naratif menjadi event key
+      snake_case + field kwargs, per tabel implementasi_plan §6. Tiap file
+      independen — boleh paralel — tapi harus menunggu sesi 3-4 selesai
+      supaya event key baru sudah punya category/component yang benar.
+    tasks: [L6.1, L6.2, L6.3, L6.4, L6.5]
+
+  - session: 7
+    label: "Fase 5 — Titik masuk/keluar alur utama (G6) + state change (§7.4)"
+    parallel_ok: true
+    risk: high
+    rationale: >
+      G6 tinggi. Sebagian besar task independen (command_bus, radio engine,
+      download_manager, background loop) boleh paralel. L7.4 (perubahan
+      state signifikan) menyentuh engine/playback/controller.py yang
+      ditandai "risiko tinggi" di AI_CONTEXT.md — task itu WAJIB
+      requires_human_confirmation dan idealnya dikerjakan terpisah dari
+      task lain di sesi ini meski secara teknis sesi ini parallel_ok.
+    tasks: [L7.1, L7.2, L7.3, L7.4, L7.5]
+
+  - session: 8
+    label: "Fase 6 — Bersihkan duplikasi log lintas lapisan (G8)"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED. Menyentuh 4 file terkait (resolver.py + 3 pemanggil)
+      sekaligus dalam satu perubahan kebijakan logging yang konsisten —
+      digabung supaya tidak ada file yang berhenti logging duluan sementara
+      pemanggil lain belum, yang akan membuat kegagalan resolve jadi silent
+      di sebagian jalur untuk sementara.
+    tasks: [L8.1]
+
+  - session: 9
+    label: "Fase 7 — Housekeeping: ringkasan agregat + validasi noise (G10)"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Penutup migrasi: satu baris ringkasan agregat di track_filter.py
+      (bukan pelanggaran §8.2, tapi gap terhadap §7.2/Best Practice #5) dan
+      validasi akhir bahwa migrasi tidak menambah noise di hot path.
+    patchlog_group: "PATCHLOG TERPISAH untuk sesi 9 (penutup, bukan bagian entry migrasi utama)"
+    tasks: [L9.1, L9.2]
+
+# ---------------------------------------------------------------------------
+tasks:
+
+  # ---------- ORIENTASI ----------
+  - id: L0.1
+    title: "Baca standar + audit + rencana, cek owner file terkait"
+    depends_on: []
+    locked: false
+    files: []
+    steps:
+      - "baca docs/rfc/logging_standard/LOGGING_STANDARD.md penuh (khususnya §3-§8, §11-§12)"
+      - "baca docs/rfc/logging_standard/logging_audit.md penuh, khususnya tabel gap §4 (G1-G11)"
+      - "baca docs/rfc/logging_standard/implementasi_plan_logging_advance.md penuh"
+      - "baca AI_CONTEXT.md, konfirmasi status controller.py (risiko tinggi) dan websocket.py (jangan direfactor)"
+      - "baca 2-3 entry terakhir docs/PATCHLOG.md untuk konteks sprint aktif"
+    post_commands:
+      - "python automation/find_owner.py core/log_config.py --json"
+      - "python automation/find_owner.py server/middleware/traffic.py --json"
+      - "python automation/find_owner.py server/handlers/auth.py --json"
+      - "python automation/find_owner.py core/command_bus.py --json"
+      - "python automation/find_owner.py server/connection_manager.py --json"
+    dod: ["owner/dependency file infrastruktur logging existing dipahami sebelum implementasi"]
+    patchlog: skip
+
+  # ============================================================
+  # SESI 1 — Fase 0: Infrastruktur bersama (parallel_ok: true)
+  # ============================================================
+  - id: L1.1
+    feature: logging_standard_migration
+    session: 1
+    parallel_ok: true
+    title: "Buat core/log_categories.py — 14 konstanta kategori (§4)"
+    depends_on: [L0.1]
+    locked: false
+    files: ["core/log_categories.py (baru)"]
+    steps:
+      - "definisikan 14 konstanta string sesuai §4: LC_LIFECYCLE, LC_SESSION, LC_AUTH, LC_COMMAND, LC_EVENT, LC_PLAYBACK, LC_QUEUE, LC_RADIO, LC_DOWNLOAD, LC_RESOLVE, LC_CACHE, LC_PERSISTENCE, LC_EXTERNAL, LC_SECURITY, LC_SYSTEM"
+      - "daftar tertutup — TIDAK menambah kategori di luar 14 ini (§4 sengaja tidak berat/enterprise, prinsip desain #9)"
+      - "tambah test unit sederhana: import semua konstanta, pastikan tidak ada duplikat nilai string"
+    dod: ["14 konstanta terdefinisi persis sesuai nama di §4", "test import core/log_categories.py hijau"]
+
+  - id: L1.2
+    feature: logging_standard_migration
+    session: 1
+    parallel_ok: true
+    title: "Buat core/log_context.py — helper korelasi (§5.2)"
+    depends_on: [L1.1]
+    locked: false
+    files: ["core/log_context.py (baru)"]
+    steps:
+      - "tambah bind_session(session_id: str) — wrapper tipis atas structlog.contextvars.bind_contextvars, dipanggil sekali di ConnectionManager.connect()"
+      - "tambah bind_request(request_id: str) — dipanggil di titik masuk CommandBus.execute() per eksekusi"
+      - "tambah bind_correlation(correlation_id: str) — dipanggil di titik masuk alur yang menyeberang task terjadwal terpisah (radio cycle, download)"
+      - "ikuti pola yang sudah terbukti benar di server/middleware/traffic.py (req_id) — TIDAK menulis ulang mekanisme baru"
+      - "tambah unit test: bind/unbind simetris, dan test tidak bocor antar task asyncio (dua asyncio.create_task terpisah harus punya context masing-masing kecuali diwariskan eksplisit — anti-pattern §12.9)"
+    post_commands: ["python automation/find_owner.py server/middleware/traffic.py --json"]
+    dod:
+      - "3 fungsi (bind_session, bind_request, bind_correlation) ada dan diekspor"
+      - "test bind/unbind simetris PASS"
+      - "test isolasi antar-task asyncio PASS (tidak ada context bocor tanpa pewarisan eksplisit)"
+      - "tidak ada perubahan behavior di modul lain manapun — helper ini belum dipanggil dari mana pun"
+    patchlog_group: session_1
+    bundle_cmd: 'zip -rq lunawave-L1.2.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-L-*.zip"'
+
+  # ============================================================
+  # SESI 2 — Fase 1: Logging keamanan (DEDICATED, parallel_ok: false)
+  # ============================================================
+  - id: L2.1
+    feature: logging_standard_migration
+    session: 2
+    parallel_ok: false
+    risk: medium
+    title: "Tambah logging auth.py — G1 (login, rate-limit, sesi)"
+    depends_on: [L1.1, L1.2]
+    locked: false
+    files: ["server/handlers/auth.py"]
+    steps:
+      - "get_logger(component=\"ws.auth\") menggantikan get_logger(__name__) di file ini"
+      - "tambah log verifikasi token sukses (baris ~74-79): event auth_token_verified, level INFO, category=LC_AUTH, field client_ip"
+      - "tambah log rate-limit terpicu >=5 percobaan (baris ~90-101): event auth_rate_limited, level WARNING, field client_ip + attempt_count"
+      - "tambah log login sukses via password (baris ~120-130): event auth_login_succeeded, level INFO, field client_ip"
+      - "tambah log login gagal (baris ~131-140): event auth_login_rejected, level INFO (L-D2 — bukan WARNING), field client_ip + reason=\"invalid_credentials\""
+      - "tambah log sesi token dibuat (sessions.create_session): event auth_session_created, level INFO, field client_ip"
+      - "WAJIB: JANGAN pernah tulis field password/token/stored_hash dalam bentuk apa pun (§8, §12.1) — hanya client_ip dan metadata non-rahasia"
+    post_commands:
+      - "grep -in 'password\\|stored_hash' server/handlers/auth.py"
+      - "python automation/find_owner.py core/security.py --json"
+    dod:
+      - "setiap percobaan login (sukses/gagal) dan setiap rate-limit menghasilkan tepat satu baris log"
+      - "grep di atas untuk password/stored_hash sebagai VALUE field log menunjukkan nol kemunculan (bukan grep terhadap nama variabel kode, tapi terhadap kwargs logger)"
+      - "core/security.py TIDAK disentuh (fungsi hash/verify murni, tidak butuh logging tambahan sesuai implementasi_plan §3)"
+    bundle_cmd: 'zip -rq lunawave-L2.1.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-L-*.zip"'
+
+  # ============================================================
+  # SESI 3 — Fase 2a: Rollout file kecil, DEDICATED, berurutan
+  # ============================================================
+  - id: L3.1
+    feature: logging_standard_migration
+    session: 3
+    parallel_ok: false
+    title: "component/category — persistence/discover_repo.py (7 call)"
+    depends_on: [L1.1, L1.2, L2.1]
+    locked: false
+    files: ["persistence/discover_repo.py"]
+    steps:
+      - "get_logger(component=\"persistence.discover\") menggantikan get_logger(__name__)"
+      - "tambah category=LC_PERSISTENCE di semua 7 call logger.error (baris 94, 121, 164, 203, dst)"
+      - "belum konsolidasi event key di task ini (itu tugas sesi 6/L6.4) — task ini murni field category+component"
+    dod: ["7 call logger di file ini punya category=LC_PERSISTENCE dan component=\"persistence.discover\""]
+
+  - id: L3.2
+    feature: logging_standard_migration
+    session: 3
+    parallel_ok: false
+    title: "component/category — engine/download_manager.py (2 call)"
+    depends_on: [L3.1]
+    locked: false
+    files: ["engine/download_manager.py"]
+    steps:
+      - "get_logger(component=\"download.manager\")"
+      - "tambah category=LC_DOWNLOAD di 2 call logger existing (baris ~142 dan lainnya)"
+    dod: ["2 call logger di file ini punya category=LC_DOWNLOAD dan component=\"download.manager\""]
+
+  - id: L3.3
+    feature: logging_standard_migration
+    session: 3
+    parallel_ok: false
+    title: "component/category — engine/playback/failure_ops.py (3 call)"
+    depends_on: [L3.2]
+    locked: false
+    files: ["engine/playback/failure_ops.py"]
+    steps:
+      - "get_logger(component=\"playback.failure_ops\")"
+      - "tambah category=LC_PLAYBACK di 3 call (baris 65, 82, 91)"
+    dod: ["3 call logger di file ini punya category=LC_PLAYBACK dan component=\"playback.failure_ops\""]
+
+  - id: L3.4
+    feature: logging_standard_migration
+    session: 3
+    parallel_ok: false
+    title: "component/category — adapters/mpv/observer.py (5 call)"
+    depends_on: [L3.3]
+    locked: false
+    files: ["adapters/mpv/observer.py"]
+    steps:
+      - "get_logger(component=\"mpv.observer\")"
+      - "tambah category=LC_EXTERNAL (boundary MPV, bukan LC_PLAYBACK — §4 kategori ikuti domain kejadian bukan nama modul) di 5 call (baris 133, 142, 145, 148, dst)"
+    dod: ["5 call logger di file ini punya category=LC_EXTERNAL dan component=\"mpv.observer\""]
+
+  - id: L3.5
+    feature: logging_standard_migration
+    session: 3
+    parallel_ok: false
+    title: "component/category — adapters/ytdlp/resolver.py (5 call)"
+    depends_on: [L3.4]
+    locked: false
+    files: ["adapters/ytdlp/resolver.py"]
+    steps:
+      - "get_logger(component=\"ytdlp.resolver\")"
+      - "tambah category=LC_RESOLVE (bukan LC_EXTERNAL — ini soal resolve stream, konsisten dengan catatan resolve vs radio di §4) di 5 call (baris 74, 88-100, 103, 105)"
+    dod: ["5 call logger di file ini punya category=LC_RESOLVE dan component=\"ytdlp.resolver\""]
+
+  - id: L3.6
+    feature: logging_standard_migration
+    session: 3
+    parallel_ok: false
+    title: "component/category — server/connection_manager.py (3 call)"
+    depends_on: [L3.5]
+    locked: false
+    files: ["server/connection_manager.py"]
+    steps:
+      - "get_logger(component=\"ws.connection\")"
+      - "tambah category=LC_SESSION di 3 call (baris 55, 80, dst)"
+    dod: ["3 call logger di file ini punya category=LC_SESSION dan component=\"ws.connection\""]
+
+  - id: L3.7
+    feature: logging_standard_migration
+    session: 3
+    parallel_ok: false
+    title: "component/category — core/command_bus.py + core/event_bus.py"
+    depends_on: [L3.6]
+    locked: false
+    files: ["core/command_bus.py", "core/event_bus.py"]
+    post_commands: ["python automation/doctor.py --json"]
+    steps:
+      - "get_logger(component=\"core.command_bus\") di command_bus.py, get_logger(component=\"core.event_bus\") di event_bus.py"
+      - "tambah category=LC_COMMAND di command_bus.py (baris 75 dst), category=LC_EVENT di event_bus.py"
+    dod: ["semua call logger di kedua file punya category dan component sesuai di atas", "doctor.py --json tidak menambah error baru dibanding baseline"]
+    patchlog_group: session_3
+    bundle_cmd: 'zip -rq lunawave-L3.7.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-L-*.zip"'
+
+  # ============================================================
+  # SESI 4 — Fase 2b: Rollout 37 file sisa + severity (parallel_ok: true)
+  # ============================================================
+  - id: L4.1
+    feature: logging_standard_migration
+    session: 4
+    parallel_ok: true
+    title: "component/category — 37 file sisa (per domain: playback→queue→cache→security→system)"
+    depends_on: [L3.7]
+    locked: false
+    files: ["(37 file sisa yang punya get_logger/getLogger di luar 7 file sesi 3 dan auth.py sesi 2 — lihat logging_audit.md §Statistik kunci untuk daftar 44 file)"]
+    steps:
+      - "urutan per domain sesuai implementasi_plan §4.1 poin 8: playback dulu, lalu queue, cache, security, system"
+      - "mekanis: get_logger(__name__) -> get_logger(component=<nama_logis>), lalu tambah category=LC_* sesuai tabel §4 berdasarkan DOMAIN KEJADIAN tiap call (bukan nama file — anti-pattern §12.7)"
+      - "TIDAK mengubah event message/level di task ini — murni penambahan field category+component (event key jadi tugas sesi 6)"
+    post_commands:
+      - "python automation/doctor.py --json"
+    dod:
+      - "grep category= dan component= di lunawave.log (setelah smoke run) menunjukkan 100% baris punya keduanya"
+      - "tidak ada file logging tersisa yang masih pakai get_logger(__name__)"
+
+  - id: L4.2
+    feature: logging_standard_migration
+    session: 4
+    parallel_ok: true
+    title: "Perbaiki severity salah kaprah (G7)"
+    depends_on: [L3.4, L3.5]
+    locked: false
+    files: ["adapters/mpv/observer.py", "adapters/ytdlp/resolver.py"]
+    steps:
+      - "adapters/mpv/observer.py:148 (\"MPV reconnect gagal setelah semua percobaan\"): ubah ERROR -> CRITICAL (L-D5 — playback inti mati total)"
+      - "adapters/ytdlp/resolver.py:88 (bot-check, retry pertama): TETAP WARNING (retry akhirnya berhasil = kondisi tertangani), JANGAN diubah"
+      - "adapters/ytdlp/resolver.py:100 (fallback juga gagal): TETAP ERROR (L-D5 — resolve satu video_id gagal, proses lain tetap jalan), JANGAN dinaikkan ke CRITICAL"
+    dod: ["observer.py:148 level CRITICAL", "resolver.py:88 dan :100 levelnya tidak berubah dari kondisi yang sudah benar"]
+
+  - id: L4.3
+    feature: logging_standard_migration
+    session: 4
+    parallel_ok: true
+    title: "Tambah CRITICAL di titik fatal yang belum ada (G2)"
+    depends_on: [L3.7]
+    locked: false
+    files: ["server/app.py", "persistence/db.py", "adapters/mpv/(titik initial connect)"]
+    steps:
+      - "server/app.py run_server() sekitar await site.start() (~baris 113-114): bungkus try/except (saat ini TANPA try/except sama sekali), event server_bind_failed, level CRITICAL, category=LC_LIFECYCLE"
+      - "persistence/db.py DatabaseConnection.init() — kegagalan executescript(schema_sql) atau aiosqlite.connect: event db_init_failed, level CRITICAL, category=LC_PERSISTENCE"
+      - "titik pertama koneksi IPC ke MPV saat startup (BUKAN reconnect runtime di observer.py:148): event mpv_initial_connect_failed, level CRITICAL, category=LC_EXTERNAL"
+    post_commands:
+      - "python automation/doctor.py --strict --json"
+    dod:
+      - "minimal 3 event CRITICAL baru (server_bind_failed, db_init_failed, mpv_initial_connect_failed) muncul di test kegagalan yang disengaja (port terpakai, DB path tidak bisa ditulis, MPV binary tidak ada)"
+      - "doctor.py --strict PASS, tidak ada error baru dibanding baseline"
+    patchlog_group: session_4
+    bundle_cmd: 'zip -rq lunawave-L4.3.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-L-*.zip"'
+
+  # ============================================================
+  # SESI 5 — Fase 3: Korelasi async (parallel_ok: true)
+  # ============================================================
+  - id: L5.1
+    feature: logging_standard_migration
+    session: 5
+    parallel_ok: true
+    title: "session_id di ConnectionManager.connect()"
+    depends_on: [L1.2, L3.6]
+    locked: false
+    files: ["server/connection_manager.py"]
+    steps:
+      - "generate session_id sekali per koneksi (mis. secrets.token_hex(4), sama seperti pola req_id di traffic.py)"
+      - "panggil bind_session(session_id) dari core/log_context.py di titik ini, aktif sepanjang hidup koneksi WS"
+    dod: ["setiap koneksi WS baru punya session_id unik yang muncul di semua log sepanjang hidup koneksi tsb"]
+
+  - id: L5.2
+    feature: logging_standard_migration
+    session: 5
+    parallel_ok: true
+    title: "request_id di CommandBus.execute()"
+    depends_on: [L1.2, L3.7]
+    locked: false
+    files: ["core/command_bus.py"]
+    steps:
+      - "generate request_id baru per eksekusi command"
+      - "panggil bind_request(request_id) di titik masuk execute() — request_id akan bertumpuk BERSAMA session_id yang sudah aktif (contextvars, tidak saling menimpa, §5.2)"
+    dod: ["satu eksekusi command dari klien WS tunggal menghasilkan log yang semuanya berbagi session_id yang sama DAN request_id yang sama"]
+
+  - id: L5.3
+    feature: logging_standard_migration
+    session: 5
+    parallel_ok: true
+    title: "correlation_id — siklus radio -> prefetcher"
+    depends_on: [L1.2, L4.1]
+    locked: false
+    files: ["engine/radio/engine.py", "engine/radio/prefetcher.py"]
+    steps:
+      - "generate correlation_id di titik mulai siklus radio (engine/radio/engine.py)"
+      - "panggil bind_correlation(correlation_id) di titik itu"
+      - "WAJIB teruskan correlation_id yang SAMA (bukan buat baru — anti-pattern §12.9) secara eksplisit ke engine/radio/prefetcher.py saat prefetch dijadwalkan sebagai task terpisah (asyncio.create_task)"
+    dod: ["satu siklus radio yang memicu prefetch di task terpisah menghasilkan log prefetcher dengan correlation_id yang identik dengan log radio engine yang memicunya"]
+
+  - id: L5.4
+    feature: logging_standard_migration
+    session: 5
+    parallel_ok: true
+    title: "correlation_id — download -> progress hook"
+    depends_on: [L1.2, L4.1]
+    locked: false
+    files: ["engine/download_manager.py"]
+    steps:
+      - "generate correlation_id di titik mulai download.py"
+      - "panggil bind_correlation(correlation_id), teruskan eksplisit ke progress hook yang jalan di executor terpisah — bukan context baru"
+    post_commands: ["python automation/find_owner.py engine/download_manager.py --json"]
+    dod: ["log dari progress hook download punya correlation_id identik dengan log mulai download yang memicunya"]
+    patchlog_group: session_5
+    bundle_cmd: 'zip -rq lunawave-L5.4.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-L-*.zip"'
+
+  # ============================================================
+  # SESI 6 — Fase 4: Event key + structured field (parallel_ok: true)
+  # ============================================================
+  - id: L6.1
+    feature: logging_standard_migration
+    session: 6
+    parallel_ok: true
+    risk: high
+    title: "Event key — engine/playback/controller.py + failure_ops.py"
+    depends_on: [L3.3, L4.1]
+    locked: false
+    files: ["CAUTION: engine/playback/controller.py", "engine/playback/failure_ops.py"]
+    steps:
+      - "controller.py:362-363: f\"Ignoring skip: requested {x} != current {y}\" -> event skip_ignored_stale, field requested_video_id, current_video_id"
+      - "failure_ops.py:65: \"Video permanen tidak tersedia, skip tanpa retry: {e}\" -> event track_permanently_unavailable, field video_id, reason"
+      - "failure_ops.py:82 DAN :91 (dua kalimat berbeda ID/EN untuk kejadian sama) -> KONSOLIDASI jadi SATU event key track_play_failed, field video_id, error_type, error (G9 — event key selalu Inggris meski field error boleh Indonesia)"
+      - "PERINGATAN: controller.py ditandai risiko tinggi di AI_CONTEXT.md (closure kompleks) — perubahan HANYA pada string event/field logger, TIDAK menyentuh logika/alur eksekusi apa pun"
+    post_commands: ["python automation/doctor.py --strict --json"]
+    dod:
+      - "kedua event key baru muncul persis seperti didefinisikan, tanpa f-string tersisa di baris terkait"
+      - "track_play_failed jadi satu-satunya event key untuk kasus baris 82 dan 91 (tidak ada lagi dua pesan berbeda untuk kejadian sama)"
+      - "doctor.py --strict PASS, tidak ada regresi logika controller.py"
+
+  - id: L6.2
+    feature: logging_standard_migration
+    session: 6
+    parallel_ok: true
+    title: "Event key — server/connection_manager.py"
+    depends_on: [L3.6, L5.1]
+    locked: false
+    files: ["server/connection_manager.py"]
+    steps:
+      - "baris 55: f\"WebSocket connected. Total clients: {n}\" -> event ws_connected, field client_count"
+      - "baris 80: f\"WebSocket disconnected...\" -> event ws_disconnected, field client_count, duration_s"
+    dod: ["kedua event key baru terpasang, jumlah klien dan durasi sebagai field terpisah bukan disisipkan ke kalimat"]
+
+  - id: L6.3
+    feature: logging_standard_migration
+    session: 6
+    parallel_ok: true
+    title: "Event key — adapters/mpv/observer.py"
+    depends_on: [L3.4, L4.2]
+    locked: false
+    files: ["adapters/mpv/observer.py"]
+    steps:
+      - "baris 133: \"mpv observer loop ended - connection lost.\" -> event mpv_observer_loop_ended, field reason=\"connection_lost\""
+      - "baris 142: \"MPV berhasil reconnect.\" -> event mpv_reconnected, field attempt"
+      - "baris 145: f\"MPV reconnect attempt {n} raised: {e}\" -> event mpv_reconnect_attempt_failed, field attempt, error_type, error"
+      - "pastikan konsisten Bahasa Inggris di event key walau bahasa asal campur ID/EN (G9)"
+    dod: ["ketiga event key baru terpasang, tidak ada lagi kalimat campur bahasa di posisi event key"]
+
+  - id: L6.4
+    feature: logging_standard_migration
+    session: 6
+    parallel_ok: true
+    title: "Event key — persistence/discover_repo.py (konsolidasi 4 fungsi)"
+    depends_on: [L3.1]
+    locked: false
+    files: ["persistence/discover_repo.py"]
+    steps:
+      - "4 fungsi berbeda dengan pola sama f\"Error getting {X}: {e}\" -> KONSOLIDASI jadi satu event key discover_query_failed"
+      - "tambah field query_type dengan nilai spesifik per fungsi (\"bandit_ranked_artists\", \"unheard_artists\", \"taste_spectrum\", \"genre_artists_enriched\"), plus error_type, error"
+    dod: ["keempat fungsi memakai event key sama (discover_query_failed) dibedakan lewat field query_type, bukan lewat 4 event key berbeda"]
+
+  - id: L6.5
+    feature: logging_standard_migration
+    session: 6
+    parallel_ok: true
+    title: "Event key — command_bus.py, resolver.py, download_manager.py"
+    depends_on: [L3.5, L3.7, L4.1]
+    locked: false
+    files: ["core/command_bus.py", "adapters/ytdlp/resolver.py", "engine/download_manager.py"]
+    steps:
+      - "command_bus.py:75: f\"Command execution error for '{cmd}': {e}\" -> event command_execution_failed, field command_name, error_type, error"
+      - "resolver.py (semua baris): f\"get_stream_url failed for {id}: ...\" -> event stream_resolve_failed, field video_id, error_type, error"
+      - "download_manager.py:142: f\"Download error: {e}\" -> event download_failed, field video_id, error_type, error"
+    post_commands:
+      - "grep -rn 'f\"' server/ engine/ core/ adapters/ persistence/ --include='*.py' -A0 | grep 'logger\\.'"
+    dod:
+      - "ketiga event key baru terpasang sesuai spesifikasi field"
+      - "pencarian literal pola f-string bernilai dinamis di posisi event/pesan pertama logger.* di seluruh 44 file bernilai NOL (acceptance criteria Fase 4 di implementasi_plan)"
+    patchlog_group: session_6
+    bundle_cmd: 'zip -rq lunawave-L6.5.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-L-*.zip"'
+
+  # ============================================================
+  # SESI 7 — Fase 5: Entry/exit alur utama (parallel_ok: true, L7.4 gate)
+  # ============================================================
+  - id: L7.1
+    feature: logging_standard_migration
+    session: 7
+    parallel_ok: true
+    title: "Entry/exit — command_received/command_succeeded"
+    depends_on: [L5.2, L6.5]
+    locked: false
+    files: ["core/command_bus.py"]
+    steps:
+      - "tambah event command_received di titik masuk execute(), level DEBUG (volume tinggi — sesuai §8.2/§8.3, bukan kejadian yang tiap kali perlu dilihat operator)"
+      - "tambah event command_succeeded di titik keluar sukses, level DEBUG"
+      - "command_execution_failed (ERROR) sudah ada dari L6.5, tidak diubah"
+    dod: ["setiap eksekusi command menghasilkan tepat command_received di awal dan salah satu dari command_succeeded/command_execution_failed di akhir"]
+
+  - id: L7.2
+    feature: logging_standard_migration
+    session: 7
+    parallel_ok: true
+    title: "Entry/exit — radio_cycle_started/completed/failed"
+    depends_on: [L5.3, L4.1]
+    locked: false
+    files: ["engine/radio/engine.py"]
+    steps:
+      - "event radio_cycle_started, level INFO, di titik mulai siklus"
+      - "event radio_cycle_completed, level INFO, di titik selesai sukses, DENGAN ringkasan §11.5 (jumlah kandidat masuk/lolos) — field candidates_in, candidates_out"
+      - "event radio_cycle_failed, level ERROR, di titik gagal"
+    dod: ["setiap siklus radio menghasilkan radio_cycle_started diikuti radio_cycle_completed ATAU radio_cycle_failed, tidak pernah dua-duanya atau tidak ada sama sekali"]
+
+  - id: L7.3
+    feature: logging_standard_migration
+    session: 7
+    parallel_ok: true
+    title: "Entry/exit — download_started/completed"
+    depends_on: [L5.4, L6.5]
+    locked: false
+    files: ["engine/download_manager.py"]
+    steps:
+      - "event download_started, level INFO, di titik mulai"
+      - "event download_completed, level INFO, di titik selesai sukses, field bytes, duration_ms"
+      - "download_failed (ERROR) sudah ada dari L6.5, tidak diubah"
+    dod: ["setiap proses download menghasilkan download_started diikuti download_completed ATAU download_failed"]
+
+  - id: L7.4
+    feature: logging_standard_migration
+    session: 7
+    parallel_ok: false
+    risk: high
+    title: "Perubahan state signifikan (§7.4) — playback_mode_changed dkk"
+    depends_on: [L6.1]
+    locked: false
+    requires_human_confirmation: true
+    files: ["CAUTION: engine/playback/controller.py (_on_set_mode dan handler sejenis)"]
+    steps:
+      - "STOP — minta konfirmasi eksplisit user sebelum menyentuh engine/playback/controller.py, walau task L6.1 di sesi 6 sudah selesai (file ini ditandai risiko tinggi/closure kompleks di AI_CONTEXT.md, bukan file yang boleh disentuh casual)"
+      - "tambah event playback_mode_changed, level INFO, field mode_baru — di handler _on_set_mode (baris ~407)"
+      - "tambah event loudness_normalization_changed, level INFO, field nilai baru — di handler pengaturan loudness terkait (cari lokasi persis via grep, tidak diasumsikan sama seperti _on_set_mode)"
+      - "tambah event crossfade_changed, level INFO, field nilai baru — di handler pengaturan crossfade terkait"
+      - "TIDAK ada perubahan logika/alur eksekusi apa pun selain menambah baris logger.info(...) — sesuai prinsip non-breaking per commit"
+    post_commands:
+      - "python automation/doctor.py --strict --json"
+      - "python automation/architecture_lint.py --json"
+    dod:
+      - "ketiga event baru terpasang di handler yang benar, teruji manual: ganti mode/loudness/crossfade dari UI menghasilkan tepat satu baris log per perubahan"
+      - "doctor.py --strict dan architecture_lint.py tidak menambah error baru dibanding baseline"
+
+  - id: L7.5
+    feature: logging_standard_migration
+    session: 7
+    parallel_ok: true
+    title: "Task background — jejak loop berhenti tak wajar"
+    depends_on: [L4.1]
+    locked: false
+    files: ["engine/radio/prefetcher.py", "bootstrap/startup_tasks.py"]
+    steps:
+      - "engine/radio/prefetcher.py: tambah event prefetch_loop_stopped_unexpectedly, level ERROR, bila loop berhenti tanpa sinyal shutdown eksplisit — pola sama seperti adapters/mpv/observer.py:133 yang sudah benar"
+      - "bootstrap/startup_tasks.py (cache-eviction loop): tambah event cache_eviction_loop_stopped_unexpectedly, level ERROR, kondisi sama"
+    dod: ["kedua loop melapor ERROR bila berhenti tanpa shutdown signal — diverifikasi lewat test simulasi loop crash/exception tak tertangani"]
+    patchlog_group: session_7
+    bundle_cmd: 'zip -rq lunawave-L7.5.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-L-*.zip"'
+
+  # ============================================================
+  # SESI 8 — Fase 6: Bersihkan duplikasi lintas lapisan (DEDICATED)
+  # ============================================================
+  - id: L8.1
+    feature: logging_standard_migration
+    session: 8
+    parallel_ok: false
+    title: "Hentikan duplikasi log resolver.py di 3 pemanggil (G8)"
+    depends_on: [L6.5, L7.3]
+    locked: false
+    files:
+      - "adapters/ytdlp/resolver.py"
+      - "engine/playback/track_loader.py"
+      - "services/stream_prefetch.py"
+      - "engine/download_manager.py"
+    steps:
+      - "resolver.py TETAP jadi satu-satunya titik log ERROR untuk kegagalan resolve (boundary asal) — tidak diubah dari L6.5"
+      - "track_loader.py, stream_prefetch.py (baris 73-80), download_manager.py (baris 142): HAPUS logger.error/warning untuk exception yang sama yang sudah dicatat resolver.py — ganti jadi raise/propagate murni tanpa logging tambahan"
+      - "KECUALI (L-D4): bila pemanggil punya konteks baru yang resolver.py tidak tahu (mis. download_manager.py tahu video_id mana yang sedang di-download saat resolve gagal di tengah unduhan) — pemanggil BOLEH log ulang HANYA dengan field tambahan tsb, bukan mengulang pesan resolver.py"
+      - "prinsip §11.4: pilih titik final paling informatif (dengan retry_count bila relevan), diamkan yang lain"
+    post_commands:
+      - "grep -rn 'stream_resolve_failed\\|get_stream_url failed' engine/playback/track_loader.py services/stream_prefetch.py engine/download_manager.py"
+    dod:
+      - "exception yang sama dari resolver.py tidak lagi dicatat lebih dari sekali di lapisan pemanggil berbeda tanpa informasi baru"
+      - "grep di atas mengonfirmasi tidak ada log duplikat tanpa field tambahan di 3 file pemanggil"
+    bundle_cmd: 'zip -rq lunawave-L8.1.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-L-*.zip"'
+
+  # ============================================================
+  # SESI 9 — Fase 7: Housekeeping (parallel_ok: true)
+  # ============================================================
+  - id: L9.1
+    feature: logging_standard_migration
+    session: 9
+    parallel_ok: true
+    title: "Ringkasan agregat — engine/radio/track_filter.py"
+    depends_on: [L4.1]
+    locked: false
+    files: ["engine/radio/track_filter.py"]
+    steps:
+      - "tambah SATU baris ringkasan agregat di akhir filtering: event radio_filter_completed, level INFO, field candidates_in, candidates_out, duration_ms"
+      - "TIDAK menambah log per-kandidat (§8.2 tetap berlaku — file ini sengaja nol logging per-item)"
+    dod: ["satu siklus filter radio menghasilkan tepat satu baris radio_filter_completed dengan ketiga field terisi"]
+
+  - id: L9.2
+    feature: logging_standard_migration
+    session: 9
+    parallel_ok: true
+    title: "Validasi akhir — noise di hot path + Definition of Done keseluruhan"
+    depends_on: [L2.1, L4.1, L4.3, L5.4, L6.5, L7.4, L7.5, L8.1, L9.1]
+    locked: false
+    files: []
+    steps:
+      - "smoke test playback normal 10 menit, hitung baris log/menit sebelum vs sesudah migrasi — kenaikan signifikan di luar event baru yang memang diharapkan (login attempts, command_received DEBUG) adalah sinyal ada log yang seharusnya diringkas"
+      - "cek Definition of Done keseluruhan dari implementasi_plan_logging_advance.md §11 poin 1-6 satu per satu"
+    post_commands:
+      - "grep -c 'category=' lunawave.log"
+      - "grep -c 'component=' lunawave.log"
+      - "grep -rn 'f\"' server/ engine/ core/ adapters/ persistence/ --include='*.py' | grep 'logger\\.' | wc -l"
+      - "python automation/generate_report.py"
+      - "python automation/patchlog.py verify --json"
+    dod:
+      - "timestamp/level/category/event/component terisi di 100% baris log baru"
+      - "session_id/request_id/correlation_id hadir di setiap baris dalam konteks alur (bukan banner lifecycle)"
+      - "nol pola f-string bernilai dinamis di posisi event/pesan pertama"
+      - "logger.critical dipakai di >=3 titik kegagalan startup (server_bind_failed, db_init_failed, mpv_initial_connect_failed)"
+      - "server/handlers/auth.py punya jejak lengkap login/rate-limit/sesi tanpa satu pun nilai rahasia"
+      - "tidak ada exception yang sama dicatat lebih dari sekali di lapisan pemanggil berbeda tanpa informasi baru"
+      - "tidak ada kenaikan noise log signifikan di luar event baru yang memang diharapkan"
+    patchlog_group: session_9
+    bundle_cmd: 'zip -rq lunawave-L9.2-FINAL.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-L-*.zip"'
+
+execution_order:
+  - L0.1
+  # --- Sesi 1 (parallel_ok — Fase 0) ---
+  - L1.1
+  - L1.2
+  # --- Sesi 2 (DEDICATED — Fase 1, keamanan) ---
+  - L2.1
+  # --- Sesi 3 (DEDICATED, berurutan — Fase 2a) ---
+  - L3.1
+  - L3.2
+  - L3.3
+  - L3.4
+  - L3.5
+  - L3.6
+  - L3.7
+  # --- Sesi 4 (parallel_ok — Fase 2b) ---
+  - L4.1
+  - L4.2
+  - L4.3
+  # --- Sesi 5 (parallel_ok — Fase 3, korelasi) ---
+  - L5.1
+  - L5.2
+  - L5.3
+  - L5.4
+  # --- Sesi 6 (parallel_ok — Fase 4, event key) ---
+  - L6.1
+  - L6.2
+  - L6.3
+  - L6.4
+  - L6.5
+  # --- Sesi 7 (parallel_ok, L7.4 gate — Fase 5, entry/exit) ---
+  - L7.1
+  - L7.2
+  - L7.3
+  - L7.4
+  - L7.5
+  # --- Sesi 8 (DEDICATED — Fase 6, dedup) ---
+  - L8.1
+  # --- Sesi 9 (parallel_ok — Fase 7, housekeeping) ---
+  - L9.1
+  - L9.2
+  # catatan: 9 sesi. Sesi 2, 3, 8 WAJIB dedicated. Sesi 3 WAJIB berurutan
+  # persis sesuai urutan implementasi_plan §4.1 (file kecil dulu). L7.4
+  # WAJIB requires_human_confirmation sebelum menyentuh
+  # engine/playback/controller.py (risiko tinggi di AI_CONTEXT.md).

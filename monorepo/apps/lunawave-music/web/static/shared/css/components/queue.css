@@ -1,0 +1,138 @@
+/* ── Queue Drag Handle ── */
+.qi-drag {
+  color: var(--text-3);
+  font-size: 18px;
+  cursor: grab;
+  flex-shrink: 0;
+  opacity: 0.4;
+  user-select: none;
+}
+
+/* ══ QUEUE TAB ══ */
+
+#tab-queue {
+  background: var(--bg-primary);
+}
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3) var(--s5);
+  transition: background var(--dur-fast) var(--ease);
+  cursor: default;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.queue-item:hover {
+  background: var(--fm-color-hover);
+}
+
+.queue-item.current {
+  background: var(--accent-alpha);
+}
+
+.qi-index {
+  width: 22px;
+  font-size: var(--t-sm);
+  color: var(--text-3);
+  text-align: center;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.queue-item.current .qi-index {
+  color: var(--accent);
+}
+
+.qi-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.qi-title {
+  font-size: var(--t-md);
+  font-weight: var(--w-medium);
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-item.current .qi-title {
+  color: var(--accent);
+}
+
+.qi-dur {
+  font-size: var(--t-xs);
+  color: var(--text-2);
+  margin-top: 3px;
+}
+
+.qi-remove {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  font-size: 14px;
+  cursor: pointer;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-sm);
+  flex-shrink: 0;
+  transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  opacity: 0;
+}
+
+.queue-item:hover .qi-remove,
+.queue-item:active .qi-remove,
+.queue-item:focus-within .qi-remove {
+  opacity: 1;
+}
+
+.qi-remove:hover {
+  color: var(--red);
+}
+
+.queue-empty {
+  text-align: center;
+  color: var(--text-3);
+  font-size: var(--t-md);
+  padding: var(--s10) var(--s5);
+  line-height: 1.6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s3);
+}
+
+#queue-footer {
+  text-align: center;
+  padding: var(--s3) 0;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+  font-weight: var(--w-medium);
+  letter-spacing: 0.3px;
+}
+
+
+/* C-07: Queue drag handle — selalu visible di touchscreen (tidak ada :hover) */
+
+
+/* Radio queue items cursor & hover overrides (non-clickable) */
+#radio-queue-list .radio-queue-item {
+  cursor: default;
+}
+#radio-queue-list .radio-queue-item:hover {
+  background: transparent;
+}
+#radio-queue-list .radio-queue-item.current:hover {
+  background: var(--accent-alpha);
+}.pb-progress-track { min-height: 44px; touch-action: none; }
+
+.pb-progress-track { min-height: 44px; touch-action: none; }

@@ -1,0 +1,575 @@
+# task_breakdown_radio.yaml
+# v1 — 2026-07-20
+# Fitur: radio_toggle_redesign ("Night Dial" — bulan sabit sebagai tuner radio)
+# Sumber analisa: docs/rfc/radio_toggle.md (RFC, root cause + rencana lengkap)
+# Sumber desain: lunawave-hero-creative-v8.html (mockup standalone, sudah tidak
+# ada di repo — hasil porting dituliskan langsung sebagai steps di bawah)
+#
+# STATUS: final — seluruh keputusan produk di blok `decisions` sudah disetujui
+# user (2026-07-20). Satu-satunya persetujuan manusia yang masih diperlukan:
+# gate file governance-locked (aturan 2 di bawah, sesi 4).
+#
+# ATURAN EKSEKUSI UNTUK AGENT:
+# 1. Ikuti `execution_order` di akhir file secara sekuensial per sesi. Task
+#    dalam satu `session` dengan `parallel_ok: true` boleh dikerjakan tidak
+#    berurutan relatif satu sama lain (asal depends_on terpenuhi) — tapi
+#    tetap tidak boleh melompati sesi.
+# 2. Jangan eksekusi task dengan `locked: true` tanpa berhenti dan meminta
+#    konfirmasi eksplisit dari user PERSIS sebelum task itu. `web/static/index.html`
+#    ada di `AI_CONTEXT.md` sebagai file yang tidak boleh disentuh tanpa izin.
+# 3. Prinsip non-negotiable dari RFC §6 WAJIB dipatuhi di semua task JS
+#    (khususnya sesi 3 dan 5) — satu state, satu pemilik. Lihat catatan di
+#    tiap task terkait dan checklist isolasi di R3.4/R6.5.
+# 4. Setelah tiap task: jalankan `post_commands`, cek `dod` semua true, lalu
+#    prepend entry `docs/PATCHLOG.md` (ID: PATCH-YYYY-MM-DD-NNN) kecuali task
+#    punya `patchlog: skip`. Task bertanda `patchlog_group` ditulis SATU
+#    entry gabungan untuk seluruh anggota grup tsb.
+# 5. Field `files` dengan prefix `LOCKED:` = governance-locked, tidak boleh
+#    disentuh sebelum syarat aturan 2 terpenuhi.
+# 6. Sesi dengan `parallel_ok: false` ("dedicated") wajib dikerjakan sendirian
+#    tanpa task lain disisipkan di sesi yang sama.
+# 7. Sebelum sesi 7 (cleanup CSS lama), WAJIB grep ulang dependency
+#    `.radio-featured`/`.centerpiece-*`/`.radio-live-badge` (lihat RFC §5.2) —
+#    kode bisa saja berubah sejak RFC ditulis.
+
+meta:
+  source_features: ["radio_toggle_redesign"]
+  source_rfc: "docs/rfc/radio_toggle.md"
+  locked_files_global:
+    - web/static/index.html      # AI_CONTEXT.md: tidak boleh disentuh tanpa izin eksplisit
+    - server/handlers/websocket.py  # tidak relevan ke fitur ini, jangan disentuh
+    - engine/playback/controller.py # tidak relevan ke fitur ini, jangan disentuh
+  conventions:
+    patchlog_id_format: "PATCH-YYYY-MM-DD-NNN"
+    ai_agent_flag_required_on: [doctor.py, verify_docs.py, architecture_lint.py, verify_structure.py, find_owner.py, patchlog.py]
+    ai_agent_flag: "--json"
+    bundle_cmd_template: >
+      zip -rq lunawave-{TASK_ID}.zip . -x ".git/*" -x "*__pycache__*"
+      -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+      -x "*.DS_Store" -x "lunawave-T-*.zip" -x "lunawave-R-*.zip"
+
+decisions:
+  R-D1:
+    question: "Label nama kartu: branding 'LunaWave' atau fungsional 'Radio Mode'?"
+    chosen: "Radio Mode"
+    rationale: "User memilih label fungsional, konsisten dengan copy badge status baru (Radio On/Radio Off)."
+    status: resolved
+  R-D2:
+    question: "Copy badge status: 'LIVE'/'ON AIR' (mockup) atau alternatif lain?"
+    chosen: "Radio On / Radio Off"
+    rationale: >
+      Dua string berbeda per state (bukan satu badge yang muncul/hilang seperti
+      mockup asli). Konsekuensi desain: badge WAJIB selalu terlihat di kedua
+      state (tidak boleh fully-hidden saat off seperti .onair-tag di mockup),
+      cuma teks + treatment visualnya yang berubah. Diimplementasikan sebagai
+      dua <span> (off-text/on-text) yang saling exclusive lewat CSS class
+      .radio-hero.on — BUKAN lewat textContent JS, supaya tetap konsisten
+      dengan prinsip RFC §6 (satu state satu pemilik, radio-tab.js tetap
+      satu-satunya penulis class on/off).
+    status: resolved
+  R-D3:
+    question: "Font display (Fraunces italic serif untuk nama): font sistem atau self-host?"
+    chosen: "self_host"
+    rationale: >
+      User memilih self-host demi look distinctive dari mockup, menerima
+      trade-off nambah 2 font family baru (Fraunces, Space Grotesk) ke aset
+      project — TIDAK boleh via CDN (fonts.googleapis.com), harus file lokal
+      di web/static/fonts/ + @font-face, sesuai constraint self-hosted app
+      (Termux/offline) di CONSTRAINTS.md & AI_CONTEXT.md.
+    status: resolved
+  R-D4:
+    question: "Ukuran final kartu: height: 322px dari mockup dikunci langsung, atau disesuaikan dulu ke layout nyata?"
+    chosen: "322px_final_dengan_qa_wajib"
+    rationale: >
+      User mengonfirmasi 322px final — tidak perlu iterasi ukuran lagi. Tetap
+      wajib ada task QA eksplisit (R6.2) untuk viewport tersempit yang
+      didukung (breakpoint di platform/mobile.css & platform/landscape.css),
+      supaya kalau ternyata overflow di device tertentu, itu jadi bug report
+      terpisah, bukan re-buka keputusan produk ini.
+    status: resolved
+
+# ---------------------------------------------------------------------------
+# PETA SESI
+# ---------------------------------------------------------------------------
+sessions:
+  - session: 1
+    label: "Font self-host + fondasi token CSS"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Murni aset statis (font file) + deklarasi CSS variable/@font-face di
+      file baru. Tidak menyentuh file lain, tidak ada logika. Boleh
+      dikerjakan tidak berurutan antar sub-task.
+    patchlog_group: "1 entry gabungan untuk R1.1..R1.2 (aset belum dipakai UI manapun)"
+    tasks: [R1.1, R1.2]
+
+  - session: 2
+    label: "CSS komponen radio-hero.css"
+    parallel_ok: false
+    risk: low
+    rationale: >
+      DEDICATED. Satu file (radio-hero.css) dibangun bertahap (container,
+      starfield, moon SVG, badge/teks), tiap sub-task saling menambah ke file
+      yang sama — hindari konflik dengan menjaganya jadi satu sesi.
+    patchlog_group: "1 entry gabungan untuk R2.1..R2.4"
+    tasks: [R2.1, R2.2, R2.3, R2.4]
+
+  - session: 3
+    label: "Modul JS radio-hero-moon.js (self-contained)"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED. Ini bagian paling kritis untuk mencegah regresi lama
+      (RFC §3 — dugaan playback_sync error). Dibangun bertahap dalam satu
+      sesi supaya prinsip isolasi (RFC §5.3/§6) bisa diverifikasi utuh
+      sebelum modul ini disambungkan ke apa pun (R3.4 adalah gate internal
+      sebelum lanjut ke sesi 4).
+    patchlog_group: "1 entry gabungan untuk R3.1..R3.4 (modul belum di-load index.html, belum reachable)"
+    tasks: [R3.1, R3.2, R3.3, R3.4]
+
+  - session: 4
+    label: "Gate — markup & includes di index.html"
+    parallel_ok: false
+    risk: gate
+    rationale: >
+      DEDICATED, WAJIB. index.html governance-locked (AI_CONTEXT.md). Satu
+      sesi ini mencakup SEMUA perubahan index.html yang dibutuhkan fitur ini
+      sekaligus (markup #radio-toggle-btn baru + <link> radio-hero.css +
+      <script> radio-hero-moon.js) — supaya file locked ini cuma disentuh
+      SATU kali untuk seluruh fitur, bukan berkali-kali di sesi terpisah.
+    tasks: [R4.1]
+
+  - session: 5
+    label: "Wiring renderRadio() -> modul animasi"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED. Menyentuh radio-tab.js yang jadi satu-satunya pemilik state
+      on/off (RFC §5.3) — perubahan kecil (1 hook call) tapi di file
+      sensitif secara behavior, tidak digabung task lain.
+    tasks: [R5.1]
+
+  - session: 6
+    label: "QA & verifikasi isolasi"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Murni verifikasi manual/otomatis, tidak ada perubahan kode produksi
+      (kecuali fix kecil kalau QA menemukan masalah — jika ditemukan
+      masalah struktural, kembali ke sesi terkait, jangan tambal di sini).
+    tasks: [R6.1, R6.2, R6.3, R6.4, R6.5, R6.6]
+
+  - session: 7
+    label: "Cleanup CSS lama + dokumentasi penutup"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Penutup: hapus style `.radio-featured` lama dari cards.css setelah
+      dependency-check ulang, lalu regenerasi index/patchlog.
+    patchlog_group: "PATCHLOG TERPISAH untuk sesi 7 (pembersihan, bukan bagian entry fitur utama)"
+    tasks: [R7.1, R7.2, R7.3]
+
+# ---------------------------------------------------------------------------
+tasks:
+
+  # ---------- ORIENTASI ----------
+  - id: R0.1
+    title: "Baca RFC + governance, cek owner file terkait"
+    depends_on: []
+    locked: false
+    files: []
+    steps:
+      - "baca docs/rfc/radio_toggle.md penuh (khususnya §5, §6)"
+      - "baca AI_CONTEXT.md, konfirmasi index.html masih di daftar locked"
+      - "baca 2-3 entry terakhir docs/PATCHLOG.md untuk konteks sprint aktif"
+    post_commands:
+      - "python automation/find_owner.py web/static/index.html --json"
+      - "python automation/find_owner.py web/static/css/components/cards.css --json"
+      - "python automation/find_owner.py web/static/js/render/radio-tab.js --json"
+      - "python automation/find_owner.py web/static/js/events/transport-events.js --json"
+      - "python automation/find_owner.py web/static/js/platform/touch.js --json"
+      - "python automation/find_owner.py web/static/js/dom.js --json"
+    dod: ["owner/dependency ke-6 file terkait dipahami sebelum implementasi"]
+    patchlog: skip
+
+  - id: R0.2
+    title: "Context pack radio-tab.js + player.js (batas rAF loop existing)"
+    depends_on: [R0.1]
+    locked: false
+    files: []
+    steps:
+      - "pahami startProgressClock()/tick() di player.js — ini rAF loop existing yang TIDAK BOLEH disentuh/di-couple"
+    post_commands:
+      - "python automation/context_pack.py web/static/js/render/radio-tab.js"
+      - "python automation/context_pack.py web/static/js/render/player.js"
+    dod: ["batas isolasi rAF loop existing vs rAF loop baru (yang akan dibuat R3.2) sudah jelas"]
+    patchlog: skip
+
+  # ============================================================
+  # SESI 1 — Font self-host + fondasi token (parallel_ok: true)
+  # ============================================================
+  - id: R1.1
+    feature: radio_toggle_redesign
+    session: 1
+    parallel_ok: true
+    title: "Vendor font Fraunces + Space Grotesk (self-host)"
+    depends_on: [R0.2]
+    locked: false
+    files:
+      - "web/static/fonts/fraunces/ (baru)"
+      - "web/static/fonts/space-grotesk/ (baru)"
+    steps:
+      - "unduh subset woff2 yang dibutuhkan saja (italic 500 untuk Fraunces nama hero; regular/medium untuk Space Grotesk label mono) — jangan seluruh family"
+      - "taruh file .woff2 di path di atas, JANGAN link ke fonts.googleapis.com/fonts.gstatic.com (self-hosted app, lihat R-D3)"
+      - "catat lisensi font (SIL OFL, keduanya open font) di web/static/fonts/LICENSE.md singkat"
+    dod: ["tidak ada request keluar ke domain google fonts dari file manapun setelah task ini", "ukuran total font baru <150KB gabungan (subset, bukan full family)"]
+
+  - id: R1.2
+    feature: radio_toggle_redesign
+    session: 1
+    parallel_ok: true
+    title: "Skeleton radio-hero.css — @font-face + token scoped"
+    depends_on: [R1.1]
+    locked: false
+    files: ["web/static/css/components/radio-hero.css (baru)"]
+    steps:
+      - "@font-face untuk Fraunces (italic 500) dan Space Grotesk (400/500/600), src ke path R1.1"
+      - "definisikan HANYA variable yang belum ada di tokens.css (--void, --indigo-deep, --static-grey, --moon-light) — untuk --moon-glow reuse var(--accent), untuk --text-1/--text-2/--r-full reuse token existing (RFC §5.5 poin 2), JANGAN duplikasi"
+      - "scope semua variable baru ke selector .radio-hero (bukan :root global) supaya tidak bocor ke komponen lain"
+    post_commands: ["python automation/find_owner.py web/static/css/tokens.css --json"]
+    dod: ["tidak ada variable terduplikasi dengan tokens.css", "file bisa di-lint CSS tanpa error walau belum dipakai di HTML manapun"]
+    patchlog_group: session_1
+    bundle_cmd: 'zip -rq lunawave-R1.2.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-R-*.zip"'
+
+  # ============================================================
+  # SESI 2 — CSS komponen radio-hero.css (DEDICATED, parallel_ok: false)
+  # ============================================================
+  - id: R2.1
+    feature: radio_toggle_redesign
+    session: 2
+    parallel_ok: false
+    title: "Container .radio-hero + starfield + shooting-star"
+    depends_on: [R1.2]
+    locked: false
+    files: ["web/static/css/components/radio-hero.css"]
+    steps:
+      - "port .hero -> .radio-hero: WAJIB height: 322px tetap (bukan min-height) — ini yang menutup root cause RFC §2"
+      - "port .star, .shooting-star, @keyframes shootingStarMove apa adanya (transform/opacity only)"
+      - "port .hero.on -> .radio-hero.on (border-color, box-shadow) apa adanya"
+    dod: ["class container final bernama .radio-hero (bukan .hero, hindari bentrok nama generik)", "height 322px terverifikasi fixed lewat DevTools (belum di HTML nyata, cek lewat file HTML sementara/preview terpisah)"]
+
+  - id: R2.2
+    feature: radio_toggle_redesign
+    session: 2
+    parallel_ok: false
+    title: "Moon SVG + tuner ticks + freq-label"
+    depends_on: [R2.1]
+    locked: false
+    files: ["web/static/css/components/radio-hero.css"]
+    steps:
+      - "port .dial-svg, .moon-lit-cool/.moon-lit-warm (cross-fade opacity), .moon-group, .moon-glow-wrap, @keyframes moonBreathe"
+      - "port .tick + @keyframes tickPulse + delay per nth-child, .tick.tuned"
+      - "port .freq-label + .freq-label.tuned"
+      - "seluruh animasi tetap transform/opacity/filter only (RFC §4 tabel) — JANGAN tambah properti yang memicu reflow (width/height/margin/padding di keyframes apa pun)"
+    dod: ["grep '@keyframes' di radio-hero.css -> semua keyframe cuma ubah transform/opacity/filter/stroke/fill, tidak ada width/height/margin/padding"]
+
+  - id: R2.3
+    feature: radio_toggle_redesign
+    session: 2
+    parallel_ok: false
+    title: "Badge status (Radio On/Off) + hero-name + hero-sub"
+    depends_on: [R2.2]
+    locked: false
+    files: ["web/static/css/components/radio-hero.css"]
+    steps:
+      - "ganti .onair-tag -> .radio-status-badge: DEVIASI dari mockup (R-D2) — badge SELALU visible di kedua state (tidak pakai visibility:hidden/opacity:0 saat off), cuma styling & teks yang beda"
+      - "markup badge = 1 dot + 2 span teks (.badge-text-off 'Radio Off', .badge-text-on 'Radio On'), keduanya di DOM; .radio-hero:not(.on) tampilkan .badge-text-off + sembunyikan .badge-text-on, .radio-hero.on kebalikannya — murni CSS, tidak ada textContent JS (lihat rationale R-D2)"
+      - "dot: warna netral (--static-grey/--text-3) saat off, --accent + animasi pulse saat on"
+      - "port .hero-name -> .hero-name teks 'Radio Mode' (R-D1), font-family: Fraunces (dari R1.2), fallback var(--font)"
+      - "port .hero-sub -> #rt-sub, class .hero-sub — TIDAK port textContent writing dari script mockup, teks tetap 100% dikontrol radio-tab.js existing (RFC §5.3)"
+    dod: ["badge terlihat di kedua state on/off dengan teks berbeda", "tidak ada JS di file ini yang menulis textContent (murni CSS file)", "#rt-sub tidak dapat default text hardcoded selain fallback HTML awal yang sudah ada"]
+
+  - id: R2.4
+    feature: radio_toggle_redesign
+    session: 2
+    parallel_ok: false
+    title: "Audit reduced-motion & responsif sempit"
+    depends_on: [R2.3]
+    locked: false
+    files: ["web/static/css/components/radio-hero.css"]
+    steps:
+      - "JANGAN tambah @media (prefers-reduced-motion) duplikat di file ini — sudah ada kill-switch global di base/animations.css (RFC §5.5 poin 5)"
+      - "cek posisi absolut starfield (top/left px) masih dalam bound .radio-hero pada lebar terkecil yang didukung (lihat breakpoint platform/mobile.css: 480px, 600px)"
+    post_commands: ["python automation/doctor.py --json"]
+    dod: ["tidak ada @media prefers-reduced-motion baru di radio-hero.css", "starfield tidak overflow visual pada lebar 320-360px (device tersempit yang lazim)"]
+    patchlog_group: session_2
+    bundle_cmd: 'zip -rq lunawave-R2.4.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-R-*.zip"'
+
+  # ============================================================
+  # SESI 3 — Modul JS radio-hero-moon.js (DEDICATED, parallel_ok: false)
+  # ============================================================
+  - id: R3.1
+    feature: radio_toggle_redesign
+    session: 3
+    parallel_ok: false
+    title: "Astronomi fase bulan + render(phase)"
+    depends_on: [R2.4]
+    locked: false
+    files: ["web/static/js/render/radio-hero-moon.js (baru)"]
+    steps:
+      - "port realPhase(date), moonPathD(phase), render(phase) apa adanya dari mockup"
+      - "port libration di render() (dx/dy/rotate via moonGroup.style.transform)"
+      - "SEMUA query elemen (getElementById) dilakukan di dalam modul ini sendiri, JANGAN tambah entry baru ke dom.js (RFC §5.3 — hindari 2 sumber kebenaran)"
+    dod: ["modul bisa di-load standalone tanpa error walau elemen SVG belum ada di index.html (guard null-check)"]
+
+  - id: R3.2
+    feature: radio_toggle_redesign
+    session: 3
+    parallel_ok: false
+    title: "State machine rAF (cycling/tweening) — module-scoped"
+    depends_on: [R3.1]
+    locked: false
+    files: ["web/static/js/render/radio-hero-moon.js"]
+    steps:
+      - "port stepCycle/stepTween/goCycling/goTweenToReal/easeInOutCubic/shortestDelta apa adanya"
+      - "WAJIB: variabel rafId, mode, cycleStartTs, dst SEMUA di module-scope (closure/IIFE atau top-level let di file ini), BUKAN di window — supaya mustahil bentrok dengan _progressRafId di player.js"
+      - "pertahankan const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches — ini WAJIB karena rAF JS tidak kena CSS kill-switch global (RFC §5.5 poin 5)"
+    dod: ["grep 'window.raf\\|window.mode\\|window.cycleStart' di file ini -> kosong (tidak ada state global bocor)"]
+
+  - id: R3.3
+    feature: radio_toggle_redesign
+    session: 3
+    parallel_ok: false
+    title: "API publik setRadioHeroAnimState(isOn) + init"
+    depends_on: [R3.2]
+    locked: false
+    files: ["web/static/js/render/radio-hero-moon.js"]
+    steps:
+      - "ekspos SATU fungsi global: function setRadioHeroAnimState(isOn) { ...panggil goCycling()/goTweenToReal()... }"
+      - "init: render(realPhase(new Date())) sekali saat modul dimuat (DOMContentLoaded atau langsung, ikuti pola script defer existing)"
+      - "HAPUS dari hasil porting: hero.addEventListener('click', ...) dan keydown handler — klik tetap 100% milik transport-events.js (RFC §5.3, §6 poin 3)"
+      - "HAPUS dari hasil porting: semua baris yang menulis sub.textContent ('Menyetel frekuensi...' dst) — subtitle tetap 100% milik radio-tab.js (RFC §5.3, §6 poin 2)"
+      - "fungsi setRadioHeroAnimState TIDAK BOLEH: baca/tulis store.*, panggil wsSend, panggil resetAnchorClock/setPositionAnchor, atau classList.add/remove pada #radio-toggle-btn"
+    dod: ["fungsi setRadioHeroAnimState hanya menerima 1 parameter boolean dan tidak return apa pun yang dikonsumsi caller"]
+
+  - id: R3.4
+    feature: radio_toggle_redesign
+    session: 3
+    parallel_ok: false
+    title: "Checklist isolasi wajib (RFC §5.4) — self-audit sebelum lanjut sesi 4"
+    depends_on: [R3.3]
+    locked: false
+    files: ["web/static/js/render/radio-hero-moon.js"]
+    steps:
+      - "jalankan tiap item checklist RFC §5.4 satu per satu terhadap file ini"
+    post_commands:
+      - "grep -n 'requestAnimationFrame' web/static/js/render/radio-hero-moon.js"
+      - "grep -n 'store\\.\\|wsSend\\|resetAnchorClock\\|setPositionAnchor\\|classList' web/static/js/render/radio-hero-moon.js"
+      - "python automation/find_owner.py web/static/js/audio/playback-sync.js --json"
+    dod:
+      - "requestAnimationFrame hanya muncul di dalam file ini, tidak di file lain yang baru dibuat"
+      - "hasil grep store/wsSend/resetAnchorClock/setPositionAnchor/classList di file ini KOSONG"
+      - "playback-sync.js dan player.js tidak punya import/reference apa pun ke radio-hero-moon.js"
+    patchlog_group: session_3
+    bundle_cmd: 'zip -rq lunawave-R3.4.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-R-*.zip"'
+
+  # ============================================================
+  # SESI 4 — Gate: index.html (DEDICATED, WAJIB konfirmasi eksplisit)
+  # ============================================================
+  - id: R4.1
+    feature: radio_toggle_redesign
+    session: 4
+    parallel_ok: false
+    locked: true
+    title: "Markup #radio-toggle-btn baru + includes CSS/JS"
+    depends_on: [R3.4]
+    files: ["LOCKED: web/static/index.html"]
+    requires_human_confirmation: true
+    steps:
+      - "STOP — minta konfirmasi eksplisit user sebelum menyentuh index.html, walau task sesi 1-3 sudah selesai & disetujui"
+      - "tambah <link rel=\"stylesheet\" href=\"/static/css/components/radio-hero.css\"> tepat setelah cards.css (RFC §5.2)"
+      - "tambah <script src=\"/static/js/render/radio-hero-moon.js?v=1\" defer> — taruh SEBELUM radio-tab.js di urutan <script> (urutan tidak strict karena typeof-check, tapi ikuti konvensi logis: dependency dulu)"
+      - "ganti blok markup #radio-toggle-btn (baris ~298-322 versi baseline) sesuai peta RFC §5.1: PERTAHANKAN id=radio-toggle-btn, data-on, id=rt-sub apa adanya; class container jadi radio-hero (bukan radio-featured); nama hero 'Radio Mode' (R-D1); badge 2-span 'Radio Off'/'Radio On' (R-D2, lihat struktur di R2.3); markup SVG moon+tick+freq-label dari mockup (id moonGroup/moonLitCool/moonLitWarm dipertahankan supaya cocok dengan query di radio-hero-moon.js)"
+      - "TIDAK port: toggle-hint dan section .compare (itu penjelasan demo, bukan bagian produk)"
+      - "tambah role=\"button\" tabindex=\"0\" aria-pressed=\"false\" di container (peningkatan a11y, RFC §5.5 poin 4) — aria-pressed akan di-sync oleh radio-tab.js di R5.1"
+      - "pertahankan <div style=\"display:none;\" id=\"radio-toggle-wrap\"></div> apa adanya, tidak disentuh"
+    post_commands:
+      - "python automation/doctor.py --json"
+      - "python automation/architecture_lint.py --json"
+    dod:
+      - "grep 'centerpiece\\|radio-live-badge\\|radio-featured' web/static/js/ web/static/index.html -> kosong (markup lama sudah tergantikan total)"
+      - "id radio-toggle-btn, data-on, rt-sub masih ada persis dengan nama yang sama"
+      - "doctor.py --strict tidak menambah error baru dibanding baseline sebelum task ini"
+    patchlog_group: session_4
+    bundle_cmd: 'zip -rq lunawave-R4.1.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-R-*.zip"'
+
+  # ============================================================
+  # SESI 5 — Wiring renderRadio() (DEDICATED, parallel_ok: false)
+  # ============================================================
+  - id: R5.1
+    feature: radio_toggle_redesign
+    session: 5
+    parallel_ok: false
+    risk: medium
+    title: "Hook setRadioHeroAnimState() dari renderRadio()"
+    depends_on: [R4.1]
+    locked: false
+    files: ["web/static/js/render/radio-tab.js"]
+    steps:
+      - "tambah SATU baris di akhir renderRadio(): if (typeof setRadioHeroAnimState === 'function') setRadioHeroAnimState(isRadio);"
+      - "tambah sinkronisasi aria-pressed di blok classList existing: dom.radioToggleBtn.setAttribute('aria-pressed', isRadio ? 'true' : 'false')"
+      - "TIDAK ada perubahan lain ke logika classList on/off atau dom.rtSub.textContent yang sudah ada — itu tetap seperti baseline"
+    post_commands: ["python automation/find_owner.py web/static/js/render/radio-tab.js --json"]
+    dod:
+      - "renderRadio() tetap satu-satunya penulis classList on/off dan dataset.on di file manapun"
+      - "toggle manual di browser (klik kartu) memicu animasi moon berjalan/berhenti tanpa error console"
+    patchlog_group: session_5
+    bundle_cmd: 'zip -rq lunawave-R5.1.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-R-*.zip"'
+
+  # ============================================================
+  # SESI 6 — QA & verifikasi isolasi (parallel_ok: true)
+  # ============================================================
+  - id: R6.1
+    feature: radio_toggle_redesign
+    session: 6
+    parallel_ok: true
+    title: "Verifikasi tinggi kartu identik off/on"
+    depends_on: [R5.1]
+    files: []
+    dod: ["tinggi #radio-toggle-btn di DevTools identik persis antara state off dan on (322px, RFC §7 poin 1)"]
+
+  - id: R6.2
+    feature: radio_toggle_redesign
+    session: 6
+    parallel_ok: true
+    title: "QA viewport sempit (R-D4 follow-up)"
+    depends_on: [R5.1]
+    files: []
+    steps:
+      - "test di lebar 320px, 360px, 480px (breakpoint mobile.css) dan orientasi landscape (landscape.css)"
+    dod: ["tidak ada overflow/clipping pada starfield, badge, atau teks di seluruh breakpoint yang diuji — jika ditemukan masalah, catat sebagai bug terpisah, JANGAN ubah keputusan 322px di task ini (R-D4 sudah final)"]
+
+  - id: R6.3
+    feature: radio_toggle_redesign
+    session: 6
+    parallel_ok: true
+    title: "Test jalur toggle: klik, keyboard, swipe-guard"
+    depends_on: [R5.1]
+    files: []
+    dod:
+      - "klik kartu toggle radio mode (via transport-events.js, tidak double-fire)"
+      - "shortcut keyboard R (keyboard-shortcut-events.js) tetap toggle radio seperti biasa"
+      - "swipe horizontal di atas kartu TIDAK memicu next/prev track (guard #radio-toggle-btn di touch.js masih efektif)"
+
+  - id: R6.4
+    feature: radio_toggle_redesign
+    session: 6
+    parallel_ok: true
+    title: "Test guard role non-admin"
+    depends_on: [R5.1]
+    files: []
+    dod: ["user dengan role bukan admin klik kartu -> tidak ada perubahan mode, tidak ada wsSend terkirim"]
+
+  - id: R6.5
+    feature: radio_toggle_redesign
+    session: 6
+    parallel_ok: true
+    risk: medium
+    title: "Verifikasi isolasi playback-sync (regresi RFC §3)"
+    depends_on: [R5.1]
+    files: []
+    steps:
+      - "toggle radio ON, biarkan lagu jalan >2 menit, pantau console browser"
+      - "spam klik toggle ON/OFF berkali-kali cepat, pantau memory/rafId tidak menumpuk (performance tab)"
+    dod:
+      - "tidak ada error dari playback-sync.js selama pengujian (khususnya getInterpolatedPosition/_progressRafId)"
+      - "tidak ada rafId menumpuk setelah spam toggle (memory stabil)"
+
+  - id: R6.6
+    feature: radio_toggle_redesign
+    session: 6
+    parallel_ok: true
+    title: "Test prefers-reduced-motion"
+    depends_on: [R5.1]
+    files: []
+    dod: ["dengan OS-level reduced-motion aktif: starfield/tick/glow berhenti (CSS kill-switch), rAF fase bulan fallback ke render statis tanpa loop jalan (reduceMotion guard di R3.2 efektif)"]
+
+  # ============================================================
+  # SESI 7 — Cleanup CSS lama + dokumentasi penutup (parallel_ok: true)
+  # ============================================================
+  - id: R7.1
+    feature: radio_toggle_redesign
+    session: 7
+    parallel_ok: true
+    title: "Hapus style .radio-featured lama dari cards.css"
+    depends_on: [R6.1, R6.2, R6.3, R6.4, R6.5, R6.6]
+    locked: false
+    files: ["web/static/css/components/cards.css"]
+    steps:
+      - "grep ulang dependency (lihat aturan eksekusi #7 di atas) sebelum hapus"
+      - "hapus blok .radio-featured, .radio-featured-inner, .radio-centerpiece, .centerpiece-*, .radio-live-badge, dan @keyframes terkait (transmit-radio, pulse-live, pulse-antenna, bounce-wave-*) dari cards.css"
+    post_commands:
+      - "grep -rn 'centerpiece\\|radio-live-badge\\|radio-featured\\|transmit-radio\\|pulse-antenna\\|bounce-wave' web/static/"
+      - "python automation/doctor.py --strict --json"
+    dod: ["hasil grep di atas kosong (tidak ada residual)", "doctor.py --strict PASS"]
+
+  - id: R7.2
+    feature: radio_toggle_redesign
+    session: 7
+    parallel_ok: true
+    title: "Regression manual penuh + regenerasi index"
+    depends_on: [R7.1]
+    files: []
+    post_commands:
+      - "python automation/generate_file_index.py"
+      - "python automation/generate_report.py"
+      - "python automation/patchlog.py verify --json"
+    dod: ["FILE_INDEX.md/REPORT.md ter-regenerate", "patchlog.py verify tanpa entry rusak"]
+
+  - id: R7.3
+    feature: radio_toggle_redesign
+    session: 7
+    parallel_ok: true
+    title: "PATCHLOG penutup fitur"
+    depends_on: [R7.2]
+    files: ["docs/PATCHLOG.md"]
+    steps:
+      - "satu entry PATCHLOG merangkum seluruh fitur (sesi 1-7), sertakan referensi ke docs/rfc/radio_toggle.md dan keputusan R-D1..R-D4"
+    dod: ["entry baru ID PATCH-YYYY-MM-DD-NNN ada di paling atas docs/PATCHLOG.md, format sesuai konvensi existing"]
+    bundle_cmd: 'zip -rq lunawave-R7.3-FINAL.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-R-*.zip"'
+
+execution_order:
+  - R0.1
+  - R0.2
+  # --- Sesi 1 (parallel_ok) ---
+  - R1.1
+  - R1.2
+  # --- Sesi 2 (DEDICATED) ---
+  - R2.1
+  - R2.2
+  - R2.3
+  - R2.4
+  # --- Sesi 3 (DEDICATED — kritis untuk isolasi) ---
+  - R3.1
+  - R3.2
+  - R3.3
+  - R3.4
+  # --- Sesi 4 (DEDICATED — gate index.html) ---
+  - R4.1
+  # --- Sesi 5 (DEDICATED) ---
+  - R5.1
+  # --- Sesi 6 (parallel_ok — QA) ---
+  - R6.1
+  - R6.2
+  - R6.3
+  - R6.4
+  - R6.5
+  - R6.6
+  # --- Sesi 7 (parallel_ok — cleanup & penutup) ---
+  - R7.1
+  - R7.2
+  - R7.3
+  # catatan: 7 sesi. Sesi 2 dan 3 WAJIB dedicated (tidak boleh digabung task
+  # lain) karena keduanya membangun satu file yang sama secara bertahap.
+  # Sesi 4 WAJIB dedicated + konfirmasi eksplisit (file locked). Sesi 1, 6, 7
+  # boleh dikerjakan lebih longgar/paralel jika agent mengerjakan sendiri.

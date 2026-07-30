@@ -1,0 +1,241 @@
+# 04_sesi4_circular_deps.yaml
+# Sesi 4 — Circular dependencies. WAJIB setelah sesi 2 selesai (lihat
+# koreksi_terhadap_rencana_asli di 00_INDEX.yaml: 148 edge asli turun jadi
+# 67 setelah fix eslint diterapkan). TIDAK BOLEH paralel dengan sesi lain.
+#
+# HASIL INVESTIGASI PENTING (dikerjakan penuh sebelum menulis file ini,
+# bukan diserahkan mentah ke eksekutor): dari 67 edge yang tersisa, TIDAK
+# ADA subset yang bisa diperbaiki mekanis-aman secara independen dari
+# keputusan arsitektur di sesi 5. Detail di bawah. Karena itu sesi ini
+# BUKAN "kerjakan 67 fix", tapi "1 keputusan konkret (visualizer) + laporan
+# investigasi terstruktur untuk dibawa ke keputusan RFC sesi 5".
+
+session: 4
+parallel_ok: false
+risk: medium
+depends_on: [2]
+butuh_konfirmasi_user_sebelum_mulai: true
+
+data_mentah_edge_list_67:
+  perintah_regenerasi: "npx depcruise --config .dependency-cruiser.js web/static/shared/js web/static/pages -T json"
+  catatan: "Daftar di bawah sudah final hasil eksekusi nyata pasca-simulasi fix sesi 2. Tidak perlu dijalankan ulang kecuali untuk audit — sudah dipakai sebagai dasar keputusan di sesi ini."
+  edges:
+    - "audio/playback-sync.js -> audio/visualizer.js"
+    - "audio/playback-sync.js -> render/player.js"
+    - "audio/playback-sync.js -> render/radio-hero-moon.js"
+    - "audio/playback-sync.js -> ws.js"
+    - "audio/visualizer.js -> audio/playback-sync.js"
+    - "events/action-modal-events.js -> render/search.js"
+    - "events/click-delegation-events.js -> render/search.js"
+    - "events/discover-search-events.js -> render/discover-search.js"
+    - "events/index.js -> audio/playback-sync.js"
+    - "events/index.js -> events/action-modal-events.js"
+    - "events/index.js -> events/click-delegation-events.js"
+    - "events/index.js -> events/discover-search-events.js"
+    - "events/index.js -> events/keyboard-shortcut-events.js"
+    - "events/index.js -> events/lyrics-events.js"
+    - "events/index.js -> events/progress-events.js"
+    - "events/index.js -> events/queue-events.js"
+    - "events/index.js -> events/search-input-events.js"
+    - "events/index.js -> events/settings-events.js"
+    - "events/index.js -> events/transport-events.js"
+    - "events/index.js -> render/discover-personalize.js"
+    - "events/index.js -> services/auth.js"
+    - "events/index.js -> ws.js"
+    - "events/keyboard-shortcut-events.js -> events/index.js"
+    - "events/keyboard-shortcut-events.js -> events/settings-events.js"
+    - "events/keyboard-shortcut-events.js -> render/search.js"
+    - "events/lyrics-events.js -> events/settings-events.js"
+    - "events/progress-events.js -> render/player.js"
+    - "events/search-input-events.js -> render/search.js"
+    - "events/settings-events.js -> audio/playback-sync.js"
+    - "events/settings-events.js -> events/index.js"
+    - "events/settings-events.js -> ws.js"
+    - "events/transport-events.js -> events/index.js"
+    - "events/transport-events.js -> events/settings-events.js"
+    - "events/transport-events.js -> render/player.js"
+    - "events/transport-events.js -> render/radio-tab.js"
+    - "render/discover-personalize.js -> events/index.js"
+    - "render/discover-personalize.js -> events/settings-events.js"
+    - "render/discover-personalize.js -> ws.js"
+    - "render/discover-search.js -> render/search.js"
+    - "render/discover-tab.js -> events/index.js"
+    - "render/discover-tab.js -> render/search.js"
+    - "render/discover-tab.js -> ws.js"
+    - "render/full-state.js -> audio/playback-sync.js"
+    - "render/full-state.js -> events/settings-events.js"
+    - "render/full-state.js -> render/discover-tab.js"
+    - "render/full-state.js -> render/player.js"
+    - "render/full-state.js -> render/radio-tab.js"
+    - "render/full-state.js -> render/search.js"
+    - "render/full-state.js -> ws.js"
+    - "render/player.js -> audio/playback-sync.js"
+    - "render/radio-hero-moon.js -> render/player.js"
+    - "render/radio-tab.js -> render/radio-hero-moon.js"
+    - "render/search.js -> ws.js"
+    - "services/auth.js -> audio/playback-sync.js"
+    - "services/auth.js -> events/index.js"
+    - "services/auth.js -> events/settings-events.js"
+    - "services/auth.js -> ws.js"
+    - "ws.js -> audio/playback-sync.js"
+    - "ws.js -> events/settings-events.js"
+    - "ws.js -> render/discover-personalize.js"
+    - "ws.js -> render/discover-search.js"
+    - "ws.js -> render/discover-tab.js"
+    - "ws.js -> render/full-state.js"
+    - "ws.js -> render/player.js"
+    - "ws.js -> render/radio-tab.js"
+    - "ws.js -> render/search.js"
+    - "ws.js -> services/auth.js"
+  # semua path di atas relatif terhadap web/static/shared/js/ kecuali disebutkan lain
+
+diagnosis:
+  hub_utama:
+    - node: "web/static/shared/js/ws.js"
+      jumlah_edge_terlibat: 17
+      peran: "ws.js diimpor SEMUA modul render/events untuk wsSend, DAN ws.js sendiri mengimpor balik hampir semua modul render (discover-personalize, discover-search, discover-tab, full-state, player, radio-tab, search) untuk memanggil fungsi render setelah menerima pesan websocket."
+    - node: "web/static/shared/js/events/index.js"
+      jumlah_edge_terlibat: 15
+      peran: "Hub inisialisasi semua modul events/*, plus mengimpor balik playback-sync.js, services/auth.js, render/discover-personalize.js, ws.js."
+    - node: "web/static/shared/js/audio/playback-sync.js"
+      jumlah_edge_terlibat: 11
+      peran: "Engine audio: mengimpor render/player, render/radio-hero-moon, ws.js untuk update UI setelah playback event, DAN diimpor balik oleh render/player.js, services/auth.js, events/index.js, events/settings-events.js, render/full-state.js, ws.js untuk fungsi kontrol (getOrInitAudio, syncBrowserAudio, dst)."
+    - node: "web/static/shared/js/render/search.js, render/full-state.js, events/settings-events.js"
+      jumlah_edge_terlibat: "6-7 masing-masing"
+      peran: "Hub sekunder, pola sama: dipanggil banyak modul untuk render, tapi juga mengimpor balik ws.js/events untuk kirim aksi."
+
+  kesimpulan_investigasi: >
+    TIDAK ADA subset dari 67 edge ini yang independen satu sama lain.
+    Memutus satu edge di hub (mis. ws.js -> render/player.js) TIDAK
+    menyelesaikan apa pun sendirian selama arah sebaliknya
+    (render/player.js -> ws.js, tidak langsung tapi lewat rantai
+    render/full-state.js -> ws.js -> render/player.js) tetap ada. Akar
+    masalahnya SATU: modul "layer bawah" (audio, ws transport) memanggil
+    LANGSUNG fungsi render di "layer atas", padahal seharusnya komunikasi
+    ini satu arah lewat event/callback. Memperbaikinya dengan benar berarti
+    membangun mekanisme itu (event bus / dependency injection) — PERSIS
+    pekerjaan yang sudah ditandai di 05_sesi5_render_events.yaml sebagai
+    butuh RFC & approval terpisah. Sesi 4 TIDAK BISA dituntaskan sebagai
+    tugas mekanis berdiri sendiri tanpa keputusan arsitektur itu.
+
+  pengecualian_satu_kasus_konkret:
+    edge: "audio/playback-sync.js <-> audio/visualizer.js (2 edge)"
+    temuan: >
+      Ini BUKAN circular dependency yang tidak disengaja — ini pola live
+      binding ES module yang SENGAJA dan BARU dipasang hari ini di
+      PATCH-2026-07-24-223 (lihat komentar di kedua file: playback-sync.js
+      baris 27-29 dan visualizer.js baris 5-8, 59-62). `analyser` dan
+      `dataArray` di-export sebagai `let` dari playback-sync.js dan
+      diimpor langsung (bukan lewat parameter) oleh visualizer.js supaya
+      nilainya otomatis ter-update tiap kali audio context diinisialisasi
+      ulang, tanpa perlu re-passing manual di setiap pemanggilan.
+    keputusan_direkomendasikan: >
+      JANGAN dibongkar mekanis di sesi ini. Refactor ke pemberian parameter
+      akan menghilangkan keuntungan live-binding yang baru sengaja dipasang
+      dan berisiko meregresi behavior visualizer (butuh testing audio
+      real-time ekstra, untuk keuntungan yang meragukan: cuma menghilangkan
+      2 dari 67 warning). Rekomendasi: terima sebagai exception terdokumentasi
+      di .dependency-cruiser.js, BUKAN tugas silent-fix.
+    cara_terima_sebagai_exception: >
+      Tambahkan comment block di .dependency-cruiser.js pada rule
+      'circular-dependencies' yang menyebutkan bahwa
+      audio/playback-sync.js<->audio/visualizer.js adalah exception
+      terdokumentasi (depcruise sendiri tidak punya syntax "allow specific
+      cycle" bawaan yang sederhana — cara paling jujur adalah TIDAK
+      menambah suppress teknis, cukup dokumentasikan di PATCHLOG dan di
+      komentar rule, supaya siapa pun yang lihat 65 warning vs 67 warning
+      di masa depan tahu 2 di antaranya adalah keputusan sadar, bukan
+      belum-sempat-dikerjakan.
+
+tugas_yang_benar_benar_dieksekusi_di_sesi_ini:
+  - id: S4.1
+    title: "Dokumentasikan keputusan exception playback-sync<->visualizer (TANPA ubah kode fungsional)"
+    files:
+      - path: "docs/architecture/frontend.md"
+        action: "tambah 1 paragraf di bagian yang relevan (cari heading tentang audio/visualizer atau dependency graph)"
+        isi_paragraf: |
+          **Exception circular-dependency terdokumentasi:** `audio/playback-sync.js`
+          dan `audio/visualizer.js` saling impor (live binding `analyser`/`dataArray`)
+          secara sengaja sejak PATCH-2026-07-24-223, supaya visualizer selalu
+          melihat nilai `analyser` terkini tanpa re-passing manual. Ini
+          terdeteksi sebagai circular-dependency warning oleh depcruise, dan
+          SENGAJA DIBIARKAN (bukan lupa diperbaiki) karena refactor ke
+          parameter-passing berisiko meregresi behavior real-time audio untuk
+          manfaat yang kecil. Lihat investigasi lengkap di
+          docs/rfc/frontend_refactor/ sesi 4.
+    verifikasi:
+      - "python automation/verify_docs.py --json -> tetap PASS"
+    patchlog_cmd: |
+      python automation/patchlog.py add \
+        --type Docs --area Frontend --priority Low \
+        --title "Dokumentasikan exception circular-dependency playback-sync<->visualizer" \
+        --reason "Investigasi 67 circular-dependency warning pasca sesi 2 menemukan bahwa 2 di antaranya (playback-sync<->visualizer) adalah live-binding ES module yang sengaja dipasang PATCH-223, bukan bug" \
+        --files "docs/architecture/frontend.md" \
+        --root-cause "depcruise tidak bisa membedakan circular-dependency yang disengaja (live binding) dari yang tidak disengaja" \
+        --solution "Dokumentasikan sebagai exception sadar di docs/architecture/frontend.md, tidak melakukan refactor kode" \
+        --tests "python automation/verify_docs.py --json -> PASS" \
+        --breaking No --risk Low --status Merged \
+        --related PATCH-2026-07-24-223
+    checkpoint_cmd: >
+      zip -rq checkpoints/lunawave-S4.1.zip . -x ".git/*" -x "*__pycache__*"
+      -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+      -x "*.DS_Store" -x "checkpoints/*"
+
+  - id: S4.2
+    title: "Tulis laporan investigasi 65 edge sisa sebagai INPUT KEPUTUSAN untuk RFC sesi 5 (bukan eksekusi fix)"
+    status: "STOP di sini — jangan lanjut membongkar ws.js/events/index.js/playback-sync tanpa approval eksplisit"
+    files:
+      - path: "docs/rfc/frontend_refactor/temuan_circular_deps_sesi4.md"
+        action: create
+        isi: |
+          # Temuan investigasi circular-dependencies — Sesi 4
+
+          65 dari 67 circular-dependency warning (2 sisanya sudah didokumentasikan
+          sebagai exception sadar di S4.1) berakar pada SATU pola yang sama:
+          modul audio (`playback-sync.js`) dan transport (`ws.js`) memanggil
+          fungsi render secara langsung, dan modul render/events memanggil
+          balik fungsi kontrol/kirim-pesan di audio/ws. Ini identik dengan
+          masalah render<->events cross-import yang sudah ditandai di RFC
+          terpisah (lihat 05_sesi5_render_events.yaml).
+
+          Hub utama: ws.js (17 edge), events/index.js (15 edge),
+          audio/playback-sync.js (11 edge).
+
+          **Rekomendasi:** satukan keputusan RFC event bus (semula scope-nya
+          cuma render<->events, 20 warning) supaya juga mencakup ws.js dan
+          audio/playback-sync.js sebagai pengirim/penerima event, bukan
+          pemanggil langsung. Ini satu proyek arsitektur, bukan dua yang
+          kebetulan bertumpang tindih.
+
+          Data mentah 67-edge dan hub breakdown: lihat
+          04_sesi4_circular_deps.yaml > data_mentah_edge_list_67 dan
+          > diagnosis.
+    verifikasi:
+      - "File tersimpan, tidak ada perubahan kode fungsional"
+    patchlog_cmd: |
+      python automation/patchlog.py add \
+        --type Docs --area Frontend --priority Medium \
+        --title "Laporan investigasi 65 circular-dependency edge sisa untuk keputusan RFC" \
+        --reason "65 dari 67 circular-dependency warning tidak bisa diperbaiki mekanis tanpa keputusan arsitektur event-bus yang sama dengan RFC render<->events" \
+        --files "docs/rfc/frontend_refactor/temuan_circular_deps_sesi4.md" \
+        --root-cause "ws.js dan audio/playback-sync.js memanggil langsung fungsi render, modul render/events memanggil balik fungsi kontrol/kirim-pesan — pola yang sama dengan masalah render<->events" \
+        --solution "Tulis laporan investigasi, REKOMENDASI gabungkan ke satu keputusan RFC event bus yang lebih luas cakupannya (bukan eksekusi fix di sesi ini)" \
+        --tests "N/A — dokumentasi murni, tidak ada perubahan kode" \
+        --breaking No --risk Low --status Merged \
+        --related PATCH-2026-07-24-223 \
+        --notes "TIDAK MENGEKSEKUSI perbaikan 65 edge di sesi ini. Menunggu keputusan RFC (lihat 05_sesi5_render_events.yaml) sebelum ada perubahan kode pada ws.js, events/index.js, atau audio/playback-sync.js terkait ini."
+    checkpoint_cmd: >
+      zip -rq checkpoints/lunawave-S4.2.zip . -x ".git/*" -x "*__pycache__*"
+      -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+      -x "*.DS_Store" -x "checkpoints/*"
+
+larangan_eksplisit_sesi_ini:
+  - "JANGAN membongkar/refactor ws.js, events/index.js, atau audio/playback-sync.js untuk 'menghabiskan' 65 warning sisa. Sudah dibuktikan lewat investigasi ini bukan hal yang bisa dikerjakan aman secara mekanis."
+  - "JANGAN pakai dynamic import untuk sekadar melewatkan linter — akan menyembunyikan masalah, bukan menyelesaikannya."
+  - "JANGAN gabungkan keputusan ini dengan mengeksekusi 05_sesi5_render_events.yaml tanpa approval eksplisit dari user — sesi ini hanya menyiapkan bahan keputusan, bukan mengeksekusinya."
+
+verifikasi_sesi_selesai:
+  - "docs/architecture/frontend.md berisi paragraf exception playback-sync<->visualizer"
+  - "docs/rfc/frontend_refactor/temuan_circular_deps_sesi4.md ada"
+  - "2 entry baru di docs/PATCHLOG.md (S4.1, S4.2)"
+  - "npx depcruise ... -> masih 65 warning circular-dependencies (TURUN dari 67 karena 2 exception playback-sync<->visualizer sudah didokumentasikan, TAPI TIDAK DIHILANGKAN dari output depcruise — depcruise tetap akan melaporkannya sebagai warning teknis, itu WAJAR dan DIHARAPKAN, karena tidak ada suppress teknis yang ditambahkan, hanya dokumentasi)"

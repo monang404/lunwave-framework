@@ -1,0 +1,102 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 08 — shortestDelta() idiom circular-distance standar
+# (temuan audit-lunawave-temuan.md #5)
+# Depends on: TIDAK ADA (independen)
+# Risiko: SANGAT RENDAH (kosmetik) | Effort: KECIL
+# Bagian dari seri: docs/rfc/temuan_audit_2026_07_27/ — BACA 00_index_and_decisions.yaml
+# LEBIH DULU (berisi decisions/keputusan desain & deviation_protocol yang
+# berlaku untuk SEMUA file di seri ini, termasuk file ini).
+# =============================================================================
+
+phase:
+  id: T08
+  title: "shortestDelta() idiom circular-distance standar"
+  temuan_ref: 5
+  closes_temuan: [5]
+  depends_on: []
+
+tasks:
+  - task_id: P3-T1
+    title: "shortestDelta(): idiom circular-distance standar, tie-break konsisten di 0.5"
+    temuan_ref: 5
+    severity_audit: "Rendah (kosmetik)"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - web/static/shared/js/render/radio-hero-moon.js
+      modify_tests:
+        - tests/frontend/render/radio-hero-moon.test.js
+    steps:
+      - >
+        `view` web/static/shared/js/render/radio-hero-moon.js fungsi
+        `shortestDelta` (baris ~98-102 saat audit). VERIFIKASI ULANG
+        formula persis: `d = ((d % 1) + 1.5) % 1 - 0.5`.
+      - >
+        Ganti dengan idiom standar circular-distance:
+        ```js
+        function shortestDelta(from, to) {
+          let d = (to - from) % 1;
+          if (d < 0) d += 1;   // normalize ke [0, 1)
+          if (d > 0.5) d -= 1; // ambil arah terpendek; tie (d === 0.5) tetap +0.5
+          return d;
+        }
+        ```
+        Efek HANYA di titik tepat `to - from === 0.5` (mod 1): dari
+        formula lama yang selalu resolve ke -0.5, sekarang konsisten
+        resolve ke +0.5. Semua titik lain menghasilkan nilai identik
+        dengan formula lama (VERIFIKASI dengan test brute-force yang
+        sudah disebut di audit -- lihat langkah tes berikutnya).
+      - >
+        Test brute-force di tests/frontend/render/radio-hero-moon.test.js
+        (kalau test file belum mengekspos shortestDelta untuk diuji
+        langsung, cek apakah fungsi perlu di-export sementara untuk
+        testing, atau test lewat efek tidak langsung yang sudah ada di
+        file test tsb -- VERIFIKASI ULANG struktur module IIFE-nya,
+        fungsi ini didefinisikan di dalam closure `(function() {...})()`
+        jadi mungkin perlu expose via `setRadioHeroAnimState` atau
+        helper test-only yang sudah dipakai test existing untuk kasus
+        serupa): untuk 1000+ pasangan (from, to) acak di [0,1), assert
+        `Math.abs(shortestDelta(from, to)) <= 0.5` selalu benar (tidak
+        pernah lebih dari setengah lingkaran), dan untuk kasus spesifik
+        `to - from === 0.5` (mod 1) assert hasilnya konsisten `+0.5`
+        (bukan -0.5).
+      - >
+        Test regresi: tambahkan beberapa kasus non-edge yang sudah
+        diverifikasi manual sama antara formula lama & baru (mis.
+        from=0, to=0.3 -> +0.3; from=0, to=0.7 -> -0.3) untuk
+        memastikan tidak ada regresi di luar titik edge-case.
+    acceptance_criteria:
+      - "shortestDelta() di titik to-from == 0.5 (mod 1) selalu resolve ke arah yang sama (+0.5), tidak lagi selalu -0.5."
+      - "Semua nilai lain identik dengan formula lama (dibuktikan brute-force test)."
+    tests:
+      run:
+        - "npx vitest run tests/frontend/render/radio-hero-moon.test.js"
+    patchlog:
+      type: bug_fix
+      area: "web/static/shared/js/render"
+      title: "shortestDelta(): idiom circular-distance standar, tie-break konsisten"
+      reason: >
+        Formula ad-hoc `((d % 1) + 1.5) % 1 - 0.5` salah arah tepat di
+        titik to-from == 0.5 -- dibuktikan lewat test brute-force,
+        selalu resolve ke -0.5 padahal seharusnya bisa konsisten ke
+        arah manapun yang dipilih sebagai konvensi (dampak kosmetik:
+        animasi tween bulan bisa berputar 180 derajat berlawanan arah
+        di edge-case yang sangat jarang terjadi persis).
+      root_cause: >
+        Formula custom untuk normalize circular delta tidak mengikuti
+        idiom standar (normalize ke [0,1) lalu ambil arah pendek),
+        menghasilkan tie-break yang tidak disengaja/tidak konsisten
+        di titik 0.5 persis.
+      solution: >
+        Ganti dengan idiom standar (modulo normalize + kurangi 1 kalau
+        > 0.5), tie di titik 0.5 sekarang selalu resolve ke +0.5.
+      files: "web/static/shared/js/render/radio-hero-moon.js, tests/frontend/render/radio-hero-moon.test.js"
+      notes: "Tidak menyentuh file locked. Perubahan kosmetik, dampak visual sangat jarang terjadi."
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/patchlog.py verify"
+  - "npx eslint web/static"

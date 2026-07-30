@@ -1,0 +1,225 @@
+%YAML 1.1
+---
+# =============================================================================
+# LunaWave — Rencana Implementasi Perbaikan Keamanan & Bug
+# File index & keputusan. BACA FILE INI PERTAMA.
+#
+# Sumber: proposal_perbaikan_keamanan_dan_bug.md (RFC v1.0, 2026-07-27)
+# Sumber asli: Ringkasan Hasil Audit Keamanan LunaWave (20 temuan)
+# Status keputusan: SEMUA pertanyaan implisit di proposal sudah DIPUTUSKAN
+# di bawah ini (lihat `decisions`). Setiap file task siap dieksekusi tanpa
+# perlu bertanya balik ke user, kecuali eksekutor menemukan fakta kode yang
+# KONTRADIKTIF dengan asumsi di sini (lihat `deviation_protocol`).
+# =============================================================================
+
+meta:
+  project: LunaWave
+  rfc_source: proposal_perbaikan_keamanan_dan_bug.md
+  generated: "2026-07-27"
+  authorization: >
+    Pemilik project meminta plan ini dibuat langsung dari proposal keamanan
+    yang sudah disetujui secara implisit (permintaan "terjemahkan menjadi
+    implementation plan .yaml siap eksekusi"). Ini dicatat sebagai bentuk
+    persetujuan untuk mengeksekusi task yang menyentuh file locked
+    `server/handlers/websocket.py` (lihat AI_CONTEXT.md §File yang tidak
+    boleh disentuh), SELAMA task tersebut murni penambahan (except clause
+    baru / action baru) dan bukan pemecahan struktur file — persis pola yang
+    sudah dipakai di `docs/rfc/arsip/perbaikan_arsitektur/00_index_and_decisions.yaml`
+    (meta.authorization, task 07). WAJIB dicatat ulang di PATCHLOG.md entry
+    masing-masing task yang menyentuh file locked.
+  principle: >
+    Setiap fase independen dan boleh dihentikan tanpa meninggalkan kode
+    dalam keadaan rusak (non-breaking per task). Urutan eksekusi mengikuti
+    §6 proposal (Fase 1 -> 2 -> 3 -> 4), yang sudah dependency-safe secara
+    naratif; dependency_graph di bawah memformalkan itu.
+
+# -----------------------------------------------------------------------------
+# Pemetaan nomor file (urutan eksekusi) -> Fase/Temuan asli di proposal.
+# -----------------------------------------------------------------------------
+file_map:
+  - file: 01_fase1_kebocoran_informasi_dan_sesi.yaml
+    proposal_fase: 1
+    proposal_temuan: ["§3.3", "§3.4", "§4.6"]
+    area: server/handlers, persistence, core
+  - file: 02_fase2_validasi_dan_rate_limiting.yaml
+    proposal_fase: 2
+    proposal_temuan: ["§3.1", "§3.2", "§3.5"]
+    area: server/handlers, server/middleware, server/connection_manager, engine
+  - file: 03_fase3_kriptografi_dan_dependency.yaml
+    proposal_fase: 3
+    proposal_temuan: ["§4.2", "§4.7"]
+    area: core/security.py, persistence, requirements.txt
+  - file: 04_fase4_cleanup_dan_konsistensi.yaml
+    proposal_fase: 4
+    proposal_temuan: ["§4.1", "§4.3", "§4.4", "§4.5", "§4.8", "§5.1"]
+    area: core, engine, server/handlers, web/static
+  - file: 05_backlog_deferred.yaml
+    proposal_fase: null
+    proposal_temuan: ["§5.2-§5.6"]
+    area: (desain, lintas repo)
+    note: "Deferred, TIDAK dieksekusi dalam plan ini. Lihat decisions.d6."
+
+# -----------------------------------------------------------------------------
+# Dependency graph antar file (bukan antar task individual — lihat tiap file
+# untuk dependency task-level internal).
+# -----------------------------------------------------------------------------
+dependency_graph:
+  01_fase1_kebocoran_informasi_dan_sesi.yaml: []
+  02_fase2_validasi_dan_rate_limiting.yaml: []
+  03_fase3_kriptografi_dan_dependency.yaml: []
+  04_fase4_cleanup_dan_konsistensi.yaml:
+    - 02_fase2_validasi_dan_rate_limiting.yaml   # task sleep-timer double-validation (P02-T5) jadi acuan pola untuk P04-T2 EXPLORE_QUOTA audit — bukan hard dependency kode, tapi urutan pengerjaan supaya pola validasi ganda sudah "dipraktikkan" sekali sebelum disentuh lagi
+  05_backlog_deferred.yaml: []   # tidak dieksekusi; berdiri sendiri sebagai catatan
+
+# -----------------------------------------------------------------------------
+# Urutan eksekusi final. Identik dengan §6 proposal — tidak ada perubahan
+# urutan, karena Fase 1-4 di proposal sendiri sudah disusun dari risiko
+# terendah (kebocoran info, tanpa migrasi skema) ke risiko lebih tinggi
+# (menyentuh boundary otorisasi WS di Fase 2), lalu ke kriptografi (Fase 3,
+# butuh migrasi hash bertahap), lalu cleanup murni (Fase 4).
+# -----------------------------------------------------------------------------
+execution_order:
+  - 01_fase1_kebocoran_informasi_dan_sesi.yaml
+  - 02_fase2_validasi_dan_rate_limiting.yaml
+  - 03_fase3_kriptografi_dan_dependency.yaml
+  - 04_fase4_cleanup_dan_konsistensi.yaml
+  # 05 sengaja tidak masuk urutan eksekusi (deferred / backlog only)
+
+# -----------------------------------------------------------------------------
+# Keputusan yang menutup semua ambiguitas proposal sebelum dieksekusi.
+# -----------------------------------------------------------------------------
+decisions:
+  d1_reset_password_admin_sebagai_cli_bukan_endpoint:
+    pertanyaan_asli: >
+      Proposal §3.4 mengusulkan CLI (python -m server.reset_admin_password)
+      alih-alih endpoint HTTP/WS untuk reset password admin. Dikonfirmasi?
+    keputusan: >
+      YA, CLI. TIDAK ada endpoint HTTP/WS baru untuk reset password di plan
+      ini.
+    rasional: >
+      Endpoint reset password (apa pun bentuk verifikasinya — email, secret
+      question, dll.) menambah permukaan serangan baru pada aplikasi yang
+      saat ini cuma py single-admin, dijalankan personal/lokal. Operator
+      yang bisa menjalankan CLI di mesin server sudah punya akses setara
+      root ke database itu sendiri — CLI tidak menambah risiko baru,
+      endpoint jaringan iya.
+
+  d2_scope_command_validation_ganda_fase2:
+    pertanyaan_asli: >
+      §3.5 proposal memberi contoh sleep timer untuk pola "validasi ganda
+      edge + handler". Apakah command lain (playback, queue, dll.) ikut
+      dimigrasi ke pola ini dalam plan ini juga?
+    keputusan: >
+      TIDAK. Fase 2 file ini HANYA menerapkan validasi ganda pada
+      CMD_SET_SLEEP_TIMER (satu-satunya yang punya bukti konkret TypeError
+      di proposal). Command lain yang sudah divalidasi di ws_schemas.py
+      (volume_set, set_speed, lyrics_offset — hasil RFC
+      perbaikan_arsitektur sebelumnya) TIDAK disentuh ulang. Command yang
+      BELUM pernah divalidasi sama sekali (19+ command playback/queue
+      lain, sudah tercatat sebagai BL-02 di
+      docs/rfc/arsip/perbaikan_arsitektur/08_backlog_deferred.yaml) TETAP
+      backlog, tidak diperluas di plan ini.
+    rasional: >
+      Mengikuti prinsip proposal sendiri (§3.5 penutup): migrasi berbasis
+      bukti bug konkret, bukan bersih-bersih preventif tanpa root cause
+      yang termanifestasi. Memperluas scope akan tumpang tindih dengan
+      RFC perbaikan_arsitektur yang sudah punya keputusan scope sendiri
+      (lihat keputusan d3 di RFC itu) — plan ini tidak membuka ulang
+      keputusan itu.
+
+  d3_client_uid_binding_tidak_breaking_frontend:
+    pertanyaan_asli: >
+      Task P02-T1/T2 (binding client_uid ke koneksi) mengubah kontrak
+      server — apakah frontend (web/static) perlu ikut diubah?
+    keputusan: >
+      TIDAK ada perubahan file di web/static/ dalam plan ini. Frontend
+      (client.js::getClientUid()) sudah mengirim client_uid di payload
+      setiap command chat — perilaku itu tetap dipertahankan sebagai
+      pengirim; hanya SERVER yang berubah dari "percaya nilai yang
+      dikirim setiap kali" menjadi "percaya sekali di pesan pertama, kunci
+      untuk request berikutnya di koneksi yang sama". Client_uid yang
+      dikirim ulang oleh client asli-nya sendiri akan sama persis dengan
+      yang sudah ter-bind, jadi tidak ada regresi fungsional bagi
+      pengguna jujur.
+    rasional: >
+      Prinsip non-breaking untuk fitur user-facing (chat) — perubahan
+      ini murni pengetatan otorisasi di server, transparan bagi client
+      yang berperilaku normal.
+
+  d4_rate_limit_chat_key_fallback:
+    pertanyaan_asli: >
+      §3.2 proposal mengusulkan kunci rate-limit chat berbasis client_uid
+      "dengan fallback ke IP untuk koneksi yang belum bind client_uid".
+      Kapan skenario "belum bind" ini terjadi secara nyata?
+    keputusan: >
+      Terjadi untuk koneksi anonim (client_uid kosong/gagal dikirim, lihat
+      catatan "Client tanpa client_uid" di ws_chat.py:79-80, kasus browser
+      lama/JS gagal load). Untuk koneksi ini, task P02-T3 TETAP
+      menerapkan check_chat_rate_limit dengan key = client_ip. Ini
+      konsisten dengan perilaku existing: koneksi tanpa client_uid memang
+      sudah ditolak untuk get_chat_history (baris 79-80 ws_chat.py), jadi
+      fallback IP di rate limiter murni jaring pengaman tambahan, bukan
+      jalur utama.
+    rasional: >
+      Tidak mengubah perilaku existing untuk kasus edge yang sudah
+      ditangani; hanya menambah lapisan rate limit yang konsisten dengan
+      logika otorisasi yang sudah ada.
+
+  d5_pbkdf2_iterasi_final:
+    pertanyaan_asli: >
+      Proposal §4.2 mengusulkan "minimal 600.000 iterasi (rekomendasi
+      OWASP saat ini)" tanpa mengunci angka pasti karena rekomendasi OWASP
+      bisa berubah. Angka final untuk task P03-T1?
+    keputusan: >
+      600000 (enam ratus ribu), dikunci sebagai konstanta
+      `PBKDF2_ITERATIONS = 600_000` di core/security.py. Eksekutor WAJIB
+      memverifikasi ulang rekomendasi OWASP Password Storage Cheat Sheet
+      terkini sebelum eksekusi (via web search, proposal menyebut ini
+      sebagai "rekomendasi terkini" bukan angka final) — kalau rekomendasi
+      terbaru berbeda signifikan (mis. sudah direvisi ke angka lain),
+      pakai angka terbaru dan catat di PATCHLOG notes sebagai
+      "DEVIASI DARI PLAN: OWASP direvisi ke X sejak proposal ditulis".
+    rasional: >
+      Memberi angka konkret supaya task tidak menggantung menunggu
+      klarifikasi, tapi tetap membuka celah resmi untuk update kalau
+      rekomendasi industri berubah antara proposal ditulis dan
+      dieksekusi — konsisten dengan deviation_protocol di bawah.
+
+  d6_backlog_prioritas_rendah_tidak_dieksekusi:
+    pertanyaan_asli: >
+      §5 proposal (single-admin, HTTPS bawaan, backup otomatis, i18n,
+      aksesibilitas) — dieksekusi sebagian dalam plan ini?
+    keputusan: >
+      TIDAK SAMA SEKALI. Semua item §5 murni dicatat di
+      05_backlog_deferred.yaml sebagai referensi, nol task_id dieksekusi.
+    rasional: >
+      Proposal sendiri (§5) sudah menyatakan ini "keputusan desain yang
+      valid... bukan cacat mendesak" dan merekomendasikan RFC roadmap
+      terpisah karena masing-masing (terutama multi-admin) butuh desain
+      baru, bukan patch. Menggabungkannya ke plan bug-fix ini akan
+      melanggar prinsip "jangan refactor 2 tahap sekaligus" di AI_CONTEXT.md.
+
+deviation_protocol:
+  kapan_boleh_menyimpang: >
+    Eksekutor (AI atau manusia) boleh menyimpang dari langkah literal di
+    task manapun HANYA kalau kondisi kode saat eksekusi TERBUKTI berbeda
+    dari asumsi yang dicatat di task (mis. nomor baris bergeser, fungsi
+    sudah direfactor pihak lain, nama variabel berubah). Ini BUKAN alasan
+    untuk membuka ulang keputusan d1-d6 di atas — hanya penyesuaian
+    teknis mekanis. SELALU `view` file target sebelum edit untuk
+    memverifikasi baris masih sesuai asumsi task.
+  wajib_dicatat: >
+    Setiap penyimpangan wajib dicatat di field `notes` PATCHLOG entry
+    task terkait dengan awalan "DEVIASI DARI PLAN:" supaya bisa diaudit.
+
+governance_checklist_per_task:
+  # Berlaku untuk SEMUA task di file 01-04, tidak diulang di tiap file.
+  - "Baca AI_CONTEXT.md + docs/STATUS.md + 2-3 entri terakhir docs/PATCHLOG.md sebelum mulai."
+  - "Jalankan `python automation/find_owner.py <file>` untuk orientasi cepat sebelum edit file yang belum pernah disentuh sesi ini."
+  - "Setelah task selesai: `python automation/doctor.py` wajib PASS sebelum lanjut ke task berikutnya."
+  - "Jalankan test yang tercantum di field `tests.run` task tsb — wajib hijau sebelum PATCHLOG entry ditulis."
+  - "1 task boleh 1 PATCHLOG entry sendiri ATAU digabung per-file (per-fase) — TIDAK boleh digabung LINTAS FILE (lintas fase)."
+  - "`python automation/patchlog.py verify --json` setelah menambah entry."
+  - "`python automation/generate_file_index.py` dan `python automation/generate_report.py` setelah PATCHLOG entry ditambah."
+  - "Update docs/STATUS.md manual jika status file berubah."
+  - "CHANGELOG.md WAJIB diupdate untuk task yang menutup temuan keamanan (Fase 1 & 2 seluruhnya, plus P03-T1 di Fase 3) karena ini bugfix keamanan user-facing, BUKAN sekadar tech-debt internal — tandai di bawah [Unreleased] > Security. Task Fase 3 (yt-dlp pin) dan Fase 4 (cleanup) TIDAK wajib CHANGELOG kecuali task menyatakan lain secara eksplisit."

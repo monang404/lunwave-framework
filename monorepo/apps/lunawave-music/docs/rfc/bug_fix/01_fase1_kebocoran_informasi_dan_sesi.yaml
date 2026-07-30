@@ -1,0 +1,347 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 01 — Fase 1: Kebocoran informasi & manajemen sesi
+# (proposal §3.3, §3.4, §4.6 — Prioritas Tinggi + satu item Menengah/CORS)
+# Depends on: TIDAK ADA
+# Risiko: RENDAH | Effort: RENDAH-SEDANG
+# Tidak ada migrasi skema DB kecuali 1 query baru (delete_all_sessions,
+# tanpa perubahan struktur tabel).
+# =============================================================================
+
+phase:
+  id: P01
+  title: "Exception generik ke client, logout semua perangkat, reset password admin, CORS non-wildcard"
+  proposal_ref: ["§3.3", "§3.4", "§4.6"]
+  closes_temuan: [3, 4, 5, 12]
+  depends_on: []
+
+tasks:
+  # ---------------------------------------------------------------------
+  - task_id: P01-T1
+    title: "Exception generik dikirim ke client, detail penuh tetap di log"
+    proposal_ref: "§3.3"
+    depends_on: []
+    touches_locked_files: true
+    locked_file_justification: >
+      server/handlers/websocket.py masuk daftar locked di AI_CONTEXT.md
+      ("jangan pecah dulu tanpa persetujuan eksplisit"). Task ini TIDAK
+      memecah file (tidak mengubah struktur/split), hanya mengganti isi
+      satu field string di dalam except-clause generik yang sudah ada —
+      dicakup otorisasi di 00_index_and_decisions.yaml meta.authorization.
+    files:
+      modify:
+        - server/handlers/websocket.py
+      create:
+        - tests/unit/server/handlers/test_websocket_error_reply.py
+    steps:
+      - >
+        `view` server/handlers/websocket.py, cari blok
+        `except Exception as e:` generik di `handle_ws_message()` (sekitar
+        baris 262-278 saat audit — VERIFIKASI ULANG nomor baris sebelum
+        edit). Blok ini berisi `logger.error(..., error=str(e),
+        exc_info=True)` diikuti `await ws.send_str(json.dumps({"type":
+        "error", "data": str(e)}))`.
+      - >
+        Ganti HANYA baris `"data": str(e)` di dalam `ws.send_str(...)`
+        menjadi `"data": "Terjadi kesalahan saat memproses permintaan."`.
+        JANGAN ubah baris `logger.error(...)` di atasnya — detail
+        exception penuh (`error=str(e)`, `exc_info=True`) WAJIB tetap
+        masuk log seperti sekarang, hanya balasan ke client yang berubah.
+      - >
+        JANGAN sentuh except-clause lain di fungsi yang sama (mis.
+        `except WsValidationError` kalau sudah ada dari RFC
+        perbaikan_arsitektur — pesan itu memang didesain aman ditampilkan,
+        biarkan apa adanya).
+      - >
+        Tambah opsi debug opsional: di `config.py`, tambah konstanta
+        `DEBUG_EXPOSE_ERRORS = os.environ.get("LUNAWAVE_DEBUG_ERRORS",
+        "0") == "1"` (default False/off). Di websocket.py, import
+        `config`, dan bentuk pesan error jadi:
+        `str(e) if config.DEBUG_EXPOSE_ERRORS else "Terjadi kesalahan saat memproses permintaan."`.
+      - >
+        Buat test baru `test_websocket_error_reply.py`: simulasikan
+        command handler yang melempar exception generik (mis. `ValueError`
+        buatan lewat monkeypatch/mock), kirim command lewat
+        `handle_ws_message`, assert payload `data` di respons berisi
+        pesan generik (bukan mengandung `str(exc)` asli), DAN assert log
+        (lewat `caplog`/structlog capture yang sudah dipakai test lain di
+        repo — cek pola di `tests/unit/server/handlers/test_websocket.py`)
+        tetap memuat detail exception asli.
+      - >
+        Tambah 1 test kedua dengan `LUNAWAVE_DEBUG_ERRORS=1` di env
+        (monkeypatch env var + reload config, cek pola reload config di
+        test lain kalau ada) memverifikasi pesan asli MUNCUL di balasan
+        saat mode debug aktif.
+    acceptance_criteria:
+      - "Command yang memicu exception generik menghasilkan payload `data` berisi pesan generik statis, TIDAK mengandung representasi string dari exception aslinya, KECUALI LUNAWAVE_DEBUG_ERRORS=1."
+      - "Log server (structlog) tetap memuat error, error_type, dan exc_info lengkap tanpa perubahan — regresi observability harus nol."
+      - "except WsValidationError (kalau ada di file ini dari RFC sebelumnya) tidak berubah sama sekali."
+    tests:
+      run:
+        - "pytest tests/unit/server/handlers/test_websocket_error_reply.py -q"
+        - "pytest tests/unit/server/handlers -q -k websocket"
+    patchlog:
+      type: security_fix
+      area: "server/handlers"
+      title: "Exception generik ke client WS, detail lengkap tetap di log"
+      reason: >
+        str(e) dari exception tak tertangani dikirim mentah ke client,
+        berpotensi membocorkan path file, nama tabel SQL, atau detail
+        internal lain yang membantu pemetaan sistem oleh penyerang.
+      root_cause: >
+        except Exception generik di handle_ws_message() memakai str(e)
+        yang sama baik untuk log maupun balasan ke client, tanpa
+        memisahkan audiens internal (log) dari audiens eksternal (client).
+      solution: >
+        Balasan ke client diseragamkan jadi pesan generik statis; log
+        tetap memuat detail penuh. Ditambah flag opsional
+        LUNAWAVE_DEBUG_ERRORS untuk kebutuhan debugging lokal.
+      files: "server/handlers/websocket.py, config.py, tests/unit/server/handlers/test_websocket_error_reply.py"
+      notes: >
+        Menyentuh file locked server/handlers/websocket.py — otorisasi
+        tercatat di 00_index_and_decisions.yaml meta.authorization.
+        Perubahan murni 1 baris nilai string + 1 kondisi debug, bukan
+        pemecahan struktur file.
+
+  # ---------------------------------------------------------------------
+  - task_id: P01-T2
+    title: "delete_all_sessions() + action WS logout_all (admin-only)"
+    proposal_ref: "§3.4"
+    depends_on: []
+    touches_locked_files: true
+    locked_file_justification: >
+      Menambah 1 branch `elif action == "logout_all":` baru di
+      handle_ws_message() (server/handlers/websocket.py), mengikuti pola
+      identik branch `logout` yang sudah ada persis di atasnya. Tidak
+      mengubah struktur/split file.
+    files:
+      modify:
+        - persistence/session_repo.py
+        - server/handlers/websocket.py
+      create:
+        - tests/unit/persistence/test_session_repo_delete_all.py
+    steps:
+      - >
+        Di `persistence/session_repo.py`, tambah method baru
+        `async def delete_all_sessions(self):` yang menjalankan
+        `DELETE FROM sessions` tanpa WHERE clause (LunaWave hanya
+        mendukung 1 akun admin — lihat docstring
+        admin_account_repo.py — jadi tidak perlu filter per-user), lalu
+        `await self._conn.commit()`. Beri docstring yang menjelaskan
+        kenapa tanpa filter user aman di sini (referensi ke desain
+        single-admin, BUKAN diam-diam mengasumsikan multi-user).
+      - >
+        `view` server/handlers/websocket.py, cari branch
+        `if action == "logout":` (sekitar baris 194-199 saat audit —
+        VERIFIKASI ULANG). Tambah branch BARU tepat setelahnya:
+        `elif action == "logout_all":`. Branch ini HARUS admin-only —
+        panggil `require_auth(manager, ws)` (fungsi yang sama dipakai di
+        bawahnya untuk command lain) SEBELUM memanggil
+        `repos.sessions.delete_all_sessions()`; kalau bukan admin, kirim
+        error "Akses ditolak" (format identik dengan pola penolakan akses
+        yang sudah ada di file yang sama) dan JANGAN panggil
+        delete_all_sessions().
+      - >
+        Setelah delete_all_sessions() berhasil, juga
+        `manager.authenticated_connections.clear()` supaya koneksi WS
+        yang sedang aktif di server yang sama ikut ter-deauth seketika
+        (bukan cuma token DB yang tercabut, tapi sesi in-memory juga),
+        konsisten dengan efek yang diharapkan "logout semua perangkat".
+      - >
+        Tambah test di `tests/unit/persistence/test_session_repo_delete_all.py`:
+        buat >=2 sesi via create_session(), panggil delete_all_sessions(),
+        assert verify_session() False untuk keduanya.
+      - >
+        Tambah test integrasi (cek pola test WS existing di
+        `tests/unit/server/handlers/test_websocket.py` atau
+        `tests/integration`): 2 koneksi WS ter-autentikasi berbeda, satu
+        panggil `logout_all`, assert KEDUA koneksi ter-deauth
+        (authenticated_connections kosong) dan command admin berikutnya
+        dari koneksi manapun ditolak sampai login ulang. Tambah test
+        negatif: koneksi non-admin memanggil `logout_all` -> ditolak,
+        sesi lain TIDAK terhapus.
+    acceptance_criteria:
+      - "delete_all_sessions() menghapus SEMUA baris di tabel sessions tanpa terkecuali."
+      - "Action logout_all hanya bisa dipanggil koneksi yang lolos require_auth(); percobaan dari koneksi non-admin ditolak dan tidak mengubah state sesi apa pun."
+      - "Setelah logout_all sukses, manager.authenticated_connections kosong untuk SEMUA koneksi yang sebelumnya admin di server yang sama."
+    tests:
+      run:
+        - "pytest tests/unit/persistence/test_session_repo_delete_all.py -q"
+        - "pytest tests/unit/server/handlers -q -k websocket"
+        - "pytest tests/integration -q -k session or -k logout"
+    patchlog:
+      type: security_fix
+      area: "persistence, server/handlers"
+      title: "logout_all: cabut semua sesi aktif sekaligus"
+      reason: >
+        Tidak ada cara mencabut token yang bocor tanpa akses langsung ke
+        database — sesi lama tetap valid selamanya sampai kedaluwarsa
+        alami meski admin curiga token bocor.
+      root_cause: >
+        persistence.session_repo hanya punya delete_session(token) (satu
+        token) dan cleanup_sessions() (yang kedaluwarsa) -- tidak ada
+        jalur revoke massal.
+      solution: >
+        delete_all_sessions() baru di session_repo (DELETE tanpa WHERE,
+        aman karena single-admin), action WS logout_all admin-only yang
+        memanggilnya lalu membersihkan authenticated_connections in-memory.
+      files: "persistence/session_repo.py, server/handlers/websocket.py, tests/unit/persistence/test_session_repo_delete_all.py"
+      notes: >
+        Menyentuh file locked server/handlers/websocket.py — otorisasi
+        tercatat di 00_index_and_decisions.yaml. Branch baru mengikuti
+        pola branch `logout` yang sudah ada persis, bukan struktur baru.
+
+  # ---------------------------------------------------------------------
+  - task_id: P01-T3
+    title: "CLI reset password admin (server/reset_admin_password.py)"
+    proposal_ref: "§3.4"
+    depends_on: [P01-T2]
+    touches_locked_files: false
+    files:
+      create:
+        - server/reset_admin_password.py
+        - tests/unit/server/test_reset_admin_password.py
+      modify:
+        - persistence/admin_account_repo.py
+    steps:
+      - >
+        Di `persistence/admin_account_repo.py`, tambah method baru
+        `async def update_password(self, password_hash: str):` yang
+        menjalankan `UPDATE admin_account SET password_hash = ?` (tanpa
+        WHERE karena hanya 1 baris, konsisten dengan get_admin_account()
+        yang juga tanpa filter), commit. Docstring: caller bertanggung
+        jawab hashing, method ini tidak tahu algoritma (pola sama seperti
+        create_admin_account()).
+      - >
+        Buat `server/reset_admin_password.py` sebagai skrip CLI
+        dieksekusi via `python -m server.reset_admin_password`. Alur:
+        buka koneksi DB (pakai pola koneksi yang sama dengan skrip
+        automation/ lain di repo, cek `automation/*.py` untuk konvensi
+        connect ke SQLite), minta password baru interaktif (`getpass`,
+        BUKAN `input()`, supaya tidak muncul di terminal history/shell
+        log), konfirmasi ketik ulang, hash dengan
+        `core.security.hash_password()`, panggil
+        `admin_account.update_password(hash)`, LALU panggil
+        `session_repo.delete_all_sessions()` (dari P01-T2) supaya sesi
+        lama otomatis tercabut setelah reset password.
+      - >
+        Validasi input CLI: tolak password kosong/di bawah panjang
+        minimal yang sudah dipakai di flow Initial Setup (cek
+        `server/handlers/setup.py` untuk aturan panjang minimal existing
+        supaya konsisten, jangan buat aturan baru yang berbeda).
+      - >
+        Tambah dokumentasi pemakaian di docstring module + baris
+        `--help`/print instruksi singkat kalau dijalankan tanpa TTY
+        interaktif (mis. di CI) supaya jelas skrip ini butuh terminal
+        interaktif.
+      - >
+        Test: mock getpass untuk memberi password baru, jalankan fungsi
+        inti (ekstrak logic ke fungsi `async def do_reset(new_password,
+        repos)` yang testable, dipanggil dari `if __name__ == "__main__"`
+        block agar CLI-nya sendiri tidak perlu di-test langsung), assert
+        password_hash di DB berubah dan verify_password() dengan password
+        baru berhasil, DAN assert delete_all_sessions() terpanggil (mock
+        atau cek sessions table kosong setelahnya).
+    acceptance_criteria:
+      - "python -m server.reset_admin_password mengganti password_hash admin_account ke hash password baru, verifiable via core.security.verify_password()."
+      - "Setelah reset berhasil, semua sesi lama di tabel sessions terhapus (delete_all_sessions terpanggil)."
+      - "Password tidak pernah dicetak ke stdout/log dalam bentuk plaintext."
+    tests:
+      run:
+        - "pytest tests/unit/server/test_reset_admin_password.py -q"
+        - "pytest tests/unit/persistence -q -k admin_account"
+    patchlog:
+      type: security_fix
+      area: "server, persistence"
+      title: "CLI resmi untuk reset password admin"
+      reason: >
+        Tidak ada jalur resmi untuk reset password admin selain
+        manipulasi database langsung -- berisiko human error dan tidak
+        auditable.
+      root_cause: >
+        server/handlers/auth.py hanya menangani login, tidak ada
+        endpoint atau tooling reset password sama sekali.
+      solution: >
+        CLI operator-only (python -m server.reset_admin_password,
+        interaktif via getpass) yang meng-update admin_account lalu
+        mencabut semua sesi lama lewat delete_all_sessions(). Sengaja
+        BUKAN endpoint HTTP/WS (lihat keputusan d1 di
+        00_index_and_decisions.yaml) untuk tidak menambah permukaan
+        serangan jaringan.
+      files: "server/reset_admin_password.py, persistence/admin_account_repo.py, tests/unit/server/test_reset_admin_password.py"
+      notes: "Tidak menyentuh file locked."
+
+  # ---------------------------------------------------------------------
+  - task_id: P01-T4
+    title: "CORS non-wildcard pada endpoint streaming audio"
+    proposal_ref: "§4.6"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - config.py
+        - server/handlers/audio_stream_handler.py
+      create:
+        - tests/unit/server/handlers/test_audio_stream_cors.py
+    steps:
+      - >
+        Di `config.py`, tambah konstanta
+        `ALLOWED_STREAM_ORIGIN = os.environ.get("LUNAWAVE_ALLOWED_ORIGIN", "")`
+        (default string kosong = belum dikonfigurasi -- lihat langkah
+        berikutnya untuk fallback aman).
+      - >
+        `view` server/handlers/audio_stream_handler.py baris 106 dan 230
+        (VERIFIKASI ULANG nomor baris). Ganti
+        `headers={"Access-Control-Allow-Origin": "*"}` di KEDUA lokasi
+        menjadi header dinamis: kalau `config.ALLOWED_STREAM_ORIGIN`
+        terisi, pakai nilai itu; kalau kosong (belum dikonfigurasi
+        operator), FALLBACK ke origin request itu sendiri (baca dari
+        `request.headers.get("Origin")`) alih-alih wildcard -- ini tetap
+        jauh lebih ketat dari `*` (membatasi ke origin yang benar-benar
+        meminta, bukan semua origin manapun) sambil tidak memaksa
+        operator mengisi env var baru sebelum upgrade berfungsi.
+      - >
+        Pastikan kedua handler (baris 106 area FileResponse dan baris
+        230 area streaming chunked) menerima parameter `request` yang
+        dibutuhkan untuk membaca header Origin -- cek signature fungsi
+        saat ini, sesuaikan tanpa mengubah signature publik yang dipakai
+        route registration di server/app.py kalau memungkinkan (baca
+        `request` dari closure/parameter yang sudah ada di handler,
+        jangan tambah parameter baru ke route kalau tidak perlu).
+      - >
+        Test: request dengan header `Origin: https://evil.example` ke
+        endpoint stream -- assert response header
+        `Access-Control-Allow-Origin` BUKAN `*`, melainkan sama dengan
+        origin request itu sendiri (atau ALLOWED_STREAM_ORIGIN kalau
+        dikonfigurasi). Test kedua dengan `LUNAWAVE_ALLOWED_ORIGIN` diisi
+        eksplisit -- assert header selalu itu, mengabaikan Origin request.
+    acceptance_criteria:
+      - "Tidak ada lagi literal string \"Access-Control-Allow-Origin\": \"*\" di server/handlers/audio_stream_handler.py."
+      - "Streaming audio dari frontend LunaWave sendiri tetap berfungsi tanpa error CORS di browser (regression check manual atau test integrasi existing)."
+    tests:
+      run:
+        - "pytest tests/unit/server/handlers/test_audio_stream_cors.py -q"
+        - "pytest tests/unit/server/handlers/test_audio_stream_handler.py -q"
+    patchlog:
+      type: security_fix
+      area: "server/handlers, config"
+      title: "CORS non-wildcard pada endpoint streaming audio"
+      reason: >
+        Access-Control-Allow-Origin: * pada endpoint streaming
+        memungkinkan situs mana pun melakukan hotlink terhadap stream
+        audio LunaWave.
+      root_cause: >
+        Header CORS di-hardcode wildcard tanpa mempertimbangkan origin
+        request yang sebenarnya.
+      solution: >
+        Header CORS dinamis: ALLOWED_STREAM_ORIGIN dari config (opsional)
+        atau fallback ke origin request itu sendiri, tidak pernah
+        wildcard lagi.
+      files: "config.py, server/handlers/audio_stream_handler.py, tests/unit/server/handlers/test_audio_stream_cors.py"
+      notes: "Tidak menyentuh file locked."
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/generate_file_index.py"
+  - "python automation/generate_report.py"

@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MOCKUP — LunaWave Observability (/admin/logs redesign)</title>
+<!--
+  ============================================================================
+  MOCKUP STATIS — SOURCE OF TRUTH VISUAL untuk implementation_plan_admin_logs.yaml
+  ============================================================================
+  Ini BUKAN halaman fungsional (tidak fetch API, tidak WebSocket). Semua data
+  di bawah statis/contoh, hanya untuk menetapkan tampilan target secara pasti
+  sebelum agent mengimplementasi. Tab switching & resize breakpoint DI FILE
+  INI beneran jalan (buka di browser, coba resize <640px) supaya perilaku
+  layout bisa divalidasi visual sebelum disentuh ke kode produksi.
+
+  Token warna & spacing DIAMBIL PERSIS dari web/static/shared/css/tokens.css
+  (Design System v2 "Midnight Audio Experience") milik proyek asli — sengaja
+  TIDAK membuat sistem desain baru, redesign ini murni penataan ulang IA +
+  perbaikan bug taksonomi di atas sistem yang sudah ada. Ikon dibuat inline
+  SVG (bukan dependency font eksternal) supaya file ini bisa dibuka offline.
+
+  Peta ke task YAML (lihat implementation_plan_admin_logs.yaml):
+    [F2] header judul + label tab + urutan tab  -> section <header>, <nav class="tabs-header">
+    [F1] daftar kategori sinkron core/log_categories.py -> <select id="filterCategory"> di tab Log Langsung
+    [F4] empty state hasil filter kosong        -> #emptyStateDemo di tab Log Langsung
+    [F5] bottom tab bar mobile (<640px)          -> <nav class="bottom-tabs">
+    [F3] deep-link hash (#ringkasan, #log, dst)  -> JS switchTab() di bawah, baca/tulis location.hash
+  ============================================================================
+-->
+<style>
+  :root {
+    --bg-primary: #0E0E12;
+    --bg-surface: #151518;
+    --bg-elevated: #1C1C22;
+    --accent: #F2B544;
+    --accent-rgb: 242, 181, 68;
+    --accent-hover: #FFC857;
+    --accent-dark: #3B2B10;
+    --accent-alpha: rgba(var(--accent-rgb), 0.12);
+    --text-1: #FFFFFF;
+    --text-2: #9AA0AA;
+    --text-3: #8B92A5;
+    --border-1: rgba(255,255,255,0.04);
+    --border-2: rgba(255,255,255,0.08);
+    --border-3: rgba(255,255,255,0.14);
+    --font: 'Inter', 'SF Pro Display', system-ui, sans-serif;
+    --t-xs: 11px; --t-sm: 12px; --t-md: 14px; --t-lg: 16px; --t-xl: 18px; --t-2xl: 24px;
+    --w-medium: 500; --w-semibold: 600; --w-bold: 700;
+    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px;
+    --r-sm: 12px; --r-md: 16px; --r-full: 999px;
+    --shadow-md: 0 8px 24px rgba(0,0,0,0.35);
+    --dur-fast: 120ms; --ease: cubic-bezier(0,0,0.2,1);
+    --green: #22C55E; --red: #EF4444; --warn: #F59E0B;
+    --color-debug: #5eead4; --color-info: #86efac; --color-warning: #fde047; --color-error: #fca5a5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: var(--font); background: var(--bg-primary); color: var(--text-1);
+    height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+  }
+  .icon { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; vertical-align: -3px; }
+
+  /* ── Mockup banner (bukan bagian desain final, hanya penanda file ini) ── */
+  .mockup-flag {
+    background: repeating-linear-gradient(45deg, var(--accent-dark), var(--accent-dark) 10px, #241a08 10px, #241a08 20px);
+    color: var(--accent-hover); font-size: var(--t-xs); font-weight: var(--w-semibold);
+    text-align: center; padding: 4px; letter-spacing: 0.5px; text-transform: uppercase;
+    border-bottom: 1px solid var(--border-2);
+  }
+
+  /* ── Header ── */
+  header.app-header {
+    background: var(--bg-surface); padding: var(--s3) var(--s4); border-bottom: 1px solid var(--border-1);
+    display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--s2) var(--s4);
+  }
+  .header-title { font-size: var(--t-md); font-weight: var(--w-bold); color: var(--accent); display: flex; align-items: center; gap: var(--s2); }
+  .header-sub { font-size: var(--t-xs); color: var(--text-3); font-weight: var(--w-medium); margin-left: var(--s2); padding-left: var(--s2); border-left: 1px solid var(--border-2); }
+  .status-bar { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: var(--t-sm); color: var(--text-2); }
+  .status-item { display: flex; align-items: center; gap: var(--s2); white-space: nowrap; }
+  .status-indicator { width: 8px; height: 8px; border-radius: var(--r-full); background: var(--border-3); }
+  .status-indicator.ok { background: var(--green); box-shadow: 0 0 8px rgba(34,197,94,0.4); }
+
+  /* ── Tabs (desktop/tablet, disembunyikan di mobile -> diganti bottom bar) ── */
+  nav.tabs-header {
+    display: flex; background: var(--bg-surface); border-bottom: 1px solid var(--border-1);
+    padding: 0 var(--s2); gap: var(--s1); overflow-x: auto; scrollbar-width: none;
+  }
+  nav.tabs-header::-webkit-scrollbar { display: none; }
+  .tab-btn {
+    padding: var(--s3); color: var(--text-2); cursor: pointer; border-bottom: 2px solid transparent;
+    display: flex; align-items: center; gap: var(--s2); font-weight: var(--w-medium); font-size: var(--t-sm);
+    white-space: nowrap; background: none; border-top: none; border-left: none; border-right: none;
+    font-family: inherit; transition: var(--dur-fast) var(--ease);
+  }
+  .tab-btn:hover { color: var(--text-1); background: rgba(255,255,255,0.02); }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-order-badge {
+    font-size: 9px; background: var(--accent-alpha); color: var(--accent); border-radius: var(--r-full);
+    width: 15px; height: 15px; display: inline-flex; align-items: center; justify-content: center; font-weight: var(--w-bold);
+  }
+
+  main { flex: 1; overflow: hidden; display: flex; }
+  .tab-content { display: none; flex: 1; overflow: hidden; width: 100%; }
+  .tab-content.active { display: flex; }
+
+  /* ── Tab: Ringkasan ── */
+  #tab-ringkasan { overflow-y: auto; }
+  .dash-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px,1fr)); gap: var(--s4); padding: var(--s5); max-width: 1400px; margin: 0 auto; width: 100%; align-content: start; }
+  .sys-card { background: linear-gradient(145deg, rgba(30,30,34,0.7), rgba(20,20,24,0.9)); border: 1px solid var(--border-2); border-radius: var(--r-md); padding: var(--s4); display: flex; align-items: center; gap: var(--s3); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+  .sys-card-icon { width: 40px; height: 40px; flex-shrink: 0; background: var(--accent-alpha); color: var(--accent); border-radius: var(--r-sm); display: flex; align-items: center; justify-content: center; }
+  .sys-card-val { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+  .sys-card-lbl { font-size: var(--t-xs); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600; margin-top: 2px; }
+  .section-intro { padding: var(--s5) var(--s5) 0; max-width: 1400px; margin: 0 auto; width: 100%; }
+  .section-intro h2 { font-size: var(--t-lg); margin: 0 0 4px; display: flex; align-items: center; gap: var(--s2); }
+  .section-intro p { font-size: var(--t-sm); color: var(--text-3); margin: 0; }
+
+  /* ── Tab: Log Langsung ── */
+  #tab-log { padding: var(--s4); gap: var(--s4); }
+  .left-panel { flex: 3; min-width: 0; display: flex; flex-direction: column; background: var(--bg-surface); border: 1px solid var(--border-1); border-radius: var(--r-md); overflow: hidden; box-shadow: var(--shadow-md); }
+  .right-panel { flex: 1; min-width: 260px; display: flex; flex-direction: column; gap: var(--s4); overflow-y: auto; }
+  .controls { padding: var(--s3) var(--s4); background: var(--bg-elevated); display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); align-items: center; border-bottom: 1px solid var(--border-1); }
+  select, input { background: var(--bg-primary); color: var(--text-1); border: 1px solid var(--border-1); padding: var(--s2) var(--s3); border-radius: var(--r-sm); font-family: inherit; font-size: var(--t-sm); min-width: 0; }
+  select:focus, input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-alpha); }
+  button.btn { background: var(--accent); color: var(--accent-dark); font-weight: var(--w-semibold); cursor: pointer; border: none; padding: var(--s2) var(--s4); border-radius: var(--r-full); font-size: var(--t-sm); display: flex; align-items: center; gap: var(--s2); }
+  label.checkbox-label { display: flex; align-items: center; gap: var(--s2); font-size: var(--t-sm); color: var(--text-2); cursor: pointer; }
+  .log-container { flex: 1; overflow-y: auto; padding: var(--s2) var(--s4); }
+  .log-line { display: flex; flex-wrap: wrap; padding: var(--s2) 0; border-bottom: 1px solid var(--border-1); gap: var(--s2) var(--s3); align-items: center; }
+  .log-time { color: var(--text-3); font-family: 'Consolas', monospace; font-size: 11px; width: 60px; flex-shrink: 0; }
+  .log-cat { padding: 2px 6px; border-radius: 4px; font-size: 9px; background: rgba(255,255,255,0.06); color: var(--text-2); text-transform: uppercase; letter-spacing: 0.5px; border: 1px solid var(--border-1); width: 78px; text-align: center; flex-shrink: 0; }
+  .log-event { color: var(--text-1); font-size: 13px; font-weight: 500; font-family: 'Consolas', monospace; }
+  .lvl-DEBUG { color: var(--color-debug); } .lvl-INFO { color: var(--color-info); } .lvl-WARNING { color: var(--color-warning); } .lvl-ERROR { color: var(--color-error); }
+  .stats-panel { background: var(--bg-surface); border: 1px solid var(--border-1); border-radius: var(--r-md); padding: var(--s5); box-shadow: var(--shadow-md); }
+  .stats-panel h3 { font-size: var(--t-md); border-bottom: 1px solid var(--border-1); padding-bottom: var(--s3); margin: 0 0 var(--s4); display: flex; align-items: center; gap: var(--s2); }
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
+  .stat-box { background: var(--bg-elevated); padding: var(--s4) var(--s3); border-radius: var(--r-sm); border: 1px solid var(--border-1); text-align: center; }
+  .stat-val { font-size: var(--t-2xl); font-weight: var(--w-bold); color: var(--accent); }
+  .stat-lbl { font-size: var(--t-xs); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* [F1] Kategori BENAR — sinkron persis core/log_categories.py (15, tanpa kategori hantu) */
+  /* [F4] Empty state demo */
+  .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: var(--s6); color: var(--text-3); gap: var(--s3); }
+  .empty-state .icon { width: 40px; height: 40px; color: var(--border-3); }
+  .empty-state h4 { color: var(--text-2); font-size: var(--t-md); margin: 0; }
+  .empty-state p { font-size: var(--t-sm); margin: 0; max-width: 320px; }
+  .demo-toggle { font-size: var(--t-xs); color: var(--text-3); text-align: center; padding: 4px; background: var(--bg-elevated); cursor: pointer; border-bottom: 1px solid var(--border-1); }
+  .demo-toggle:hover { color: var(--accent); }
+
+  /* ── Tab: Matriks Log ── */
+  #tab-matrix { padding: var(--s5); overflow: auto; justify-content: center; }
+  .matrix-table { width: 100%; max-width: 1000px; border-collapse: collapse; background: var(--bg-surface); border: 1px solid var(--border-1); border-radius: var(--r-md); overflow: hidden; box-shadow: var(--shadow-md); align-self: flex-start; }
+  .matrix-table th, .matrix-table td { padding: var(--s3) var(--s4); text-align: center; border: 1px solid var(--border-1); font-size: var(--t-sm); }
+  .matrix-table th { background: var(--bg-elevated); color: var(--text-2); font-weight: var(--w-semibold); }
+  .matrix-table td.cat-name { text-align: left; font-weight: var(--w-semibold); text-transform: uppercase; background: var(--bg-elevated); }
+  .cell-zero { color: var(--text-3); opacity: 0.3; }
+  .cell-info { color: var(--color-info); }
+  .cell-warning { color: var(--bg-primary); background: var(--color-warning); font-weight: bold; }
+  .cell-error { color: var(--bg-primary); background: var(--color-error); font-weight: bold; }
+
+  /* ── Tab: Sesi Pengguna ── */
+  #tab-users { padding: var(--s5); overflow-y: auto; justify-content: center; }
+  .users-table-container { max-width: 1000px; width: 100%; }
+  .users-table { width: 100%; border-collapse: separate; border-spacing: 0; background: linear-gradient(145deg, rgba(30,30,34,0.6), rgba(20,20,24,0.8)); border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.3); border: 1px solid var(--border-2); }
+  .users-table th, .users-table td { padding: var(--s4) var(--s5); text-align: left; border-bottom: 1px solid rgba(255,255,255,0.03); font-size: var(--t-sm); }
+  .users-table th { background: rgba(0,0,0,0.2); color: var(--text-2); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 1px; }
+  .device-badge { display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.05); padding: 4px 10px; border-radius: 20px; font-size: 12px; color: var(--text-2); border: 1px solid var(--border-2); }
+
+  /* ══════════════════ [F5] BOTTOM TAB BAR — mobile only ══════════════════ */
+  nav.bottom-tabs { display: none; }
+
+  @media (max-width: 1024px) {
+    #tab-log { padding: var(--s3); gap: var(--s3); }
+    .right-panel { min-width: 220px; }
+  }
+  @media (max-width: 860px) {
+    #tab-log { flex-direction: column; overflow-y: auto; }
+    .left-panel { flex: none; height: 55vh; min-height: 300px; }
+    .right-panel { flex: none; min-width: 0; }
+  }
+  @media (max-width: 700px) {
+    .users-table thead { display: none; }
+    .users-table, .users-table tbody, .users-table tr, .users-table td { display: block; width: 100%; }
+    .users-table { background: none; box-shadow: none; border: none; }
+    .users-table tr { background: linear-gradient(145deg, rgba(30,30,34,0.6), rgba(20,20,24,0.8)); border: 1px solid var(--border-2); border-radius: 14px; margin-bottom: var(--s3); padding: var(--s2) var(--s4); }
+    .users-table td { border-bottom: 1px solid rgba(255,255,255,0.04); padding: var(--s3) 0; display: flex; justify-content: space-between; gap: var(--s3); text-align: right; }
+    .users-table td:last-child { border-bottom: none; }
+    .users-table td::before { content: attr(data-label); color: var(--text-3); font-size: 11px; text-transform: uppercase; font-weight: 600; }
+  }
+  @media (max-width: 640px) {
+    /* Tab switcher horizontal lama disembunyikan; bottom bar tampil.
+       Alasan (lihat RENCANA_REDESIGN_ADMIN_LOGS.md §4): area jempol,
+       tidak butuh scroll horizontal untuk lihat semua tab di layar sempit. */
+    nav.tabs-header { display: none; }
+    nav.bottom-tabs {
+      display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
+      background: var(--bg-surface); border-top: 1px solid var(--border-2);
+      box-shadow: 0 -4px 16px rgba(0,0,0,0.4); padding-bottom: env(safe-area-inset-bottom, 0);
+    }
+    .bottom-tab-btn {
+      flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+      padding: var(--s2) var(--s1) calc(var(--s1) + 2px); color: var(--text-3); background: none; border: none;
+      font-family: inherit; font-size: 10px; font-weight: var(--w-medium); cursor: pointer;
+    }
+    .bottom-tab-btn .icon { width: 20px; height: 20px; }
+    .bottom-tab-btn.active { color: var(--accent); }
+    main { padding-bottom: 58px; } /* ruang supaya konten tidak tertutup bottom bar */
+    .header-title { font-size: var(--t-sm); }
+    .header-sub { display: none; } /* hemat ruang horizontal di layar sempit */
+    .status-bar { font-size: 10px; gap: var(--s2) var(--s3); }
+    .dash-grid { grid-template-columns: repeat(2,1fr); gap: var(--s3); padding: var(--s3); }
+  }
+</style>
+</head>
+<body>
+
+  <div class="mockup-flag">MOCKUP DESAIN — bukan halaman produksi — data contoh statis</div>
+
+  <!-- [F2] Header direname: "LunaWave Logs" -> "LunaWave Observability" + subjudul -->
+  <header class="app-header">
+    <div class="header-title">
+      <svg class="icon" viewBox="0 0 24 24"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+      LunaWave Observability
+      <span class="header-sub">/admin/logs</span>
+    </div>
+    <div class="status-bar" id="statusBar">
+      <div class="status-item"><div class="status-indicator ok"></div> DB</div>
+      <div class="status-item"><div class="status-indicator ok"></div> MPV</div>
+      <div class="status-item"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg> 4j 12m</div>
+      <div class="status-item"><svg class="icon" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg> 128 MB</div>
+      <div class="status-item"><svg class="icon" viewBox="0 0 24 24"><circle cx="9" cy="7" r="3"/><path d="M2 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/><circle cx="18" cy="8" r="2.5"/></svg> 3</div>
+    </div>
+  </header>
+
+  <!-- [F2]+[F3] Tab desktop/tablet: urutan baru Ringkasan -> Log Langsung -> Matriks Log -> Sesi Pengguna,
+       label Indonesia konsisten, data-hash untuk deep-link (#ringkasan dst, dibaca JS switchTab) -->
+  <nav class="tabs-header" id="tabsHeader">
+    <button class="tab-btn active" data-tab="ringkasan"><span class="tab-order-badge">1</span> <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="12" width="4" height="8"/><rect x="10" y="8" width="4" height="12"/><rect x="17" y="4" width="4" height="16"/></svg> Ringkasan</button>
+    <button class="tab-btn" data-tab="log"><span class="tab-order-badge">2</span> <svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/></svg> Log Langsung</button>
+    <button class="tab-btn" data-tab="matrix"><span class="tab-order-badge">3</span> <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> Matriks Log</button>
+    <button class="tab-btn" data-tab="users"><span class="tab-order-badge">4</span> <svg class="icon" viewBox="0 0 24 24"><circle cx="9" cy="7" r="3"/><path d="M2 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/><circle cx="18" cy="8" r="2.5"/></svg> Sesi Pengguna</button>
+  </nav>
+
+  <main>
+    <!-- ═══════════ TAB 1: RINGKASAN (default/landing baru) ═══════════ -->
+    <div class="tab-content active" id="tab-ringkasan">
+      <div style="width:100%; overflow-y:auto;">
+        <div class="section-intro">
+          <h2><svg class="icon" viewBox="0 0 24 24" style="width:20px;height:20px;"><rect x="3" y="12" width="4" height="8"/><rect x="10" y="8" width="4" height="12"/><rect x="17" y="4" width="4" height="16"/></svg> Ringkasan Sistem</h2>
+          <p>Kondisi server saat ini — cek di sini dulu sebelum menyelam ke baris log.</p>
+        </div>
+        <div class="dash-grid">
+          <div class="sys-card"><div class="sys-card-icon"><svg class="icon" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg></div><div><div class="sys-card-val">18%</div><div class="sys-card-lbl">CPU</div></div></div>
+          <div class="sys-card"><div class="sys-card-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/></svg></div><div><div class="sys-card-val">128 MB</div><div class="sys-card-lbl">RAM</div></div></div>
+          <div class="sys-card"><div class="sys-card-icon"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div><div><div class="sys-card-val">4j 12m</div><div class="sys-card-lbl">Uptime</div></div></div>
+          <div class="sys-card"><div class="sys-card-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13M9 9l12-2"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div><div><div class="sys-card-val">2.481</div><div class="sys-card-lbl">Lagu diputar</div></div></div>
+          <div class="sys-card"><div class="sys-card-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/></svg></div><div><div class="sys-card-val">312</div><div class="sys-card-lbl">Total track</div></div></div>
+          <div class="sys-card"><div class="sys-card-icon"><svg class="icon" viewBox="0 0 24 24"><circle cx="9" cy="7" r="3"/><path d="M2 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/><circle cx="18" cy="8" r="2.5"/></svg></div><div><div class="sys-card-val">99</div><div class="sys-card-lbl">Artis radio</div></div></div>
+          <div class="sys-card"><div class="sys-card-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div><div><div class="sys-card-val">14.203</div><div class="sys-card-lbl">HTTP Requests</div></div></div>
+          <div class="sys-card"><div class="sys-card-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></div><div><div class="sys-card-val">3.017</div><div class="sys-card-lbl">Command</div></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════ TAB 2: LOG LANGSUNG ═══════════ -->
+    <div class="tab-content" id="tab-log">
+      <div class="left-panel">
+        <div class="controls">
+          <select id="filterLevel">
+            <option value="">Semua Level</option>
+            <option>DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option><option>CRITICAL</option>
+          </select>
+          <!-- [F1] FIX: 15 kategori PERSIS core/log_categories.py, tanpa kategori hantu -->
+          <select id="filterCategory">
+            <option value="">Semua Kategori</option>
+            <option value="lifecycle">Lifecycle</option>
+            <option value="session">Session</option>
+            <option value="auth">Auth</option>
+            <option value="command">Command</option>
+            <option value="event">Event</option>
+            <option value="playback">Playback</option>
+            <option value="queue">Queue</option>
+            <option value="radio">Radio</option>
+            <option value="download">Download</option>
+            <option value="resolve">Resolve</option>
+            <option value="cache">Cache</option>
+            <option value="persistence">Persistence</option>
+            <option value="external">External</option>
+            <option value="security">Security</option>
+            <option value="system">System</option>
+          </select>
+          <input type="text" id="filterSearch" placeholder="Cari dalam event atau field..." style="flex:1;">
+          <button class="btn"><svg class="icon" viewBox="0 0 24 24"><path d="M4 4h16l-6 8v6l-4 2v-8z"/></svg> Filter</button>
+          <label class="checkbox-label"><input type="checkbox" checked> Auto-scroll</label>
+        </div>
+
+        <div class="demo-toggle" onclick="toggleEmptyDemo()">↕ klik untuk toggle contoh: log terisi vs empty state [F4]</div>
+
+        <div class="log-container" id="logContainer">
+          <div class="log-line"><span class="log-time">14:02:10</span><span class="log-cat">playback</span><span class="lvl-INFO">INFO</span> <span class="log-event">track_started</span></div>
+          <div class="log-line"><span class="log-time">14:02:11</span><span class="log-cat">auth</span><span class="lvl-WARNING">WARNING</span> <span class="log-event">token_near_expiry</span></div>
+          <div class="log-line"><span class="log-time">14:02:14</span><span class="log-cat">radio</span><span class="lvl-DEBUG">DEBUG</span> <span class="log-event">rotation_deck_refill</span></div>
+          <div class="log-line"><span class="log-time">14:02:19</span><span class="log-cat">resolve</span><span class="lvl-ERROR">ERROR</span> <span class="log-event">stream_url_timeout</span></div>
+          <div class="log-line"><span class="log-time">14:02:22</span><span class="log-cat">session</span><span class="lvl-INFO">INFO</span> <span class="log-event">client_connected</span></div>
+        </div>
+
+        <div class="empty-state" id="emptyStateDemo" style="display:none;">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M9 9l6 6M15 9l-6 6"/><circle cx="12" cy="12" r="9"/></svg>
+          <h4>Tidak ada log yang cocok</h4>
+          <p>Coba longgarkan filter kategori/level, atau kosongkan kolom pencarian.</p>
+        </div>
+      </div>
+
+      <div class="right-panel">
+        <div class="stats-panel">
+          <h3><svg class="icon" viewBox="0 0 24 24"><path d="M4 19V9M12 19V5M20 19v-7"/></svg> Global Metrics</h3>
+          <div class="stat-grid">
+            <div class="stat-box"><div class="stat-val">14.2k</div><div class="stat-lbl">Requests</div></div>
+            <div class="stat-box"><div class="stat-val">3.0k</div><div class="stat-lbl">Commands</div></div>
+          </div>
+          <button class="btn" style="width:100%; margin-top:var(--s3); justify-content:center;"><svg class="icon" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg> Unduh lunawave.log</button>
+        </div>
+        <div class="stats-panel">
+          <h3><svg class="icon" viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 11-14h-7z"/></svg> Log Stats (1 Jam)</h3>
+          <div style="font-size:var(--t-sm); color:var(--text-2); display:flex; flex-direction:column; gap:var(--s2);">
+            <div style="display:flex; justify-content:space-between;"><span class="lvl-INFO">INFO</span><span>412</span></div>
+            <div style="display:flex; justify-content:space-between;"><span class="lvl-WARNING">WARNING</span><span>18</span></div>
+            <div style="display:flex; justify-content:space-between;"><span class="lvl-ERROR">ERROR</span><span>3</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════ TAB 3: MATRIKS LOG ═══════════ -->
+    <div class="tab-content" id="tab-matrix">
+      <table class="matrix-table">
+        <thead><tr><th>Kategori</th><th>DEBUG</th><th>INFO</th><th>WARNING</th><th>ERROR</th></tr></thead>
+        <tbody>
+          <tr><td class="cat-name">playback</td><td class="cell-zero">0</td><td class="cell-info">88</td><td class="cell-zero">0</td><td class="cell-zero">0</td></tr>
+          <tr><td class="cat-name">auth</td><td class="cell-zero">0</td><td class="cell-info">12</td><td class="cell-warning">4</td><td class="cell-zero">0</td></tr>
+          <tr><td class="cat-name">radio</td><td class="cell-info">40</td><td class="cell-info">22</td><td class="cell-zero">0</td><td class="cell-zero">0</td></tr>
+          <tr><td class="cat-name">resolve</td><td class="cell-zero">0</td><td class="cell-info">55</td><td class="cell-zero">0</td><td class="cell-error">2</td></tr>
+          <tr><td class="cat-name">system</td><td class="cell-zero">0</td><td class="cell-info">6</td><td class="cell-zero">0</td><td class="cell-zero">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ═══════════ TAB 4: SESI PENGGUNA ═══════════ -->
+    <div class="tab-content" id="tab-users">
+      <div class="users-table-container">
+        <table class="users-table">
+          <thead><tr><th>Alamat IP</th><th>Halaman</th><th>Perangkat</th><th>Durasi</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr>
+              <td data-label="IP">192.168.1.14</td>
+              <td data-label="Halaman">/player</td>
+              <td data-label="Perangkat"><span class="device-badge"><svg class="icon" viewBox="0 0 24 24" style="width:12px;height:12px;"><rect x="5" y="2" width="14" height="20" rx="2"/></svg> Android · Chrome</span></td>
+              <td data-label="Durasi">42m</td>
+              <td data-label="Status"><span class="status-indicator ok" style="display:inline-block;"></span></td>
+            </tr>
+            <tr>
+              <td data-label="IP">192.168.1.22</td>
+              <td data-label="Halaman">/radio</td>
+              <td data-label="Perangkat"><span class="device-badge"><svg class="icon" viewBox="0 0 24 24" style="width:12px;height:12px;"><rect x="3" y="4" width="18" height="12" rx="1"/></svg> Windows · Firefox</span></td>
+              <td data-label="Durasi">3j 05m</td>
+              <td data-label="Status"><span class="status-indicator ok" style="display:inline-block;"></span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <!-- [F5] Bottom tab bar — HANYA tampil di <640px, tabs-header atas disembunyikan -->
+  <nav class="bottom-tabs" id="bottomTabs">
+    <button class="bottom-tab-btn active" data-tab="ringkasan"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="12" width="4" height="8"/><rect x="10" y="8" width="4" height="12"/><rect x="17" y="4" width="4" height="16"/></svg>Ringkasan</button>
+    <button class="bottom-tab-btn" data-tab="log"><svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7"/></svg>Log</button>
+    <button class="bottom-tab-btn" data-tab="matrix"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Matriks</button>
+    <button class="bottom-tab-btn" data-tab="users"><svg class="icon" viewBox="0 0 24 24"><circle cx="9" cy="7" r="3"/><path d="M2 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/><circle cx="18" cy="8" r="2.5"/></svg>Sesi</button>
+  </nav>
+
+<script>
+  // [F3] switchTab dipakai top-tabs & bottom-tabs sekaligus, satu sumber kebenaran state,
+  // sekaligus tulis location.hash supaya deep-link (#ringkasan, #log, #matrix, #users) jalan.
+  function switchTab(name, pushHash = true) {
+    document.querySelectorAll('.tab-btn, .bottom-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + name));
+    if (pushHash) history.replaceState(null, '', '#' + name);
+  }
+  document.querySelectorAll('.tab-btn, .bottom-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+  // Baca hash saat load pertama (deep-link)
+  const initial = (location.hash || '#ringkasan').slice(1);
+  if (document.getElementById('tab-' + initial)) switchTab(initial, false);
+
+  function toggleEmptyDemo() {
+    const logs = document.getElementById('logContainer');
+    const empty = document.getElementById('emptyStateDemo');
+    const showingEmpty = empty.style.display !== 'none';
+    empty.style.display = showingEmpty ? 'none' : 'flex';
+    logs.style.display = showingEmpty ? 'block' : 'none';
+  }
+</script>
+</body>
+</html>

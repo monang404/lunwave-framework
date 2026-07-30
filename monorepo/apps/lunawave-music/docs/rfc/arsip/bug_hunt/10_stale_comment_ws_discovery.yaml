@@ -1,0 +1,91 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 10 — Hapus komentar stale 'unreachable' di ws_discovery.py
+# (temuan audit-lunawave-temuan.md #10)
+# Depends on: TIDAK ADA (independen)
+# Risiko: SANGAT RENDAH (komentar saja) | Effort: SANGAT KECIL
+# Bagian dari seri: docs/rfc/temuan_audit_2026_07_27/ — BACA 00_index_and_decisions.yaml
+# LEBIH DULU (berisi decisions/keputusan desain & deviation_protocol yang
+# berlaku untuk SEMUA file di seri ini, termasuk file ini).
+# =============================================================================
+
+phase:
+  id: T10
+  title: "Hapus komentar stale 'unreachable' di ws_discovery.py"
+  temuan_ref: 10
+  closes_temuan: [10]
+  depends_on: []
+
+tasks:
+  - task_id: P4-T2
+    title: "Hapus komentar stale 'unreachable' di ws_discovery.py"
+    temuan_ref: 10
+    severity_audit: "Dokumentasi (bukan bug eksekusi)"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - server/handlers/ws_discovery.py
+    steps:
+      - >
+        `view` server/handlers/ws_discovery.py baris ~139-149 (blok
+        `elif action == "get_artist_detail":`). VERIFIKASI ULANG
+        komentar NOTE (PATCH-2026-07-17-070) yang menyatakan branch ini
+        "UNREACHABLE" karena belum masuk DISCOVERY_CMDS.
+      - >
+        `view` server/handlers/websocket.py baris ~87 untuk konfirmasi
+        `DISCOVERY_CMDS = {"search", "discover", "get_artist_detail",
+        "discover_search"}` SUDAH menyertakan "get_artist_detail"
+        (jadi branch ini SUDAH reachable, komentar sudah basi).
+      - >
+        Hapus blok komentar NOTE (PATCH-2026-07-17-070) yang salah
+        sepenuhnya (6 baris, dari "# NOTE (PATCH-2026-07-17-070):..."
+        sampai "...See docs/PATCHLOG.md PATCH-2026-07-17-070..."),
+        GANTI dengan komentar singkat 1 baris yang akurat kalau
+        konteks tambahan masih berguna, mis.:
+        `# get_artist_detail terdaftar di DISCOVERY_CMDS
+        (server/handlers/websocket.py) -- branch ini reachable.`
+        Atau HAPUS SAJA tanpa pengganti kalau kode di bawahnya (nama
+        variabel, alur) sudah cukup self-explanatory tanpa komentar
+        historis ini.
+      - >
+        JANGAN ubah logic apa pun di blok ini (`ds =
+        DiscoverService(discover_repo)`, dst.) -- perubahan HANYA di
+        komentar.
+      - >
+        Tidak perlu test baru (perubahan murni komentar, tidak
+        mengubah behavior) -- cukup jalankan test existing
+        test_ws_discovery.py untuk memastikan tidak ada regresi dari
+        typo saat edit.
+    acceptance_criteria:
+      - "Komentar yang menyatakan branch get_artist_detail unreachable sudah dihapus/diperbarui, tidak lagi menyesatkan pembaca kode."
+      - "Tidak ada perubahan logic di ws_discovery.py."
+    tests:
+      run:
+        - "pytest tests/unit/server/handlers/test_ws_discovery.py -q"
+    patchlog:
+      type: docs
+      area: "server/handlers"
+      title: "Hapus komentar stale 'unreachable' di ws_discovery.py::get_artist_detail"
+      reason: >
+        Komentar menyatakan branch get_artist_detail unreachable
+        sampai ditambahkan ke DISCOVERY_CMDS di websocket.py -- padahal
+        sudah terdaftar di sana, komentar jadi menyesatkan pembaca
+        kode (termasuk AI agent yang membaca konteks sebelum
+        mengerjakan task lain di file ini).
+      root_cause: >
+        websocket.py (locked file) diupdate untuk menambahkan
+        get_artist_detail ke DISCOVERY_CMDS di patch lain, tapi
+        komentar di ws_discovery.py yang merujuk ke kondisi
+        "sebelum" itu tidak ikut dibersihkan.
+      solution: >
+        Hapus/perbarui komentar NOTE agar mencerminkan kondisi kode
+        saat ini (branch sudah reachable).
+      files: "server/handlers/ws_discovery.py"
+      notes: "Perubahan murni komentar, tidak ada perubahan logic. Tidak menyentuh websocket.py (locked)."
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/patchlog.py verify"
+  - "ruff check ."

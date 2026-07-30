@@ -1,0 +1,38 @@
+{
+  "name": "lunawave",
+  "version": "5.0.0",
+  "description": "LunaWave — personal music player berbasis yt-dlp, MPV, dan aiohttp, dioptimalkan untuk Termux dan desktop.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "depcruise": "depcruise --config .dependency-cruiser.js web/static/shared/js web/static/pages"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/monang404/lunawave.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/monang404/lunawave/issues"
+  },
+  "homepage": "https://github.com/monang404/lunawave#readme",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "dependency-cruiser": "^18.1.0",
+    "eslint": "^10.7.0",
+    "globals": "^17.7.0",
+    "jsdom": "^29.1.1",
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

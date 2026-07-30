@@ -1,0 +1,208 @@
+%YAML 1.1
+---
+# =============================================================================
+# LunaWave — Implementation Plan: 11 Temuan Audit Terbaru
+# File index & keputusan. BACA FILE INI PERTAMA.
+#
+# Sumber: audit-lunawave-temuan.md (Audit LunaWave — Ringkasan Temuan)
+# Status: setiap temuan dipecah jadi 1 file terpisah (01..11), MASING-MASING
+# = SATU sesi kerja = SATU commit. JANGAN gabung beberapa file jadi satu
+# commit kecuali file tsb secara eksplisit menyatakan depends_on file lain
+# di seri ini (lihat dependency_graph -- saat ini TIDAK ADA, semua 11 file
+# independen satu sama lain).
+# =============================================================================
+
+meta:
+  project: LunaWave
+  source_audit: audit-lunawave-temuan.md
+  generated: "2026-07-27"
+  verified_against_code: true
+  verification_note: >
+    Semua lokasi/baris di tiap file 01-11 sudah diverifikasi langsung
+    terhadap isi lunawave-develop-5-0-0.zip (bukan disalin mentah dari
+    tabel audit). Baris bisa bergeser sedikit kalau ada commit lain
+    sebelum eksekusi -- tiap task tetap punya langkah `view` ulang sebagai
+    verifikasi pertama sebelum edit apa pun.
+  principle: >
+    Tiap file 01-11 SELF-CONTAINED: bisa dibuka, dikerjakan, ditest, dan
+    di-commit sendirian tanpa perlu baca file lain di seri ini KECUALI
+    file ini (00_index) untuk konteks decisions di bawah. Urutan file
+    (01, 02, ...) mengikuti execution_order yang disarankan, BUKAN
+    dependency yang mengikat -- boleh dikerjakan out-of-order atau
+    di-skip/ditunda salah satunya tanpa merusak yang lain.
+
+# -----------------------------------------------------------------------------
+# Keputusan desain yang diambil di muka, supaya eksekutor tidak perlu
+# berhenti untuk bertanya. Tiap file 01-11 mereferensikan id keputusan yang
+# relevan (mis. "lihat decisions.d1_...") -- definisi lengkapnya di sini.
+# -----------------------------------------------------------------------------
+decisions:
+  d1_queue_select_radio_deactivate: >
+    (Dipakai di 01_queue_select_radio_deactivate.yaml) Diperbaiki dengan
+    MENIRU PERSIS pola yang sudah ada di PlaybackController.
+    _on_cmd_play_track (engine/playback/controller.py, baris ~216-221):
+    kalau playback_mode == RADIO, panggil radio_mode.on_deactivated(),
+    set playback_mode = QUEUE, publish QueueUpdatedEvent() -- SEBELUM
+    play_track(). TIDAK menambah lock baru di QueueController.
+    on_queue_select kecuali verifikasi kode menunjukkan itu perlu -- lihat
+    detail lengkap di file 01.
+  d2_max_track_duration: >
+    (Dipakai di 03_max_track_duration_filter.yaml) Diperbaiki dengan
+    menambah filter durasi di TrackFilter.filter_tracks()
+    (engine/radio/track_filter.py), BUKAN di level SQL query
+    get_random_songs() -- konsisten dengan filter lain (history/queue/
+    dedup/quota artis) yang semuanya sudah hidup di TrackFilter. Track
+    dengan duration <= 0 (belum diketahui/metadata korup) TIDAK di-drop.
+  d3_radio_search_sem: >
+    (Dipakai di 04_radio_search_semaphore.yaml) Disambungkan di
+    engine/radio/prefetcher.py::_do_prefetch, satu-satunya asyncio.
+    gather() network-bound (resolve stream via yt-dlp) di seluruh modul
+    radio. Kalau eksekutor menemukan titik gather() lain yang lebih
+    cocok, sambungkan di situ sebagai gantinya dan catat penyimpangannya
+    di PATCHLOG task tsb.
+  d4_shortest_delta: >
+    (Dipakai di 08_shortest_delta_tiebreak.yaml) Diperbaiki dengan
+    mengganti formula ad-hoc jadi idiom standar circular-distance. Efek
+    HANYA di titik tepat to-from == 0.5: sebelumnya selalu resolve ke
+    -0.5, sekarang konsisten ke +0.5. Kosmetik, titik lain tidak berubah.
+  d5_cors_fix: >
+    (Dipakai di 05_cors_audio_stream.yaml) Diperbaiki dengan TIDAK PERNAH
+    reflect header Origin request sebagai fallback. Kalau
+    ALLOWED_STREAM_ORIGIN kosong, header Access-Control-Allow-Origin
+    TIDAK disertakan sama sekali. Test test_audio_stream_cors_fallback
+    yang SAAT INI mengasersi perilaku reflektif sebagai benar HARUS
+    dibalik jadi mengasersi header TIDAK ADA -- lihat detail di file 05.
+  d6_raise_from_scope: >
+    (Dipakai di 06_raise_from_none.yaml) Audit menyebut "4 lokasi", tapi
+    verifikasi kode menemukan 5: 4 di ws_schemas.py + 1 di
+    adapters/ytdlp/resolver.py baris ~82 (`except TimeoutError: raise
+    RuntimeError(...)` di get_stream_url). File 06 memperbaiki SEMUA 5
+    lokasi -- perbedaan angka dengan tabel audit dicatat di PATCHLOG
+    task tsb, bukan dianggap kontradiksi yang menghentikan eksekusi.
+  d7_pass_except_scope: >
+    (Dipakai di 09_silent_except_triage.yaml) ~99 pola try/except/pass
+    TIDAK diperbaiki blanket-fix -- terlalu berisiko tanpa audit
+    kasus-per-kasus. File 09 HANYA membuat skrip inventory + pilot
+    perbaikan 2 file yang disebut eksplisit di audit (core/log_context.py,
+    launcher/*). Sisanya (~93 titik) jadi backlog untuk sesi lanjutan
+    terpisah -- TIDAK dieksekusi otomatis dalam file 09.
+  d8_locked_files: >
+    Tidak ada file 01-11 yang menyentuh engine/playback/controller.py
+    atau server/handlers/websocket.py (keduanya locked per AI_CONTEXT.md).
+    File 01 meniru pola dari controller.py tapi HANYA mengedit
+    queue_controller.py. File 10 menghapus komentar stale di
+    ws_discovery.py, BUKAN mengedit websocket.py.
+
+deviation_protocol: >
+  Kalau saat `view` ulang eksekutor menemukan baris/struktur kode yang
+  BERBEDA dari yang dijelaskan di task (bukan cuma nomor baris bergeser,
+  tapi logika/nama yang berbeda), STOP task tersebut, catat temuan di
+  PATCHLOG sebagai "Status: Blocked -- deviation", JANGAN lanjut commit
+  file itu, lanjut ke file lain di seri ini yang independen, dan laporkan
+  ke user di akhir sesi.
+
+# -----------------------------------------------------------------------------
+# Pemetaan file -> temuan asli di audit-lunawave-temuan.md
+# -----------------------------------------------------------------------------
+file_map:
+  - file: 01_queue_select_radio_deactivate.yaml
+    temuan: 1
+    severity_audit: "Tinggi"
+    area: engine/playback
+  - file: 02_pending_toggle_queue_select.yaml
+    temuan: 2
+    severity_audit: "Sedang"
+    area: web/static/shared/js/ws
+  - file: 03_max_track_duration_filter.yaml
+    temuan: 3
+    severity_audit: "Sedang-Tinggi"
+    area: engine/radio
+  - file: 04_radio_search_semaphore.yaml
+    temuan: 4
+    severity_audit: "Sedang"
+    area: engine/radio
+  - file: 05_cors_audio_stream.yaml
+    temuan: 6
+    severity_audit: "Rendah (tapi security-relevant)"
+    area: server/handlers
+  - file: 06_raise_from_none.yaml
+    temuan: 7
+    severity_audit: "Rendah"
+    area: "server/handlers, adapters/ytdlp"
+  - file: 07_os_walk_prune_symlink.yaml
+    temuan: 8
+    severity_audit: "Rendah"
+    area: server/handlers
+  - file: 08_shortest_delta_tiebreak.yaml
+    temuan: 5
+    severity_audit: "Rendah (kosmetik)"
+    area: web/static/shared/js/render
+  - file: 09_silent_except_triage.yaml
+    temuan: 9
+    severity_audit: "Rendah"
+    area: "core, launcher, automation"
+    note: "Scope pilot terbatas 2 file, lihat decisions.d7_pass_except_scope."
+  - file: 10_stale_comment_ws_discovery.yaml
+    temuan: 10
+    severity_audit: "Dokumentasi (bukan bug eksekusi)"
+    area: server/handlers
+  - file: 11_stale_comment_radio_hero_moon.yaml
+    temuan: 11
+    severity_audit: "Dokumentasi (bukan bug eksekusi)"
+    area: web/static/shared/js/render
+
+# -----------------------------------------------------------------------------
+# Dependency graph antar file. SEMUA independen -- tidak ada file yang
+# butuh file lain selesai lebih dulu. Boleh dikerjakan berapa pun urutan,
+# oleh berapa pun sesi/orang berbeda, tanpa saling mengganggu.
+# -----------------------------------------------------------------------------
+dependency_graph:
+  01_queue_select_radio_deactivate.yaml: []
+  02_pending_toggle_queue_select.yaml: []
+  03_max_track_duration_filter.yaml: []
+  04_radio_search_semaphore.yaml: []
+  05_cors_audio_stream.yaml: []
+  06_raise_from_none.yaml: []
+  07_os_walk_prune_symlink.yaml: []
+  08_shortest_delta_tiebreak.yaml: []
+  09_silent_except_triage.yaml: []
+  10_stale_comment_ws_discovery.yaml: []
+  11_stale_comment_radio_hero_moon.yaml: []
+
+# -----------------------------------------------------------------------------
+# Urutan eksekusi yang disarankan (prioritas audit #1->#4, lalu robustness
+# minor, lalu kosmetik, lalu triase+dokumentasi) -- BUKAN dependency yang
+# mengikat, murni saran supaya dampak tertinggi dikerjakan lebih dulu.
+# -----------------------------------------------------------------------------
+execution_order_recommended:
+  - 01_queue_select_radio_deactivate.yaml     # dampak fungsional tertinggi
+  - 02_pending_toggle_queue_select.yaml
+  - 03_max_track_duration_filter.yaml
+  - 04_radio_search_semaphore.yaml
+  - 05_cors_audio_stream.yaml                 # security-relevant, kerjakan sebelum minor lain
+  - 06_raise_from_none.yaml
+  - 07_os_walk_prune_symlink.yaml
+  - 08_shortest_delta_tiebreak.yaml           # kosmetik, boleh disisipkan kapan saja
+  - 09_silent_except_triage.yaml              # paling besar effort-nya, cocok jadi sesi tersendiri
+  - 10_stale_comment_ws_discovery.yaml        # paling aman, cocok "sesi pendek"/warm-up
+  - 11_stale_comment_radio_hero_moon.yaml
+
+# -----------------------------------------------------------------------------
+# Konvensi commit per file (satu sesi = satu file = satu commit)
+# -----------------------------------------------------------------------------
+commit_convention: >
+  Tiap file 01-11 sudah membawa 1 blok `patchlog:` lengkap (type, area,
+  title, reason, root_cause, solution, files, notes) yang dirancang jadi
+  1 entry PATCH-YYYY-MM-DD-NNN via `automation/patchlog.py` setelah
+  task-nya selesai dan test hijau. Commit message disarankan memakai
+  title dari blok patchlog file tsb, mis.:
+  "fix(engine/playback): queue_select menonaktifkan Radio Mode".
+  JANGAN gabung 2+ file jadi 1 commit hanya karena areanya berdekatan
+  (mis. 08 dan 11 sama-sama menyentuh radio-hero-moon.js) -- keduanya
+  tetap 2 commit terpisah karena scope perubahannya independen (bug fix
+  vs komentar) dan diff-nya lebih mudah di-review terpisah.
+
+post_all_files_commands:
+  - "python automation/doctor.py"
+  - "python automation/generate_file_index.py"
+  - "python automation/generate_report.py"

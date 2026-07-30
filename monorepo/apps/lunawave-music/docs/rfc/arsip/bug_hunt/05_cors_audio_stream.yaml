@@ -1,0 +1,124 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 05 — CORS audio stream: hapus reflektif Origin
+# (temuan audit-lunawave-temuan.md #6)
+# Depends on: TIDAK ADA (independen)
+# Risiko: RENDAH-SEDANG (breaking change utk deployment tanpa ALLOWED_STREAM_ORIGIN) | Effort: KECIL
+# Bagian dari seri: docs/rfc/temuan_audit_2026_07_27/ — BACA 00_index_and_decisions.yaml
+# LEBIH DULU (berisi decisions/keputusan desain & deviation_protocol yang
+# berlaku untuk SEMUA file di seri ini, termasuk file ini).
+# =============================================================================
+
+phase:
+  id: T05
+  title: "CORS audio stream: hapus reflektif Origin"
+  temuan_ref: 6
+  closes_temuan: [6]
+  depends_on: []
+
+tasks:
+  - task_id: P2-T1
+    title: "CORS audio stream: jangan reflect Origin sembarang saat ALLOWED_STREAM_ORIGIN kosong"
+    temuan_ref: 6
+    severity_audit: "Rendah"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - server/handlers/audio_stream_handler.py
+      modify_tests:
+        - tests/unit/server/handlers/test_audio_stream_cors.py
+    steps:
+      - >
+        `view` server/handlers/audio_stream_handler.py baris ~105-106
+        dan ~232-234 (dua titik CORS: satu untuk FileResponse cache
+        hit, satu untuk StreamResponse proxy langsung). VERIFIKASI
+        ULANG pola persisnya sebelum edit: `origin =
+        ALLOWED_STREAM_ORIGIN or request.headers.get("Origin", "")`.
+      - >
+        Ganti KEDUA titik dari pola `X or request.headers.get(...)`
+        menjadi HANYA memakai ALLOWED_STREAM_ORIGIN, tanpa fallback ke
+        header request:
+        ```python
+        # Titik 1 (~baris 105-106)
+        cors_headers = (
+            {"Access-Control-Allow-Origin": ALLOWED_STREAM_ORIGIN}
+            if ALLOWED_STREAM_ORIGIN
+            else {}
+        )
+        ```
+        ```python
+        # Titik 2 (~baris 232-234)
+        if ALLOWED_STREAM_ORIGIN:
+            stream_headers["Access-Control-Allow-Origin"] = ALLOWED_STREAM_ORIGIN
+        ```
+        JANGAN hapus variabel `request` yang mungkin masih dipakai
+        untuk hal lain di fungsi yang sama -- HANYA hilangkan fallback
+        `request.headers.get("Origin", "")` di dua titik CORS ini.
+      - >
+        UBAH test `test_audio_stream_cors_fallback` (SAAT INI
+        mengasersi `response.headers.get("Access-Control-Allow-Origin")
+        == "https://evil.example"` sebagai perilaku BENAR -- ini
+        mengunci bug-nya, harus dibalik) menjadi mengasersi header
+        TIDAK ADA:
+        `assert response.headers.get("Access-Control-Allow-Origin") is None`.
+        Pertimbangkan rename fungsi test dari
+        `test_audio_stream_cors_fallback` menjadi
+        `test_audio_stream_cors_no_header_when_unconfigured` supaya
+        nama mencerminkan perilaku baru (opsional, minimal ubah body
+        assert-nya).
+      - >
+        Test `test_audio_stream_cors_configured` (ALLOWED_STREAM_ORIGIN
+        diisi eksplisit) TIDAK perlu diubah -- perilaku itu tetap sama
+        (header terisi persis nilai ALLOWED_STREAM_ORIGIN).
+      - >
+        Test baru: request dengan Origin header BERBEDA dari
+        ALLOWED_STREAM_ORIGIN yang dikonfigurasi -- assert header
+        response TETAP `ALLOWED_STREAM_ORIGIN` (bukan Origin request),
+        membuktikan tidak ada reflektif sama sekali bahkan saat
+        dikonfigurasi.
+      - >
+        Cek juga tests/unit/server/handlers/test_audio_stream_handler.py
+        untuk memastikan tidak ada test lain yang diam-diam
+        bergantung pada perilaku reflektif lama -- jalankan full file
+        setelah perubahan.
+    acceptance_criteria:
+      - "Access-Control-Allow-Origin tidak pernah berisi nilai dari header Origin request kapan pun ALLOWED_STREAM_ORIGIN kosong."
+      - "Saat ALLOWED_STREAM_ORIGIN dikonfigurasi, header response selalu persis nilai itu, tidak peduli Origin request apa."
+      - "test_audio_stream_cors_fallback (atau nama barunya) tidak lagi mengunci perilaku reflektif sebagai 'benar'."
+    tests:
+      run:
+        - "pytest tests/unit/server/handlers/test_audio_stream_cors.py -q"
+        - "pytest tests/unit/server/handlers/test_audio_stream_handler.py -q"
+    patchlog:
+      type: security_fix
+      area: "server/handlers"
+      title: "Audio stream CORS: hapus reflektif Origin saat ALLOWED_STREAM_ORIGIN kosong"
+      reason: >
+        Saat ALLOWED_STREAM_ORIGIN tidak dikonfigurasi, header
+        Access-Control-Allow-Origin diisi mentah dari header Origin
+        request apa pun -- efektif mengizinkan origin manapun membaca
+        response audio stream lewat fetch cross-origin.
+      root_cause: >
+        Pola `ALLOWED_STREAM_ORIGIN or request.headers.get("Origin",
+        "")` dimaksudkan sebagai fallback ramah-development, tapi
+        efeknya sama dengan wildcard CORS reflektif yang dikenal rawan
+        untuk endpoint yang menyajikan konten sensitif per-user.
+      solution: >
+        Kedua titik CORS di audio_stream_handler.py sekarang HANYA
+        mengisi header kalau ALLOWED_STREAM_ORIGIN dikonfigurasi
+        eksplisit -- tanpa fallback ke Origin request. Tanpa
+        konfigurasi, endpoint tetap bisa diakses same-origin (browser
+        tidak butuh header CORS untuk fetch same-origin).
+      files: "server/handlers/audio_stream_handler.py, tests/unit/server/handlers/test_audio_stream_cors.py"
+      notes: >
+        Breaking change untuk deployment yang mengandalkan perilaku
+        reflektif lama tanpa set LUNAWAVE_ALLOWED_ORIGIN eksplisit --
+        catat di README/SECURITY.md kalau deployment cross-origin
+        butuh env var itu diisi (cek dulu apakah sudah didokumentasikan).
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/patchlog.py verify"
+  - "ruff check ."

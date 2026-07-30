@@ -1,0 +1,17 @@
+/* ══ LunaWave reset.css ══ */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100dvh;
+  min-height: 100vh;
+  background: var(--bg-primary);
+  overflow: hidden;
+  overscroll-behavior: none;  /* C-12: cegah scroll-bleed di iOS Safari */
+}

@@ -1,0 +1,594 @@
+/* ═══════════════════════════════════════════
+   Discover Tab — Personalization components
+   Taste Spectrum, Filter Bar, Artist Cards, Artist Detail Sheet content
+   ═══════════════════════════════════════════ */
+
+:root {
+    /* curated genre palette, tied to brand — not hsl(random) like the hashtag cloud */
+    --g-pop: var(--accent);
+    --g-rock: #E8694F;
+    --g-indopop: #7FB6A6;
+    --g-jazz: #9A86D6;
+    --g-electronic: #5FA3D9;
+    --g-other: #5B6270;
+}
+
+/* ============ Taste Spectrum ============ */
+.taste-block {
+    padding: var(--s4) var(--s5) var(--s5);
+}
+
+.taste-eyebrow-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: var(--s3);
+}
+
+.taste-eyebrow {
+    font-size: var(--t-md);
+    font-weight: var(--w-semibold);
+    color: var(--text-1);
+}
+
+.taste-caption {
+    font-size: var(--t-xs);
+    color: var(--text-3);
+    margin-top: 2px;
+}
+
+.taste-bar {
+    display: flex;
+    width: 100%;
+    height: 10px;
+    border-radius: var(--r-full);
+    overflow: hidden;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-1);
+}
+
+.taste-seg {
+    height: 100%;
+    transition: filter var(--dur-fast) var(--ease);
+}
+
+.taste-seg:hover {
+    filter: brightness(1.25);
+}
+
+.taste-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s2) var(--s4);
+    margin-top: var(--s3);
+}
+
+.taste-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--t-xs);
+    color: var(--text-2);
+}
+
+.taste-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.taste-legend-item b {
+    color: var(--text-1);
+    font-weight: var(--w-medium);
+}
+
+.taste-fallback {
+    font-size: var(--t-sm);
+    color: var(--text-3);
+    padding: var(--s3) 0;
+}
+
+/* ============ Sticky filter bar ============ */
+.filter-bar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: rgba(14, 14, 18, .92);
+    backdrop-filter: blur(10px);
+    padding: var(--s3) var(--s5);
+    border-bottom: 1px solid var(--border-1);
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--s3);
+}
+
+.custom-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.custom-dropdown-btn {
+    background: var(--bg-surface);
+    color: var(--text-2);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-full);
+    padding: 0 16px;
+    min-height: 44px;
+    font-size: var(--t-sm);
+    font-family: inherit;
+    font-weight: var(--w-medium);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s;
+}
+
+.custom-dropdown-btn:hover {
+    border-color: var(--border-3);
+    color: var(--text-1);
+}
+
+.custom-dropdown-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-2);
+    border-radius: var(--r-md);
+    min-width: 140px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    z-index: 100;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.custom-dropdown.open .custom-dropdown-menu {
+    display: flex;
+}
+
+.custom-dropdown-item {
+    background: transparent;
+    border: none;
+    padding: 12px 16px;
+    text-align: center;
+    color: var(--text-2);
+    font-size: var(--t-sm);
+    font-family: inherit;
+    font-weight: var(--w-medium);
+    cursor: pointer;
+    width: 100%;
+    transition: all 0.2s;
+}
+
+.custom-dropdown-item:hover, .custom-dropdown-item.active {
+    background: var(--bg-elevated);
+    color: var(--accent);
+}
+
+.filter-scope-hint {
+    font-size: var(--t-xs);
+    color: var(--text-3);
+    padding: 0 var(--s5) var(--s2);
+    font-style: italic;
+}
+
+.segmented {
+    display: inline-flex;
+    background: var(--bg-elevated);
+    border-radius: var(--r-full);
+    padding: 3px;
+    border: 1px solid var(--border-1);
+    align-self: flex-start;
+}
+
+.segmented button {
+    border: none;
+    background: transparent;
+    color: var(--text-2);
+    font-family: inherit;
+    font-size: var(--t-sm);
+    font-weight: var(--w-medium);
+    padding: 7px 16px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    border-radius: var(--r-full);
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.segmented button.active {
+    background: var(--accent);
+    color: #1a1305;
+    font-weight: var(--w-semibold);
+}
+
+.chip-row {
+    display: flex;
+    gap: var(--s2);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.chip-row::-webkit-scrollbar {
+    display: none;
+}
+
+.chip {
+    flex-shrink: 0;
+    border: 1px solid var(--border-2);
+    background: var(--bg-surface);
+    color: var(--text-2);
+    font-family: inherit;
+    font-size: var(--t-xs);
+    font-weight: var(--w-medium);
+    padding: 6px 14px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    border-radius: var(--r-full);
+    cursor: pointer;
+    transition: all var(--dur-fast) var(--ease);
+}
+
+.chip.active {
+    background: var(--accent-alpha);
+    border-color: var(--accent);
+    color: var(--accent-hover);
+}
+
+.chip:hover {
+    border-color: var(--border-3);
+}
+
+.segmented button:focus-visible,
+.chip:focus-visible,
+.artist-card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* ============ Artist card carousel ============ */
+.chip-row, .card-row {
+    mask-image: linear-gradient(to right, black 92%, transparent 100%);
+}
+
+.card-row {
+    display: flex;
+    gap: var(--s3);
+    padding: var(--s2) var(--s5) var(--s2);
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+    min-height: 40px;
+}
+
+.card-row::-webkit-scrollbar {
+    display: none;
+}
+
+.artist-card {
+    flex-shrink: 0;
+    width: 118px;
+    scroll-snap-align: start;
+    cursor: pointer;
+    border: none;
+    background: none;
+    padding: 0;
+    font-family: inherit;
+    text-align: left;
+    color: inherit;
+}
+
+.artist-card-art {
+    width: 118px;
+    height: 118px;
+    border-radius: var(--r-md);
+    overflow: hidden;
+    position: relative;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-1);
+}
+
+.artist-card-art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transition: transform var(--dur-normal) var(--ease), filter var(--dur-normal) var(--ease);
+}
+
+.artist-card-art .art-fallback {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-3);
+    font-size: 32px;
+}
+
+.artist-card:hover .artist-card-art img {
+    transform: scale(1.06);
+}
+
+.badge {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    font-size: 10px;
+    font-weight: var(--w-bold);
+    padding: 3px 7px;
+    border-radius: var(--r-full);
+    backdrop-filter: blur(6px);
+}
+
+.badge-match {
+    background: rgba(242, 181, 68, .85);
+    color: #1a1305;
+}
+
+.badge-new {
+    background: rgba(255, 255, 255, .12);
+    color: var(--text-1);
+    border: 1px solid rgba(255, 255, 255, .25);
+}
+
+.badge-decade {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    background: rgba(0, 0, 0, 0.6);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    font-size: 10px;
+    font-weight: var(--w-bold);
+    padding: 3px 7px;
+    border-radius: var(--r-sm);
+    backdrop-filter: blur(8px);
+    z-index: 2;
+    pointer-events: none;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+}
+
+.artist-card-name {
+    font-size: var(--t-md);
+    font-weight: var(--w-bold);
+    color: var(--text-1);
+    margin-top: var(--s2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.artist-card-meta {
+    font-size: var(--t-sm);
+    color: var(--text-3);
+    margin-top: 1px;
+}
+
+/* undiscovered treatment: desaturated until hover/focus/tap */
+.artist-card.undiscovered .artist-card-art {
+    box-shadow: 0 0 0 2px var(--accent-alpha);
+}
+
+.artist-card.undiscovered:hover .artist-card-art img,
+.artist-card.undiscovered:focus-visible .artist-card-art img,
+.artist-card.undiscovered.touched .artist-card-art img {
+    /* No longer using grayscale, leaving this selector empty or keeping it for any other hover effect if needed */
+}
+
+.card-row-empty {
+    padding: var(--s3) var(--s5);
+    font-size: var(--t-sm);
+    color: var(--text-3);
+}
+
+@media (min-width: 760px) {
+    .card-row {
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: 150px;
+        overflow-x: auto;
+        gap: var(--s4);
+    }
+
+    .artist-card {
+        width: 150px;
+    }
+
+    .artist-card-art {
+        width: 150px;
+        height: 150px;
+    }
+
+    .filter-bar {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .taste-block {
+        display: flex;
+        align-items: center;
+        gap: var(--s6);
+    }
+
+    .taste-eyebrow-row {
+        min-width: 200px;
+        margin-bottom: 0;
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .taste-bar-wrap {
+        flex: 1;
+    }
+}
+
+/* ============ Artist Detail Sheet content (shell reuses .settings-sheet) ============ */
+.ads-cover {
+    position: relative;
+    height: 180px;
+    margin: -16px -16px 0;
+    border-radius: var(--r-lg) var(--r-lg) 0 0;
+    overflow: hidden;
+}
+
+.ads-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    background: var(--bg-elevated);
+}
+
+.ads-cover::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to top, var(--bg-surface), transparent 65%);
+}
+
+.ads-title-block {
+    position: absolute;
+    left: var(--s5);
+    right: var(--s5);
+    bottom: var(--s3);
+}
+
+.ads-name {
+    font-size: var(--t-2xl);
+    font-weight: var(--w-bold);
+    letter-spacing: -.5px;
+    color: var(--text-1);
+}
+
+.ads-tags {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 6px;
+}
+
+.ads-tags .tag {
+    font-size: var(--t-xs);
+    color: var(--text-2);
+    background: rgba(255, 255, 255, .06);
+    padding: 3px 9px;
+    border-radius: var(--r-full);
+    border: 1px solid var(--border-1);
+}
+
+.ads-body {
+    padding: var(--s5) var(--s4) 0;
+}
+
+.btn-play-all {
+    width: 100%;
+    background: var(--accent);
+    color: #1a1305;
+    border: none;
+    border-radius: var(--r-full);
+    padding: 14px;
+    font-size: var(--t-md);
+    font-weight: var(--w-bold);
+    font-family: inherit;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: background var(--dur-fast) var(--ease);
+}
+
+.btn-play-all:hover {
+    background: var(--accent-hover);
+}
+
+.ads-track-list {
+    margin-top: var(--s5);
+}
+
+.track-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    padding: 10px 4px;
+    border-radius: var(--r-sm);
+}
+
+.track-row:hover {
+    background: var(--bg-elevated);
+}
+
+.track-idx {
+    width: 18px;
+    text-align: center;
+    font-size: var(--t-sm);
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+}
+
+.track-row:hover .track-idx {
+    color: var(--accent);
+}
+
+.track-title {
+    flex: 1;
+    font-size: var(--t-md);
+    color: var(--text-1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.track-dur {
+    font-size: var(--t-xs);
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+}
+
+.ads-empty-tracks {
+    font-size: var(--t-sm);
+    color: var(--text-3);
+    padding: var(--s3) 0;
+}
+
+/* ============ Discover Tab Layout Fix ============ */
+#tab-discover {
+    overflow-y: auto;
+    overflow-x: hidden;
+    /* Firefox: scrollbar tipis & warna ikut tema (bukan default browser) */
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-3) transparent;
+}
+
+#tab-discover > * {
+    flex-shrink: 0;
+}
+
+/* WebKit (Chrome/Edge/Safari): thumb tipis, rounded, warna ikut token
+   --border-3 yang sama dipakai border/divider lain di tema ini — supaya
+   scrollbar-nya gak lagi keliatan sebagai default abu-abu bawaan browser. */
+#tab-discover::-webkit-scrollbar {
+    width: 8px;
+}
+#tab-discover::-webkit-scrollbar-track {
+    background: transparent;
+}
+#tab-discover::-webkit-scrollbar-thumb {
+    background-color: var(--border-3);
+    border-radius: var(--r-full);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+#tab-discover::-webkit-scrollbar-thumb:hover {
+    background-color: var(--text-3);
+}

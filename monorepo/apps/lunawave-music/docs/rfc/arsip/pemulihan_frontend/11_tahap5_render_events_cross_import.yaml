@@ -1,0 +1,359 @@
+# 11_tahap5_render_events_cross_import.yaml
+# Tahap 5 (TERAKHIR) dari proposal_event_bus_frontend.md — render<->events
+# cross-import murni: rule 'no-events-imports-render' (14 warning) + rule
+# 'no-render-imports-events' (4 warning) di .dependency-cruiser.js, total
+# 18, TERPISAH dari rule 'circular-dependencies' yang jadi target Tahap
+# 1-4. Disusun dari pembacaan langsung SEMUA import lintas folder
+# events/*.js <-> render/*.js per 2026-07-25 (`grep -rn 'from "\.\./render/'
+# events/` dan `grep -rn 'from "\.\./events/' render/`) -- hasilnya PERSIS
+# 14 + 4 = 18, cocok dengan angka di 05_sesi5_render_events.yaml
+# (no_events_imports_render: 14, no_render_imports_events: 4). Tahap 1-4
+# BELUM semua dieksekusi saat file ini ditulis -- task di sini SENGAJA
+# reuse nama event dari Tahap 1/2/4, dan bergantung pada hasil Tahap 3
+# (ekstraksi switchTab) untuk 2 dari 4 edge no-render-imports-events.
+
+tahap: 5
+proposal_acuan: "docs/rfc/pemulihan_frontend/proposal_event_bus_frontend.md"
+depends_on:
+  - "Tahap 1-4 selesai semua -- lihat catatan_dependensi_per_edge, beberapa edge di sini otomatis selesai sebagai efek samping Tahap 3/4, bukan dikerjakan ulang di sini"
+parallel_ok: false
+risk: sedang
+butuh_konfirmasi_user_sebelum_mulai: true
+
+catatan_dependensi_per_edge: >
+  Dari 4 edge no-render-imports-events asli: 2 (render/discover-tab.js dan
+  render/discover-personalize.js -> events/index.js, untuk switchTab)
+  SUDAH SELESAI otomatis oleh Tahap 3 (09_tahap3_event_bus_events_index.yaml)
+  begitu switchTab pindah ke render/navigation.js -- edge-nya jadi
+  render->render, bukan render->events lagi, TIDAK dihitung ulang di sini.
+  1 (render/full-state.js -> events/settings-events.js, untuk
+  renderSettingsSheet) SUDAH SELESAI oleh Tahap 4 (import-nya dihapus
+  total, diganti emit). SISA 1 edge nyata untuk tahap ini:
+  render/discover-personalize.js -> events/settings-events.js
+  (closeMainOverlay), ditangani T5.1 dengan REUSE event
+  "overlay:main-close" yang sudah dibuat Tahap 4 -- BUKAN bikin event baru.
+  Kalau saat eksekusi Tahap 3/4 ternyata belum selesai/di-skip, STOP dan
+  laporkan -- jangan kerjakan T3/T4 punya tahap lain di sini secara diam-diam.
+
+  Dari 14 edge no-events-imports-render: 13 murni tahap ini (T5.2-T5.8),
+  1 (search-input-events.js -> render/search.js untuk playSearchTrack)
+  DIPUTUSKAN TETAP direct import -- lihat keputusan_perlu_konfirmasi_user.
+
+keputusan_perlu_konfirmasi_user:
+  - item: "playSearchTrack (render/search.js) dipanggil dari events/search-input-events.js"
+    temuan: >
+      Audit isi playSearchTrack (render/search.js baris 93-96): cuma cek
+      store.userRole lalu wsSend("play_track", track). TIDAK ADA manipulasi
+      DOM sama sekali -- ini fungsi COMMAND (wrapper wsSend) yang kebetulan
+      didefinisikan di file render/search.js, bukan fungsi render yang
+      salah ditempatkan.
+    keputusan_direkomendasikan: >
+      JANGAN dipaksa lewat bus.emit (bus untuk notifikasi render, bukan
+      dispatch command -- pakai bus di sini salah kaprah semantiknya).
+      Terima sebagai exception terdokumentasi di .dependency-cruiser.js,
+      pola sama seperti wsSend/getOrInitAudio yang sudah diterima legitimate
+      sejak proposal §2. Edge ini akan TETAP muncul di 18 warning setelah
+      Tahap 5 selesai -- itu wajar, bukan kegagalan tahap ini (lihat §3.5
+      proposal soal target realistis, prinsipnya sama meski §3.5 aslinya
+      bicara circular-dependencies, bukan rule render/events -- konsisten
+      diterapkan di sini).
+    opsi_alternatif: "Kalau user tetap mau 0 warning murni: pindahkan playSearchTrack ke ws.js (di sebelah wsSend lain) atau ke modul actions.js baru. Ini perubahan lokasi kode, bukan tambah bus -- efort kecil tapi di luar scope 'event bus' murni, perlu konfirmasi eksplisit terpisah kalau dipilih."
+
+task:
+  - id: T5.1
+    title: "render/discover-personalize.js -- ganti closeMainOverlay() jadi emit('overlay:main-close') (reuse event dari Tahap 4)"
+    action: edit
+    file: "web/static/shared/js/render/discover-personalize.js"
+    catatan_stop: "Baris hasil audit 2026-07-25, pastikan masih cocok saat eksekusi -- Tahap 3/4 tidak menyentuh file ini jadi nomor baris seharusnya stabil, tapi tetap cek."
+    hapus_import:
+      - "baris 3: import { closeMainOverlay } from \"../events/settings-events.js\";"
+    tambah_import:
+      - 'import { emit } from "../bus.js";'
+    penggantian_per_baris:
+      - baris: 184
+        lama: "if (typeof closeMainOverlay === 'function') closeMainOverlay();"
+        baru: 'emit("overlay:main-close");'
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/render/discover-personalize.js"
+
+  - id: T5.2
+    title: "events/click-delegation-events.js -- 2 import render/* jadi bus"
+    action: edit
+    file: "web/static/shared/js/events/click-delegation-events.js"
+    hapus_import:
+      - "baris 2: import { showActionModal } from \"../render/search.js\";"
+      - "baris 4: import { showLogToast } from \"../render/toast.js\";"
+    tambah_import:
+      - 'import { emit } from "../bus.js";'
+    penggantian_per_baris:
+      - baris: 19
+        lama: 'showLogToast("Hanya admin yang bisa memutar musik");'
+        baru: 'emit("toast:log", { message: "Hanya admin yang bisa memutar musik" });'
+        catatan: "reuse event toast:log, subscriber sudah ada di render/toast.js sejak Tahap 1."
+      - baris: 43
+        lama: "if (typeof showActionModal === \"function\") showActionModal(track);"
+        baru: 'emit("search:action-modal-open", track);'
+        catatan: "event BARU, subscriber ditambahkan di T5.9 (render/search.js)."
+      - baris: 76
+        lama: "if (track && typeof showActionModal === \"function\") showActionModal(track);"
+        baru: 'if (track) emit("search:action-modal-open", track);'
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/events/click-delegation-events.js"
+
+  - id: T5.3
+    title: "events/discover-search-events.js -- 2 import render/* jadi bus (event baru)"
+    action: edit
+    file: "web/static/shared/js/events/discover-search-events.js"
+    hapus_import:
+      - "baris 2: import { enterDiscoverSearchLoading, exitDiscoverSearchMode } from \"../render/discover-search.js\";"
+    tambah_import:
+      - 'import { emit } from "../bus.js";'
+    penggantian_per_baris:
+      - baris: 86
+        lama: "if (typeof enterDiscoverSearchLoading === \"function\") enterDiscoverSearchLoading(query);"
+        baru: 'emit("discover:search-loading-enter", query);'
+      - baris: 98
+        lama: "if (typeof exitDiscoverSearchMode === \"function\") exitDiscoverSearchMode();"
+        baru: 'emit("discover:search-loading-exit");'
+      - baris: 113
+        lama: "if (typeof exitDiscoverSearchMode === \"function\") exitDiscoverSearchMode();"
+        baru: 'emit("discover:search-loading-exit");'
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/events/discover-search-events.js"
+
+  - id: T5.4
+    title: "events/keyboard-shortcut-events.js -- 2 import render/* jadi bus"
+    action: edit
+    file: "web/static/shared/js/events/keyboard-shortcut-events.js"
+    hapus_import:
+      - "baris 5: import { renderLyrics } from \"../render/lyrics.js\";"
+      - "baris 6: import { hideActionModal } from \"../render/search.js\";"
+    tambah_import:
+      - 'import { emit } from "../bus.js";'
+    penggantian_per_baris:
+      - baris: 97
+        lama: "if (typeof renderLyrics === \"function\") renderLyrics();"
+        baru: 'emit("lyrics:changed");'
+        catatan: "reuse event lyrics:changed, subscriber sudah ada di render/lyrics.js sejak Tahap 2 (T2.5)."
+      - baris: 117
+        lama: "if (typeof hideActionModal === \"function\") hideActionModal();"
+        baru: 'emit("search:action-modal-close");'
+        catatan: "event BARU, subscriber ditambahkan di T5.9."
+    catatan_import_tidak_hilang: "import { closeMainOverlay } from \"./settings-events.js\" (baris 4) TETAP -- itu same-folder events/*->events/*, bukan bagian rule ini, tidak diubah."
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/events/keyboard-shortcut-events.js"
+
+  - id: T5.5
+    title: "events/transport-events.js -- 4 import render/* (7 titik panggil) jadi bus, semua reuse event lama"
+    action: edit
+    file: "web/static/shared/js/events/transport-events.js"
+    hapus_import:
+      - "baris 5: import { renderNowPlaying } from \"../render/now-playing.js\";"
+      - "baris 6: import { renderPlayBtn, renderPlayerBar, resetAnchorClock, setPositionAnchor } from \"../render/player.js\";"
+      - "baris 7: import { renderQueue } from \"../render/queue.js\";"
+      - "baris 8: import { renderRadio } from \"../render/radio-tab.js\";"
+    tambah_import:
+      - 'import { emit } from "../bus.js";'
+    penggantian_per_baris:
+      - baris: 26
+        lama: "if (wantsPlay && typeof resetAnchorClock === \"function\") resetAnchorClock();"
+        baru: 'if (wantsPlay) emit("player:clock-reset");'
+      - baris: 27
+        lama: "if (typeof renderPlayBtn === \"function\") renderPlayBtn();"
+        baru: 'emit("player:btn-changed");'
+      - baris: 28
+        lama: "if (typeof renderNowPlaying === \"function\") renderNowPlaying();"
+        baru: 'emit("now-playing:changed");'
+      - baris: 29
+        lama: "if (typeof renderQueue === \"function\") renderQueue();"
+        baru: 'emit("queue:changed");'
+      - baris: 44
+        lama: "if (typeof renderNowPlaying === \"function\") renderNowPlaying();"
+        baru: 'emit("now-playing:changed");'
+      - baris: 45
+        lama: "if (typeof renderPlayerBar === \"function\") renderPlayerBar();"
+        baru: 'emit("player:bar-changed");'
+      - baris: 56
+        lama: "if (typeof renderNowPlaying === \"function\") renderNowPlaying();"
+        baru: 'emit("now-playing:changed");'
+      - baris: 57
+        lama: "if (typeof renderPlayerBar === \"function\") renderPlayerBar();"
+        baru: 'emit("player:bar-changed");'
+      - baris: 121
+        lama: "if (typeof renderRadio === \"function\") renderRadio();"
+        baru: 'emit("radio:changed");'
+      - baris: 122
+        lama: "if (typeof renderQueue === \"function\") renderQueue();"
+        baru: 'emit("queue:changed");'
+      - baris: 133-137
+        lama: |
+          if (typeof setPositionAnchor === "function") {
+              setPositionAnchor(0);
+          } else {
+              store.position = 0;
+          }
+        baru: |
+          emit("player:position", 0);
+        catatan: "sederhanakan -- fallback else store.position=0 tidak perlu lagi karena emit() aman dipanggil walau tidak ada listener (behaviornya setara 'tidak terjadi apa-apa', BUKAN crash), beda dengan pemanggilan langsung fungsi yang bisa undefined. Kalau user prefer simpan fallback demi kehati-hatian ekstra, boleh dipertahankan -- bukan hal yang wajib dihapus, cuma disederhanakan."
+      - baris: 138
+        lama: "if (typeof renderRadio === \"function\") renderRadio();"
+        baru: 'emit("radio:changed");'
+      - baris: 139
+        lama: "if (typeof renderQueue === \"function\") renderQueue();"
+        baru: 'emit("queue:changed");'
+      - baris: 140
+        lama: "if (typeof renderNowPlaying === \"function\") renderNowPlaying();"
+        baru: 'emit("now-playing:changed");'
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/events/transport-events.js"
+
+  - id: T5.6
+    title: "events/lyrics-events.js -- 1 import render/* (2 simbol, 5 titik panggil) jadi bus"
+    action: edit
+    file: "web/static/shared/js/events/lyrics-events.js"
+    hapus_import:
+      - "baris 3: import { renderLyrics, updateOffsetDisplay } from \"../render/lyrics.js\";"
+    tambah_import:
+      - 'import { emit } from "../bus.js";'
+    penggantian_per_baris:
+      - baris: 28
+        lama: "if (typeof renderLyrics === \"function\") renderLyrics();"
+        baru: 'emit("lyrics:changed");'
+      - baris: 43
+        lama: "if (typeof updateOffsetDisplay === \"function\") updateOffsetDisplay();"
+        baru: 'emit("lyrics:offset-display");'
+      - baris: 53
+        lama: "if (typeof updateOffsetDisplay === \"function\") updateOffsetDisplay();"
+        baru: 'emit("lyrics:offset-display");'
+      - baris: 69
+        lama: "if (typeof updateOffsetDisplay === \"function\") updateOffsetDisplay();"
+        baru: 'emit("lyrics:offset-display");'
+      - baris: 80
+        lama: "if (typeof updateOffsetDisplay === \"function\") updateOffsetDisplay();"
+        baru: 'emit("lyrics:offset-display");'
+    catatan: "event lyrics:offset-display BARU, subscriber ditambahkan di T5.9 (render/lyrics.js)."
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/events/lyrics-events.js"
+
+  - id: T5.7
+    title: "events/action-modal-events.js -- 1 import render/* (4 titik panggil) jadi bus"
+    action: edit
+    file: "web/static/shared/js/events/action-modal-events.js"
+    hapus_import:
+      - "baris 3: import { hideActionModal } from \"../render/search.js\";"
+    tambah_import:
+      - 'import { emit } from "../bus.js";'
+    penggantian_per_baris:
+      - baris: 16
+        lama: "if (typeof hideActionModal === \"function\") hideActionModal();"
+        baru: 'emit("search:action-modal-close");'
+      - baris: 23
+        lama: "if (typeof hideActionModal === \"function\") hideActionModal();"
+        baru: 'emit("search:action-modal-close");'
+      - baris: 29
+        lama: "if (typeof hideActionModal === \"function\") hideActionModal();"
+        baru: 'emit("search:action-modal-close");'
+      - baris: 39
+        lama: "if (typeof hideActionModal === \"function\") hideActionModal();"
+        baru: 'emit("search:action-modal-close");'
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/events/action-modal-events.js"
+
+  - id: T5.8
+    title: "events/progress-events.js -- 1 import render/* (2 simbol, 3 titik panggil) jadi bus, reuse event lama"
+    action: edit
+    file: "web/static/shared/js/events/progress-events.js"
+    hapus_import:
+      - "baris 3: import { renderProgress, setPositionAnchor } from \"../render/player.js\";"
+    tambah_import:
+      - 'import { emit } from "../bus.js";'
+    penggantian_per_baris:
+      - baris: "48-52"
+        lama: |
+          if (typeof setPositionAnchor === "function") {
+              setPositionAnchor(targetPos);
+          } else {
+              store.position = targetPos;
+          }
+        baru: |
+          emit("player:position", targetPos);
+        catatan: "sama seperti T5.5, sederhanakan fallback else -- opsional dipertahankan kalau user prefer."
+      - baris: 53
+        lama: "if (typeof renderProgress === \"function\") renderProgress();"
+        baru: 'emit("player:progress");'
+      - baris: 63
+        lama: "if (typeof renderProgress === \"function\") renderProgress();"
+        baru: 'emit("player:progress");'
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/events/progress-events.js"
+
+  - id: T5.9
+    title: "Extend initSearchBusSubscriptions() (render/search.js) dan initLyricsBusSubscriptions() (render/lyrics.js) -- 3 event baru total"
+    action: edit
+    detail: "Kedua fungsi ini dibuat di Tahap 2 (T2.5) -- EXTEND, JANGAN buat fungsi init kedua, sama pola dengan semua extend sebelumnya."
+    per_file:
+      - file: "web/static/shared/js/render/search.js"
+        target_fungsi: initSearchBusSubscriptions
+        tambah_baris: |
+          on("search:action-modal-open", (track) => showActionModal(track));
+          on("search:action-modal-close", hideActionModal);
+      - file: "web/static/shared/js/render/lyrics.js"
+        target_fungsi: initLyricsBusSubscriptions
+        tambah_baris: |
+          on("lyrics:offset-display", updateOffsetDisplay);
+      - file: "web/static/shared/js/render/discover-search.js"
+        target_fungsi: initDiscoverSearchBusSubscriptions
+        tambah_baris: |
+          on("discover:search-loading-enter", (query) => enterDiscoverSearchLoading(query));
+          on("discover:search-loading-exit", exitDiscoverSearchMode);
+    verifikasi:
+      - "node --input-type=module --check untuk ketiga file"
+      - "npx eslint web/static/shared/js/render/search.js web/static/shared/js/render/lyrics.js web/static/shared/js/render/discover-search.js"
+
+  - id: T5.10
+    title: "Dokumentasikan exception playSearchTrack di .dependency-cruiser.js"
+    action: edit
+    file: ".dependency-cruiser.js"
+    detail: >
+      Tambah comment pada rule 'no-events-imports-render' yang menyebutkan
+      events/search-input-events.js -> render/search.js (playSearchTrack)
+      SENGAJA dibiarkan -- fungsi command (wsSend wrapper), bukan render,
+      cuma kebetulan lokasinya di file render/search.js. Lihat
+      keputusan_perlu_konfirmasi_user di file ini untuk detail investigasi.
+    verifikasi:
+      - "python automation/verify_docs.py --json -> tetap PASS"
+
+  - id: T5.11
+    title: "Regenerate depcruise final, laporan total 5 tahap"
+    action: verify
+    verifikasi:
+      - "npx depcruise --config .dependency-cruiser.js web/static/shared/js -T json > /tmp/depcruise_final.txt"
+      - "Bandingkan no-events-imports-render (harus 1, sisa playSearchTrack yang didokumentasikan exception) dan no-render-imports-events (harus 0, edge terakhir sudah dibereskan T5.1) terhadap baseline awal (14 dan 4)"
+      - "Bandingkan circular-dependencies terhadap baseline Tahap 4"
+
+  - id: T5.12
+    title: "Manual test menyeluruh (WAJIB) -- semua jalur reaktif events->render yang baru dipindah ke bus"
+    action: manual_test
+    checklist:
+      - "Klik 3-dots pada hasil search / discover / radio card -- action modal terbuka (search:action-modal-open)"
+      - "Tutup action modal lewat tombol Cancel, Play Now, Enqueue, Delete, DAN lewat Escape -- semua jalur tertutup (search:action-modal-close)"
+      - "Shortcut Escape, L (buka/tutup lyrics), '?' (help sheet) -- overlay & lyrics render benar"
+      - "Play/Next/Prev/Repeat/Stop/Volume/Download/Radio toggle/Radio randomize/Output toggle via tombol player bar -- semua render lokal (optimistic UI) tetap muncul instan sebelum konfirmasi WS"
+      - "Buka lyrics sheet, klik +/- sync offset berkali-kali -- angka offset di UI ter-update tiap klik (lyrics:offset-display)"
+      - "Ketik di Quick Search Discover -- loading state muncul saat mengetik, hilang saat query dikosongkan (discover:search-loading-enter/exit)"
+      - "Drag player bar progress -- posisi ter-update visual saat drag DAN setelah dilepas"
+      - "Search lagu dari tab Search, klik salah satu hasil -- lagu diputar (playSearchTrack, jalur command tidak berubah)"
+    laporan: "Laporkan hasil tiap item eksplisit ke user, jangan asumsikan lolos. Ini tahap TERAKHIR dari proyek arsitektur event bus -- pastikan regresi nihil sebelum ditutup."
+
+  - id: T5.13
+    title: "Patchlog + checkpoint (tahap terakhir)"
+    action: patchlog_cmd
+    detail: "Cek dulu `python automation/patchlog.py latest --n 1 --json` untuk nomor patch berikutnya sebelum menulis entry."
+    checkpoint_cmd: "zip checkpoint ke checkpoints/lunawave-T5-eventbus.zip"
+
+verifikasi_selesai:
+  - "no-render-imports-events: 0 (dari baseline 4)"
+  - "no-events-imports-render: 1 -- playSearchTrack, exception terdokumentasi, BUKAN kegagalan (lihat T5.10)"
+  - "Semua render/*.js dan events/*.js yang diedit lulus node --check dan eslint"
+  - "6 entry PATCHLOG baru (satu per T5.2-T5.8 kalau dipisah per file, atau digabung sesuai preferensi patchlog_group -- ikuti aturan_global di 00_INDEX.yaml: task dengan patchlog_group sama ditulis satu entry gabungan)"
+  - "Proyek event bus (Tahap 1-5) SELESAI TOTAL -- laporkan ringkasan akhir ke user: baseline awal 65 circular-dependency + 18 render/events warning -> angka akhir aktual (BUKAN diasumsikan 0, laporkan angka nyata dari T5.11)"

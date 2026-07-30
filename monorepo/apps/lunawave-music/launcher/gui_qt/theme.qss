@@ -1,0 +1,147 @@
+/*
+ * LunaWave QSS Stylesheet
+ * Derived from theme.py, update both files if you change tokens!
+ */
+
+* {
+    font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif;
+    color: #F5F5F7;
+    outline: none;
+}
+
+QMainWindow {
+    background-color: transparent;
+}
+
+#central_widget {
+    background-color: #0B0B0F;
+    border: 1px solid #26262E;
+    border-radius: 10px;
+}
+
+/* Scrollbars */
+QScrollBar:vertical {
+    border: none;
+    background: #0B0B0F;
+    width: 8px;
+    margin: 0px;
+}
+QScrollBar::handle:vertical {
+    background: #26262E;
+    min-height: 20px;
+    border-radius: 4px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #34343E;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: none;
+}
+
+/* Base widgets */
+QWidget#surface {
+    background-color: #131318;
+}
+
+QWidget#elevated {
+    background-color: #1A1A21;
+}
+
+/* Borders */
+.border-box {
+    border: 1px solid #26262E;
+}
+
+.border-box-strong {
+    border: 1px solid #34343E;
+}
+
+/* Specific elements like ports and text inputs */
+QLineEdit {
+    background-color: transparent;
+    border: none;
+    color: #F5F5F7;
+    font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+}
+QLineEdit:disabled {
+    color: #A0A3AD;
+}
+
+/* Buttons */
+QPushButton {
+    background-color: #1A1A21;
+    border: 1px solid #26262E;
+    color: #A0A3AD;
+    border-radius: 6px;
+    font-weight: 600;
+}
+QPushButton:hover {
+    background-color: #1F1F27;
+    border: 1px solid #34343E;
+    color: #F5F5F7;
+}
+QPushButton:disabled {
+    color: #63656F;
+    border: 1px solid #26262E;
+    background-color: #1A1A21;
+}
+
+QPushButton#primary {
+    background-color: #F2B544;
+    border: 1px solid #F2B544;
+    color: #000000;
+}
+QPushButton#primary:hover {
+    background-color: #FFD98A;
+    border: 1px solid #FFD98A;
+}
+
+QPushButton#danger-outline {
+    background-color: transparent;
+    border: 1px solid rgba(248, 113, 113, 0.3);
+    color: #F87171;
+}
+QPushButton#danger-outline:hover {
+    background-color: rgba(248, 113, 113, 0.12);
+    border: 1px solid rgba(248, 113, 113, 0.5);
+}
+
+QPushButton#link {
+    background: transparent;
+    border: none;
+    color: #F2B544;
+    font-weight: 600;
+}
+QPushButton#link:hover {
+    background-color: rgba(242, 181, 68, 0.12);
+}
+
+/* Console */
+QPlainTextEdit {
+    background-color: #131318;
+    color: #F5F5F7;
+    border: none;
+    font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+}
+
+/* Quick link chips */
+QPushButton#chip {
+    background-color: #131318;
+    border: 1px solid #26262E;
+    border-radius: 12px;
+    color: #A0A3AD;
+    font-weight: 600;
+}
+QPushButton#chip:hover {
+    background-color: #1F1F27;
+    border: 1px solid #34343E;
+    color: #F5F5F7;
+}
+
+/* Data / Monospace Text */
+.mono {
+    font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace;
+}

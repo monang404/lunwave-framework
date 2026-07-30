@@ -1,0 +1,110 @@
+/* ══════════════════════════════════════
+   RESPONSIVE BREAKPOINTS — Mobile First
+   LunaWave Spotify-Class Transformation Phase 1
+   ADR-002: 601px tablet, 1024px desktop
+   ══════════════════════════════════════ */
+
+/* ─── Base: Mobile (≤ 600px) ─── */
+/* Default styles sudah mobile-first */
+
+/* ─── Tablet (601px – 1023px) ─── */
+
+
+/* ══════════════════════════════════════
+   GLOBAL OVERRIDES & UTILITIES
+   ══════════════════════════════════════ */
+/* WIP: shuffle belum ada handler/backend. Tetap ditampilkan (biar user tau
+   fiturnya ada/coming soon) tapi dipudarkan & di-nonaktifkan -- pointer-events:none
+   supaya gak bisa diklik (gak akan ngapa-ngapain kalau ditekan), opacity rendah
+   + grayscale biar keliatan jelas ini "disabled", bukan tombol aktif yang rusak. */
+#btn-shuffle {
+    pointer-events: none !important;
+    opacity: 0.35 !important;
+    filter: grayscale(1) !important;
+    cursor: default !important;
+}
+
+/* ══════════════════════════════════════
+   DESKTOP LAYOUT — Phase 5
+   Blueprint: AUDIT_V2 Chapter C.4
+   2-column: sidebar kiri + main content
+   ══════════════════════════════════════ */
+
+
+
+/* ══════════════════════════════════════
+   TABLET LANDSCAPE — Mini Desktop Layout
+   ══════════════════════════════════════ */
+
+
+/* ─── Orientation: Landscape di Mobile ─── */
+
+
+/* Desktop overrides for Player Bar Controls */
+
+
+/* C-05: Settings sheet pada desktop — anchored ke kanan bawah konten, bukan fixed ke viewport */
+
+.nav-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.nav-tabs::-webkit-scrollbar { display: none; }
+
+
+/* ══ IDLE STATE VIEW (HOME TAB) ══ */
+
+
+.home-idle-view {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  min-height: 400px;
+  width: 100%;
+  position: relative;
+}
+
+body[data-player-state="IDLE"] #tab-home .home-art-section,
+body[data-player-state="IDLE"] #tab-home .home-track-row,
+body[data-player-state="IDLE"] #tab-home .lyrics-wrap {
+  display: none !important;
+}
+
+body[data-player-state="IDLE"] #tab-home .home-right-col,
+body[data-queue-empty="true"] #tab-home .home-right-col {
+  display: none !important;
+}
+
+body[data-player-state="IDLE"] #tab-home .home-idle-view {
+  display: flex !important;
+}
+
+.idle-text-slider {
+  position: relative;
+  width: 100%;
+  height: 60px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.idle-text-slide {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  font-size: 28px;
+  font-weight: 700;
+  background: linear-gradient(90deg, var(--accent), #fff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  text-align: center;
+  opacity: 0;
+  animation: idle-text-fade 12s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+  white-space: nowrap;
+  letter-spacing: 0.5px;
+}
+
+.idle-text-slide:nth-child(1) { animation-delay: 0s; }
+.idle-text-slide:nth-child(2) { animation-delay: 4s; }
+.idle-text-slide:nth-child(3) { animation-delay: 8s; }

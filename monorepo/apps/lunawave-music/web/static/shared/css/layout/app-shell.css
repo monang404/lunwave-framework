@@ -1,0 +1,218 @@
+/* ══ LunaWave base.css v2 ══ */
+/* C-14: Google Fonts dipindah ke <link> di HTML head untuk non-blocking load */
+
+
+
+/* ── App Shell ── */
+#app {
+  width: 100%; height: 100vh; height: 100dvh;
+  background: var(--bg-primary);
+  display: flex; flex-direction: column; overflow: hidden;
+  color: var(--text-1); font-family: var(--font);
+  font-size: var(--t-md); position: relative;
+}
+
+/* ── Header ── */
+#app-header {
+  display: flex; align-items: center;
+  justify-content: space-between;
+  padding: var(--s4) var(--s5) var(--s2);
+  flex-shrink: 0;
+  background: var(--bg-primary);
+}
+
+.fm-header-left { display: flex; flex-direction: column; gap: 1px; }
+
+.fm-greeting {
+  font-size: var(--t-xs);
+  color: var(--text-2);
+  font-weight: var(--w-regular);
+  letter-spacing: 0.2px;
+}
+
+.fm-title {
+  font-size: var(--t-xl);
+  font-weight: var(--w-bold);
+  color: var(--text-1);
+  letter-spacing: -0.4px;
+  line-height: 1.1;
+}
+
+.fm-hright { display: flex; align-items: center; gap: var(--s2); }
+
+.out-btn {
+  background: transparent;
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-full);
+  padding: 5px 12px;
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  font-family: var(--font);
+  font-weight: var(--w-medium);
+  cursor: pointer;
+  letter-spacing: 0.3px;
+  display: flex; align-items: center; gap: 4px;
+  transition: color var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease);
+}
+.out-btn:hover { color: var(--text-1); border-color: var(--border-3); }
+.out-btn.browser { color: var(--accent); border-color: var(--accent); }
+
+.status-dot {
+  width: 6px; height: 6px;
+  background: var(--green); border-radius: 50%; flex-shrink: 0;
+}
+.status-dot.offline { background: var(--red); }
+
+/* ── Content Area ── */
+#content-area { flex: 1; overflow-y: scroll; overflow-x: hidden; scrollbar-width: none; }
+#content-area::-webkit-scrollbar { display: none; }
+
+/* ── Ambient Starfield (site-wide) ──
+   Pure CSS, tanpa markup baru — biar tiap tab (Home/Search/Discover/dst)
+   punya tekstur bintang tipis yang sama kaya .radio-hero .star (warna
+   var(--text-2) #9AA0AA, opacity ~0.2-0.35), bukan div per-bintang yang
+   di-hardcode di HTML. Delapan radial-gradient posisi acak di-tile tiap
+   220px supaya polanya gak keliatan berulang/grid-y. Statis (no animation)
+   biar gak ganggu konten di atasnya — cukup ngisi ruang kosong. */
+#content-area {
+  background-image:
+    radial-gradient(1px 1px at 15% 20%, rgba(var(--text-2-rgb), 0.35) 50%, transparent 51%),
+    radial-gradient(1px 1px at 85% 75%, rgba(var(--text-2-rgb), 0.30) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 50% 10%, rgba(var(--text-2-rgb), 0.25) 50%, transparent 51%),
+    radial-gradient(1px 1px at 30% 65%, rgba(var(--text-2-rgb), 0.30) 50%, transparent 51%),
+    radial-gradient(1px 1px at 70% 40%, rgba(var(--text-2-rgb), 0.20) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 5% 85%, rgba(var(--text-2-rgb), 0.30) 50%, transparent 51%),
+    radial-gradient(1px 1px at 95% 15%, rgba(var(--text-2-rgb), 0.25) 50%, transparent 51%),
+    radial-gradient(1px 1px at 45% 90%, rgba(var(--text-2-rgb), 0.20) 50%, transparent 51%);
+  background-repeat: repeat;
+  background-size: 220px 220px;
+}
+
+/* ── Responsive Helpers ── */
+
+
+
+/* ── Overlay ── */
+#main-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(9,10,13,0.65);
+  z-index: 200; backdrop-filter: blur(2px);
+}
+#main-overlay.open { display: block; }
+
+/* ── Spinner ── */
+.spinner {
+  display: inline-block; width: 16px; height: 16px;
+  border: 2px solid var(--border-2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: fm-spin 0.7s linear infinite;
+}
+
+
+/* ── EQ Animation ── */
+.eq-anim-icon {
+  display: flex; align-items: flex-end;
+  justify-content: center; gap: 3px;
+  height: 16px; width: 24px;
+}
+.eq-anim-icon span {
+  display: block; width: 4px;
+  background: var(--accent); border-radius: 2px;
+  animation: eq-bounce 1s ease-in-out infinite alternate;
+}
+.eq-anim-icon span:nth-child(1) { animation-delay: 0.1s; height: 100%; }
+.eq-anim-icon span:nth-child(2) { animation-delay: 0.3s; height: 60%; }
+.eq-anim-icon span:nth-child(3) { animation-delay: 0.0s; height: 80%; }
+
+
+/* ── Section Label ── */
+.section-label {
+  font-size: var(--t-xl); font-weight: var(--w-bold);
+  color: var(--text-1); letter-spacing: 0.4px;
+  padding: var(--s5) var(--s5) var(--s2);
+}
+
+.section-label-row {
+  display: flex; align-items: center;
+  justify-content: space-between;
+  padding: var(--s6) var(--s5) var(--s2);
+  margin-top: var(--s6);
+  border-top: 1px solid var(--border-2);
+  position: relative;
+}
+.section-label-row::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 5%;
+  width: 90%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent);
+}
+.section-label-row::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: var(--s5);
+  width: 40px;
+  height: 1px;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+  opacity: 0.8;
+}
+#row-for-you-label-row {
+  margin-top: var(--s2);
+  border-top: none;
+}
+#row-for-you-label-row::before, #row-for-you-label-row::after {
+  display: none;
+}
+.section-label-row .section-title-group {
+  display: flex; flex-direction: column;
+}
+.section-label-row .label-text {
+  font-size: var(--t-xl); font-weight: var(--w-bold);
+  color: var(--text-1); letter-spacing: 0.4px;
+}
+.section-label-row .label-sub {
+  font-size: var(--t-sm); color: var(--text-3);
+  margin-top: 4px; font-weight: var(--w-regular);
+}
+.section-label-row .label-link {
+  font-size: var(--t-sm); color: var(--accent);
+  font-weight: var(--w-medium); cursor: pointer;
+  text-decoration: none;
+}
+.section-label-row .section-link-btn {
+  background: transparent;
+  border: none;
+  font-size: var(--t-sm);
+  color: var(--accent);
+  font-weight: var(--w-medium);
+  cursor: pointer;
+  padding: 4px 8px;
+  margin-right: -8px;
+  border-radius: var(--r-sm);
+  font-family: inherit;
+  transition: all 0.2s;
+}
+.section-label-row .section-link-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* SVG Icon overrides */
+.nav-btn svg {
+  width: 24px;
+  height: 24px;
+}
+
+.nav-btn:active svg {
+  transform: scale(0.92);
+}
+
+.btn-prev svg, .btn-next svg {
+  width: 22px;
+  height: 22px;
+}

@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <link rel="manifest" href="/static/manifest.json">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="LunaWave — Dengar Saja Mode">
+    <meta name="theme-color" content="#090A0D">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>LunaWave — Dengar Saja</title>
+    <link rel="icon" type="image/png" href="/static/icons/icon-192.png">
+    <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+
+    <link rel="stylesheet" href="/static/shared/css/vendor/tabler-icons.min.css">
+    <link rel="stylesheet" href="/static/shared/css/tokens.css">
+    <link rel="stylesheet" href="/static/shared/css/base/reset.css">
+    <link rel="stylesheet" href="/static/shared/css/base/typography.css">
+    <link rel="stylesheet" href="/static/shared/css/base/animations.css">
+    <link rel="stylesheet" href="/static/shared/css/layout/app-shell.css">
+    <link rel="stylesheet" href="/static/shared/css/layout/grid.css">
+    <link rel="stylesheet" href="/static/shared/css/components/player-bar.css">
+    <link rel="stylesheet" href="/static/shared/css/components/lyrics.css">
+    <link rel="stylesheet" href="/static/pages/client/chat.css">
+
+    <!-- Platform Overrides -->
+    <link rel="stylesheet" href="/static/shared/css/platform/mobile.css">
+    <link rel="stylesheet" href="/static/shared/css/platform/tablet.css">
+    <link rel="stylesheet" href="/static/shared/css/platform/desktop.css">
+    <link rel="stylesheet" href="/static/shared/css/platform/landscape.css">
+    <link rel="stylesheet" href="/static/shared/css/platform/safe-area.css">
+
+    <style>
+        .client-status-bar {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 100;
+        }
+        .client-badge {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 6px 12px;
+            border-radius: 100px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--text-2);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .client-footer {
+            position: absolute;
+            bottom: 20px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            font-size: 11px;
+            color: var(--text-3);
+            z-index: 100;
+        }
+        .client-pbar {
+            position: absolute;
+            bottom: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 600px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .client-pbar .pb-time {
+            font-size: 11px;
+            color: var(--text-3);
+            font-family: var(--font-mono, monospace);
+            min-width: 35px;
+        }
+        .client-pbar .pb-track {
+            flex: 1;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+            position: relative;
+        }
+        .client-pbar .pb-fill {
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            background: var(--text-1);
+            border-radius: 2px;
+        }
+        .client-audio-cta {
+            position: fixed;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 200;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px 28px;
+            border-radius: 999px;
+            border: 1px solid var(--border-3);
+            background: var(--accent);
+            color: var(--bg-primary);
+            font-weight: 700;
+            font-size: 16px;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            box-shadow: 0 10px 30px var(--accent-alpha);
+            cursor: pointer;
+            animation: pulse-cta 2s infinite cubic-bezier(0.4, 0, 0.6, 1);
+            transition: var(--fm-transition-normal);
+        }
+        .client-audio-cta:hover {
+            transform: translate(-50%, -50%) scale(1.05);
+            box-shadow: 0 15px 40px var(--accent-alpha);
+            background: var(--accent-hover);
+        }
+        @keyframes pulse-cta {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.85; }
+        }
+
+        /* Push the cover art and content down slightly in client mode for better balance */
+        body.client-mode .home-left-col {
+            margin-top: 10vh !important;
+        }
+        @media (max-width: 600px) {
+            body.client-mode .home-left-col {
+                margin-top: 15vh !important;
+            }
+            /* Force lyrics to show on mobile to bypass any cached mobile.css */
+            body.client-mode #tab-home .lyrics-wrap {
+                display: flex !important;
+            }
+        }
+    </style>
+</head>
+<body class="client-mode" data-active-tab="home" data-queue-empty="true" data-player-state="IDLE" data-has-lyrics="false">
+
+    <button type="button" id="client-audio-cta" class="client-audio-cta">
+        <i class="ti ti-volume-2"></i> Tap untuk mulai dengar
+    </button>
+
+    <div id="app" class="fm" style="display:flex; opacity:1;">
+
+        <div class="client-status-bar">
+            <div class="client-badge">
+                <i class="ti ti-headphones"></i> Mode dengar saja
+            </div>
+            <div class="client-badge" id="client-ws-status" style="color: var(--red);">
+                <i class="ti ti-wifi-off"></i> Offline
+            </div>
+        </div>
+
+        <main class="content" id="content-area" style="padding-bottom: 120px; overflow-y: auto;">
+            <section id="tab-home" class="tab-panel full-player-view active" style="display:flex; flex-direction:column; opacity:1; min-height: 100%;">
+
+                <!-- Hidden DOM for renderNowPlaying() -->
+                <div id="np-thumbnail" style="display:none;">
+                    <i id="np-thumb-icon"></i>
+                    <div id="np-eq-anim"><span></span><span></span><span></span></div>
+                </div>
+                <div id="np-dur-meta" style="display:none;"></div>
+
+                <div class="home-left-col" style="margin: 0 auto;">
+                    <div class="home-idle-view" id="home-idle-view">
+                        <div class="idle-text-slider" style="background: rgba(255,255,255,0.03); padding: 12px 24px; border-radius: 100px; border: 1px solid rgba(255,255,255,0.05); backdrop-filter: blur(10px);">
+                            <span class="idle-text-slide" style="color: var(--text-2); font-weight: 500; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+                                <i class="ti ti-loader" style="animation: spin 2s linear infinite;"></i> Menunggu musik dimainkan dari Admin...
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="home-art-section" id="vinyl-wrap">
+                        <div class="home-art-frame" id="vinyl-record">
+                            <img id="vinyl-cover" src="" crossorigin="anonymous" alt="Album Art"
+                                style="display:none; width:100%; height:100%; object-fit:cover; border-radius:inherit;">
+                            <i id="vinyl-icon" class="ti ti-music-note home-art-placeholder"></i>
+                        </div>
+                    </div>
+
+                    <div class="home-track-row">
+                        <div class="home-track-info main-track-info" style="text-align: center; max-width: 100%; padding-right: 0;">
+                            <div class="mti-title" id="np-title">Belum ada lagu</div>
+                            <div class="mti-artist" id="np-artist">Putar lagu dari perangkat Admin</div>
+                        </div>
+                    </div>
+
+                    <div class="lyrics-wrap" id="lyrics-wrap">
+                        <div id="lyrics-text-container">
+                            <div class="lyrics-line prev" id="lyrics-prev"></div>
+                            <div class="lyrics-line current" id="lyrics-current"></div>
+                            <div class="lyrics-line next" id="lyrics-next"></div>
+                        </div>
+                        <div class="home-equalizer" id="home-equalizer" style="display:none;">
+                            <div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div>
+                            <div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <div class="client-pbar">
+            <span class="pb-time" id="pb-time-pos">0:00</span>
+            <div class="pb-track" id="pb-progress-track">
+                <div class="pb-fill" id="pb-progress-fill" style="width: 0%"></div>
+            </div>
+            <span class="pb-time" style="text-align:right" id="pb-time-dur">0:00</span>
+        </div>
+
+        <div class="client-footer">
+            Diputar dari perangkat Admin
+        </div>
+
+    </div>
+
+    <!-- ═══ Chat Floating Action Button ═══ -->
+    <button id="chat-fab" class="chat-fab" aria-label="Open Chat">
+        <i class="ti ti-message-circle-2"></i>
+        <span id="chat-unread-badge" class="chat-unread-badge" style="display:none;"></span>
+    </button>
+
+    <!-- ═══ Chat Panel ═══ -->
+    <div id="chat-panel" class="chat-panel">
+        <div class="chat-header">
+            <div class="chat-title">
+                <i class="ti ti-messages"></i> Live Chat & Requests
+            </div>
+            <button id="chat-close-btn" class="chat-close-btn"><i class="ti ti-x"></i></button>
+        </div>
+        <div id="chat-messages" class="chat-messages">
+            <!-- Messages will be injected here -->
+        </div>
+        <div class="chat-input-area">
+            <div class="chat-name-row">
+                <input type="text" id="chat-name-input" placeholder="Nama Anda..." maxlength="20" />
+            </div>
+            <form id="chat-form" class="chat-form">
+                <input type="text" id="chat-msg-input" placeholder="Ketik pesan atau request lagu..." autocomplete="off" />
+                <button type="submit" id="chat-send-btn"><i class="ti ti-send"></i></button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Hidden sheet so lyric renderer doesn't crash if it tries to modify it -->
+    <div id="lyrics-sheet" style="display:none;">
+        <div id="lyrics-content"></div>
+    </div>
+
+    <script>
+    (function () {
+        "use strict";
+        if (!('serviceWorker' in navigator)) return;
+        var didCleanup = false;
+        var unregisterAll = navigator.serviceWorker.getRegistrations()
+            .then(function (regs) {
+                if (!regs.length) return;
+                didCleanup = true;
+                return Promise.all(regs.map(function (r) { return r.unregister(); }));
+            }).catch(function (e) {});
+        var clearCaches = ('caches' in window)
+            ? caches.keys().then(function (keys) {
+                if (!keys.length) return;
+                didCleanup = true;
+                return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+            }).catch(function (e) {})
+            : Promise.resolve();
+        Promise.all([unregisterAll, clearCaches]).then(function () {
+            if (didCleanup && !sessionStorage.getItem('sw_client_kill_reloaded')) {
+                sessionStorage.setItem('sw_client_kill_reloaded', '1');
+                location.reload();
+            }
+        });
+    })();
+    </script>
+
+    <!-- Scripts -->
+    <script type="module" src="/static/pages/client/client.js"></script>
+    <script type="module" src="/static/pages/client/chat.js"></script>
+</body>
+</html>

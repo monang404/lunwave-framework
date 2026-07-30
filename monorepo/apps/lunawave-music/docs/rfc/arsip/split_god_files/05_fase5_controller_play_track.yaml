@@ -1,0 +1,252 @@
+# 05_fase5_controller_play_track.yaml
+# Fase 5 -- Temuan L. RISIKO TINGGI. File LOCKED (AI_CONTEXT.md: "jangan
+# disentuh tanpa izin eksplisit"). SENGAJA diletakkan TERAKHIR walau
+# depends_on kosong secara teknis -- prinsip proposal §5: fase berdampak
+# luas/berisiko tinggi di akhir. JANGAN mulai fase ini tanpa membaca
+# `otorisasi_wajib` dan `characterization_test_wajib` di bawah SAMPAI TUNTAS.
+
+fase: 5
+temuan: L
+parallel_ok: false
+risk: high
+depends_on: []
+
+otorisasi_wajib:
+  status: "BUTUH KONFIRMASI EKSPLISIT PEMILIK PROJECT -- JANGAN mulai tanpa ini"
+  dasar: >
+    `engine/playback/controller.py` ada di daftar "File yang TIDAK BOLEH
+    disentuh tanpa izin eksplisit" (AI_CONTEXT.md baris 20: "risiko
+    tinggi, closure kompleks"). Governance proposal §6 menyatakan pola
+    otorisasi yang sama seperti RFC #1 (`00_index_and_decisions.yaml`
+    meta.authorization) berlaku untuk RFC ini "kalau pemilik project
+    mengonfirmasi" -- BUKAN otomatis diizinkan hanya karena ada di
+    proposal ini. Agent yang mengeksekusi fase ini WAJIB berhenti dan
+    minta konfirmasi eksplisit sebelum task L.1 dimulai, meskipun
+    00_INDEX.yaml/proposal sudah menyebutnya sebagai rencana yang
+    disetujui secara prinsip -- otorisasi menyentuh file locked adalah
+    keputusan TERPISAH dari menyetujui rencananya.
+
+konteks_terverifikasi:
+  file: "engine/playback/controller.py"
+  baris_total: 468
+  method_sasaran: "PlaybackController.play_track() -- diverifikasi baris 214-286 (bukan 215-300 persis seperti disebut proposal -- selisih wajar karena proposal menghitung termasuk beberapa baris whitespace/blank di sekitarnya, bukan salah)"
+  pola_delegasi_existing: >
+    Class SUDAH delegasi ke 6 ops-class lewat __init__ (baris 67-107):
+    `self.track_loader` (TrackLoader, baris 86-88), `self._queue_ops`
+    (QueueOps), `self._mode_ops` (ModeOps), `self._track_ended_ops`
+    (TrackEndedOps), `self._failure_ops` (FailureOps),
+    `self._queue_controller` (QueueController),
+    `self._settings_controller` (SettingsController). Pola ini SUDAH
+    BENAR (proposal §4.L mengonfirmasi ini) -- yang belum ikut pola yang
+    sama HANYA `play_track()` itu sendiri.
+  isi_play_track_terverifikasi_baris_per_baris: >
+    1. Lock acquire (`async with self._play_lock`) -- A-05, cegah
+       concurrent play_track race.
+    2. State bookkeeping: history.append current_track (kalau ada),
+       set current_track/status=LOADING/position/duration/lyrics_lines=[]/
+       lyrics_index=0/_crossfade_out_triggered=False, cancel
+       _fade_out_task kalau masih jalan.
+    3. try: `loaded = await self.track_loader.load_track(track)` --
+       INI SUDAH delegasi ke TrackLoader (task load+resolve SUDAH
+       selesai, proposal §4.L benar soal ini).
+    4. `await self.mpv.play(loaded.uri)`, `asyncio.sleep(0.15)`.
+    5. Loudness normalization: import build_af_filter, set
+       `state.current_track_gain_db`, panggil `mpv.set_af(...)` dengan
+       gain dari `loaded.gain_db` atau 0.0 tergantung
+       `state.loudness_normalization_enabled`.
+    6. Audio output branch: BROWSER -> `mpv.set_volume(0)` + publish log
+       event; SELAIN itu -> kalau `crossfade_enabled` jalankan task
+       `apply_crossfade_in` (cancel _fade_task lama dulu kalau ada),
+       kalau tidak -> `mpv.set_volume(state.volume)`.
+    7. `start_paused` ? `mpv.pause()` : `mpv.resume()`.
+    8. `start_position > 0` -> `mpv.seek(start_position)`.
+    9. Finalize sukses: `state.status` = PAUSED/PLAYING, `_retry_count=0`,
+       `_loading=False`, publish `TrackStartedEvent(track=track)`.
+    10. Kalau `state.duration == 0` -> jadwalkan `_poll_duration(track)`
+        via `safe_create_task`.
+    11. except VideoUnavailableError/BotCheckError,RateLimitedError/
+        Exception generic -> SEMUANYA SUDAH delegasi ke
+        `self._failure_ops.handle_*()` (proposal §4.L benar, ini bagian
+        yang SUDAH ikut pola delegasi).
+  kesimpulan: >
+    Bagian yang BELUM ikut pola delegasi (poin 4-10 di atas, ~55 baris)
+    adalah orkestrasi playback-start: mpv.play + loudness + output
+    routing (browser-mute vs crossfade vs volume biasa) + pause/resume/
+    seek + finalize state+event + trigger poll_duration. Ini SEMUA
+    logika yang SPESIFIK untuk "apa yang terjadi begitu track berhasil
+    di-load", bukan load/resolve itu sendiri -- proposal §4.L benar
+    bahwa TrackLoader tidak relevan untuk bagian ini (TrackLoader cuma
+    urus load+resolve, sudah dipanggil di poin 3).
+
+characterization_test_wajib:
+  baseline_ada: >
+    `tests/unit/engine/playback/test_controller.py` class `TestPlayTrack`
+    (baris 37-244) SUDAH berisi 15 test yang mencakup play_track()
+    end-to-end: status LOADING->PLAYING/PAUSED, current_track/history
+    push, TrackStartedEvent publish, position reset, error status pada
+    kegagalan, volume untuk device vs browser output, concurrent call
+    guard (_play_lock), DAN 5 test error-path (VideoUnavailableError,
+    BotCheckError, RateLimitedError, generic Exception, circuit breaker
+    lintas-track). Dijalankan saat menyusun RFC ini:
+    `pytest tests/unit/engine/playback/test_controller.py -q` -> 38
+    passed (termasuk test di luar TestPlayTrack, TestOnStop/OnPrev/dst).
+  keputusan: >
+    15 test TestPlayTrack ini SUDAH merupakan characterization test yang
+    cukup kuat sebagai BASELINE -- proposal §4.L/AI_CONTEXT mewajibkan
+    "test karakterisasi SEBELUM refactor, bukan sesudah, supaya behavior
+    lama tertangkap dulu". WAJIB dijalankan dan dicatat PASS (38/38)
+    SEBELUM task L.1 apapun dimulai (task L.0 di bawah), dan WAJIB tetap
+    38/38 PASS TANPA modifikasi assertion apapun setelah L.1-L.3 selesai
+    (assertion boleh disesuaikan HANYA kalau memang mengetes detail
+    implementasi lama yang sengaja diubah strukturnya di refactor ini,
+    BUKAN behavior publiknya -- kalau ada assertion yang perlu diubah,
+    itu SINYAL BAHAYA: kemungkinan refactor mengubah behavior, bukan
+    cuma struktur, STOP dan tinjau ulang sebelum lanjut).
+  cakupan_yang_mungkin_belum_ada: >
+    Loudness normalization branch (poin 5) dan crossfade-vs-volume-biasa
+    branch (poin 6) TIDAK eksplisit disebutkan sebagai test case
+    terpisah di 15 nama test TestPlayTrack yang terverifikasi di atas --
+    WAJIB dicek ulang isi assertion tiap test (bukan cuma nama) saat
+    eksekusi L.0 untuk pastikan branch ini benar2 tertangkap. Kalau
+    belum ada assertion untuk loudness_normalization_enabled=True/False
+    atau crossfade_enabled=True/False, TAMBAHKAN test baru untuk 2 branch
+    itu SEBELUM lanjut ke L.1 -- jangan refactor bagian yang belum
+    punya baseline test sama sekali.
+
+desain_extract_diusulkan:
+  prinsip: >
+    KEPUTUSAN DESAIN LEBIH KONSERVATIF dari yang mungkin tersirat di
+    proposal §4.L ("delegasi ke TrackLoader untuk load+resolve, sisakan
+    orkestrasi tingkat tinggi") -- karena TrackLoader SUDAH cuma urus
+    load+resolve (dikonfirmasi di atas), memindahkan LEBIH BANYAK logic
+    ke TrackLoader akan mengubah tanggung jawab TrackLoader itu sendiri
+    (dari "load+resolve" jadi "load+resolve+playback-routing"), BUKAN
+    solusi yang proposal maksud dan BERISIKO membingungkan batas
+    tanggung jawab class yang sudah jelas. Desain di sini SEBALIKNYA:
+    extract 3 PRIVATE METHOD BARU di PlaybackController ITU SENDIRI
+    (bukan pindah ke class/file lain), supaya play_track() jadi
+    orkestrasi tipis yang MEMANGGIL urutan private method, TANPA
+    mengubah wiring __init__/menambah ops-class baru (transformasi
+    paling minimal-risiko yang tetap menyelesaikan masalah god-method).
+    INI DESAIN USULAN, BUKAN RENCANA FINAL -- AI_CONTEXT.md eksplisit:
+    "verifikasi dulu isi play_track() baris per baris SAAT EKSEKUSI,
+    JANGAN asumsi struktur dari RFC ini saja". Task L.1-L.3 di bawah
+    WAJIB diverifikasi ulang terhadap kode aktual (yang mungkin sudah
+    berubah sejak RFC ini ditulis) sebelum diterapkan persis seperti ini.
+  method_baru_1: "_apply_loudness_and_routing(self, loaded) -- poin 5 & 6 di atas: set current_track_gain_db, mpv.set_af, dan branch output BROWSER/crossfade/volume biasa. Return value: tidak perlu (side-effect only lewat self.mpv/self.state)."
+  method_baru_2: "_apply_start_playback_state(self, start_paused, start_position) -- poin 7 & 8: mpv.pause()/resume(), lalu mpv.seek() kalau start_position>0."
+  method_baru_3: "_finalize_play_track_success(self, track) -- poin 9 & 10: set status PAUSED/PLAYING (BUTUH tahu start_paused -- lewatkan sebagai parameter tambahan, JANGAN duplikasi baca start_paused dari luar scope), retry_count=0, _loading=False, publish TrackStartedEvent, trigger poll_duration kalau duration==0."
+  play_track_setelah_refactor: >
+    ```python
+    async def play_track(self, track, start_position=0.0, start_paused=False):
+        async with self._play_lock:
+            # ...state bookkeeping poin 1-2, TIDAK BERUBAH...
+            try:
+                loaded = await self.track_loader.load_track(track)
+                self._loading = True
+                self._last_play_start_ts = asyncio.get_event_loop().time()
+                await self.mpv.play(loaded.uri)
+                await asyncio.sleep(0.15)
+
+                await self._apply_loudness_and_routing(loaded)
+                await self._apply_start_playback_state(start_paused, start_position)
+                await self._finalize_play_track_success(track, start_paused)
+
+            except VideoUnavailableError as e:
+                await self._failure_ops.handle_video_unavailable(track, e)
+            except (BotCheckError, RateLimitedError) as e:
+                await self._failure_ops.handle_bot_check_or_rate_limited(track, e)
+            except Exception as e:
+                await self._failure_ops.handle_generic_error(track, e)
+    ```
+    CATATAN: `uri = loaded.uri` (variabel lokal lama) dihapus, dipakai
+    langsung `loaded.uri` -- perubahan kosmetik kecil, TIDAK mengubah
+    behavior, TAPI tetap WAJIB diverifikasi tidak ada baris lain yang
+    membaca variabel lokal `uri` di scope yang sama (grep dulu sebelum
+    hapus).
+
+tasks:
+  - id: L.0
+    title: "GATE WAJIB -- konfirmasi otorisasi + jalankan & tinjau characterization test SEBELUM menyentuh 1 baris pun controller.py"
+    blocking: true
+    langkah:
+      - "1. Minta konfirmasi eksplisit pemilik project untuk menyentuh engine/playback/controller.py (lihat otorisasi_wajib) -- CATAT konfirmasi ini (siapa, kapan, lewat media apa) di notes PATCHLOG task L.3."
+      - "2. `python -m pytest tests/unit/engine/playback/test_controller.py -v` -- baca SEMUA 38 nama test + assertion isinya (bukan cuma jalankan dan lihat hijau), pastikan branch loudness_normalization_enabled dan crossfade_enabled (poin 5 & 6 di atas) benar2 punya assertion eksplisit."
+      - "3. Kalau ada branch yang belum tertangkap (lihat cakupan_yang_mungkin_belum_ada), TULIS test baru di test_controller.py untuk branch itu SEKARANG, jalankan, pastikan PASS terhadap kode LAMA (sebelum refactor) -- ini characterization test tambahan, bukan test refactor baru."
+      - "4. Simpan hasil pytest -v lengkap (semua nama test + PASS) sebagai lampiran/notes PATCHLOG -- ini baseline yang akan dibandingkan sesudah L.1-L.3."
+    verifikasi:
+      - "python -m pytest tests/unit/engine/playback/test_controller.py -v 2>&1 | tee /tmp/baseline_controller_tests.txt"
+      - "grep -c 'PASSED' /tmp/baseline_controller_tests.txt -> harus >= 38 (bisa lebih kalau ada test tambahan ditulis di langkah 3)"
+
+  - id: L.1
+    title: "Extract _apply_loudness_and_routing() -- SETELAH L.0 gate lulus dan otorisasi eksplisit didapat"
+    depends_on: ["L.0"]
+    files:
+      - path: "engine/playback/controller.py"
+        action: edit
+        deskripsi: >
+          Pindahkan BODY PERSIS poin 5 & 6 (baris ~229-260 di kode saat
+          RFC ini ditulis -- VERIFIKASI ULANG nomor baris persis saat
+          eksekusi, kode mungkin sudah berubah) jadi method privat baru
+          `async def _apply_loudness_and_routing(self, loaded):` yang
+          dipanggil dari play_track(). TIDAK ADA perubahan logic sama
+          sekali, cuma pemindahan body + ganti akses variabel lokal jadi
+          `loaded` parameter.
+    verifikasi:
+      - "python -m pytest tests/unit/engine/playback/test_controller.py -v 2>&1 | tee /tmp/after_L1.txt"
+      - "diff <(grep 'PASSED\\|FAILED' /tmp/baseline_controller_tests.txt) <(grep 'PASSED\\|FAILED' /tmp/after_L1.txt) -> HARUS KOSONG (tidak ada test yang berubah status PASS<->FAIL)"
+
+  - id: L.2
+    title: "Extract _apply_start_playback_state() dan _finalize_play_track_success()"
+    depends_on: ["L.1"]
+    files:
+      - path: "engine/playback/controller.py"
+        action: edit
+        deskripsi: >
+          Sama seperti L.1: pindahkan body poin 7-8 jadi
+          `_apply_start_playback_state(self, start_paused, start_position)`,
+          dan poin 9-10 jadi
+          `_finalize_play_track_success(self, track, start_paused)`.
+          play_track() akhir jadi persis seperti contoh di
+          `play_track_setelah_refactor` di atas -- TAPI verifikasi ulang
+          urutan pemanggilan TIDAK BOLEH berubah (poin 5-6 HARUS
+          sebelum 7-8 HARUS sebelum 9-10, karena ada dependency implisit:
+          mis. status PLAYING/PAUSED di poin 9 relevan dengan apakah
+          mpv sudah di-resume/pause di poin 7).
+    verifikasi:
+      - "python -m pytest tests/unit/engine/playback/test_controller.py -v 2>&1 | tee /tmp/after_L2.txt"
+      - "diff <(grep 'PASSED\\|FAILED' /tmp/baseline_controller_tests.txt) <(grep 'PASSED\\|FAILED' /tmp/after_L2.txt) -> HARUS KOSONG"
+      - "python -m pytest tests/unit/engine -q  # jalankan SELURUH test engine, bukan cuma test_controller.py, untuk cek tidak ada efek samping ke modul lain yang bergantung pada controller.py (mis. test_track_loader.py, test_queue_ops.py, dll)"
+
+  - id: L.3
+    title: "Full regression pass -- backend + frontend penuh, sebelum ditutup"
+    depends_on: ["L.2"]
+    verifikasi:
+      - "python -m pytest -q  # seluruh test suite backend, bukan cuma engine/"
+      - "npx vitest run  # pastikan tidak ada regresi frontend (seharusnya tidak tersentuh sama sekali oleh fase ini, tapi tetap jalankan sebagai sanity check penuh sebelum menutup RFC ini)"
+      - "hasil_diharapkan: seluruh pytest PASS (baseline sebelum fase ini WAJIB dicatat ulang oleh agent yang eksekusi -- jumlah total test backend BELUM dihitung di RFC ini, jalankan `pytest -q` dulu di awal L.0 untuk catat baseline totalnya juga, bukan cuma test_controller.py), npx vitest run tetap 679/679 (atau lebih tinggi kalau fase 1-4 sudah menambah test)."
+    patchlog_cmd: |
+      python automation/patchlog.py add \
+        --type Refactor --area Backend --priority Medium \
+        --title "Extract play_track() jadi orkestrasi tipis + 3 method privat (loudness/routing, start-state, finalize)" \
+        --reason "play_track() 86 baris dalam orkestrator 468 baris/28 method -- pola delegasi ops-class SUDAH BENAR di tempat lain tapi play_track() sendiri belum ikut pola yang sama (proposal_god_file_splitting.md Temuan L)" \
+        --files "engine/playback/controller.py" \
+        --symbols "_apply_loudness_and_routing(),_apply_start_playback_state(),_finalize_play_track_success()" \
+        --root-cause "TrackLoader menutup bagian load+resolve, tapi sisa play_track() (mpv.play, loudness, output routing, pause/seek, finalize state+event, trigger poll_duration) belum ikut pola delegasi yang sudah diterapkan di 6 ops-class lain" \
+        --solution "Extract 3 private method BARU di dalam PlaybackController sendiri (BUKAN class/file terpisah, supaya tidak mengubah tanggung jawab TrackLoader) -- play_track() jadi urutan pemanggilan ke load_track + 3 method baru, urutan eksekusi TIDAK berubah" \
+        --tests "Characterization test tersedia SEBELUM refactor (tests/unit/engine/playback/test_controller.py::TestPlayTrack, 15 test + cek tambahan branch loudness/crossfade di L.0); diff status PASS/FAIL identik sebelum-sesudah tiap task L.1/L.2; full pytest -q dan npx vitest run PASS setelah L.3" \
+        --breaking No --risk High --status Merged \
+        --related PATCH-2026-07-26-240
+    checkpoint_cmd: >
+      zip -rq checkpoints/lunawave-L.zip . -x ".git/*" -x "*__pycache__*"
+      -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+      -x "*.DS_Store" -x "checkpoints/*"
+
+patchlog_group: "L.1-L.3 satu entry gabungan setelah L.3 (full regression) selesai -- 3 extract ini cuma valid dinilai aman kalau seluruh regression pass dicek, bukan per-task. L.0 TIDAK dapat entry sendiri (itu gate/persiapan, bukan perubahan kode)."
+
+verifikasi_fase_selesai:
+  - "Konfirmasi otorisasi eksplisit pemilik project tercatat di notes PATCHLOG (bukan diasumsikan/dilewati)"
+  - "python -m pytest -q -> semua pass, sama seperti baseline sebelum fase 5 (dicatat di L.0)"
+  - "npx vitest run -> 679/679 (atau lebih tinggi kalau fase 1-4 sudah menambah test), tidak boleh kurang"
+  - "wc -l engine/playback/controller.py -> total baris file boleh SEDIKIT bertambah (3 method baru + definisi), TAPI play_track() sendiri jauh lebih pendek dari 86 baris (perkiraan <20 baris orkestrasi tipis)"
+  - "1 entry baru muncul di docs/PATCHLOG.md dengan --risk High --breaking No"

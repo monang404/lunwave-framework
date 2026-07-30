@@ -1,0 +1,110 @@
+# 00_INDEX.yaml
+# Peta seluruh sesi perbaikan frontend LunaWave pasca PATCH-223.
+# Sumber: rencana-perbaikan-frontend.md + verifikasi ULANG langsung terhadap
+# repo (lunawave-media-migration-fixed.zip) memakai eslint/depcruise/pytest
+# SUNGGUHAN — bukan angka perkiraan dari dokumen rencana. Ada 2 koreksi
+# penting terhadap dokumen asli, dicatat di `koreksi_terhadap_rencana_asli`.
+#
+# CARA PAKAI 7 FILE INI (dibagi per sesi karena 1 file gabungan terlalu panjang):
+#   00_INDEX.yaml               <- kamu di sini, baca dulu sebelum sesi manapun
+#   01_sesi1_quickfix.yaml
+#   02_sesi2_eslint.yaml
+#   03_sesi3_visual_regression.yaml
+#   04_sesi4_circular_deps.yaml   (medium risk, butuh konfirmasi eksplisit)
+#   05_sesi5_render_events.yaml   (BLOCKED — bukan task eksekusi)
+#   06_sesi6_docs_sync.yaml
+#
+# Tiap file sesi 100% mandiri: berisi file yang diedit, isi konkret,
+# command verifikasi, command PATCHLOG, dan command zip checkpoint per task.
+# TIDAK ADA task yang mengharuskan grep/pencarian manual — semua path,
+# baris, dan isi lama/baru sudah diekstrak langsung dari repo.
+
+meta:
+  latest_patch_id_saat_dibuat: "PATCH-2026-07-24-223"
+  total_entries_saat_dibuat: 223
+  catatan: >
+    Field di atas WAJIB dicek ulang oleh agent sebelum menulis entry pertama
+    (jalankan `python automation/patchlog.py latest --n 1 --json`) — kalau
+    ada sesi lain yang sudah menambah entry sejak file ini dibuat, nomor NNN
+    lanjut dari situ, BUKAN dari 223 secara membabi buta.
+
+koreksi_terhadap_rencana_asli:
+  - klaim_dokumen: "2 test backend stale: test_http.py::test_serve_index_returns_file_response DAN test_log_dashboard.py::test_serve_log_dashboard_returns_file_response, keduanya assert path lama 'static/admin-logs.html'"
+    hasil_verifikasi_nyata: >
+      SALAH SEBAGIAN. Dijalankan `pytest` sungguhan: dua test itu memang
+      sama-sama FAIL, tapi test_http.py TIDAK ada hubungannya dengan
+      admin-logs sama sekali — itu test untuk serve_index (index.html),
+      dan gagal karena assert path lama 'static/index.html' padahal
+      server/handlers/http.py sekarang serve dari 'pages/app/index.html'.
+      Detail fix sudah dikonkretkan di 01_sesi1_quickfix.yaml, tidak perlu
+      diverifikasi ulang.
+  - klaim_dokumen: "eslint 70 warning mayoritas catch (e) {} yang tidak dipakai"
+    hasil_verifikasi_nyata: >
+      Breakdown asli dari eslint JSON output: dari 54 no-unused-vars, hanya
+      13 yang benar berupa catch/arrow-param seperti 'e'/'err'/'_'. Sisanya
+      (41) adalah IMPORT SPECIFIER yang tidak dipakai (named import atau
+      `import * as X`) dan beberapa deklarasi variabel/fungsi lokal mati.
+      Detail lengkap per baris ada di 02_sesi2_eslint.yaml.
+  - klaim_dokumen: "124 warning circular-dependencies"
+    hasil_verifikasi_nyata: >
+      `npx depcruise -T json` sungguhan menghasilkan 148 edge unik saat ini
+      (bukan 124 — dokumen kemungkinan menghitung dari cara agregasi
+      berbeda). TEMUAN PENTING: setelah simulasi fix sesi 2 (hapus semua
+      unused import) diterapkan dan depcruise dijalankan ulang, jumlah
+      circular-dependencies TURUN dari 148 -> 67 edge, dan
+      no-render-imports-events turun 5->4, no-events-imports-render turun
+      15->14. Ini karena beberapa edge siklus ADALAH edge dari import yang
+      sudah tidak dipakai (mis. `store.js` import `ws.js` tanpa dipakai,
+      `dom.js` import `login/logout` dari `auth.js` tanpa dipakai — inilah
+      SATU-SATUNYA jalur dom.js->auth.js, begitu dihapus edge itu hilang
+      total). Konsekuensi: sesi 4 (circular deps) WAJIB jalan SETELAH sesi 2
+      selesai, dan WAJIB regenerate depcruise JSON sendiri (bukan pakai
+      angka 124/148 lama) sebelum mulai eksekusi. 04_sesi4_circular_deps.yaml
+      sudah memakai angka 67 (hasil pasca-sesi-2) sebagai baseline kerja.
+  - temuan_tambahan_di_luar_dokumen: >
+      67 edge circular-dependencies pasca-sesi-2 BERTUMPANG TINDIH BESAR
+      dengan pola render/events cross-import (§4 dokumen asli, yang sengaja
+      ditandai out-of-scope/butuh RFC terpisah). Root cause sebenarnya satu:
+      `ws.js` dan `events/index.js` adalah hub bidirectional yang diimpor
+      balik oleh hampir semua modul render/audio. Ini TIDAK mengubah
+      keputusan dokumen asli (render/events tetap out-of-scope sesi ini,
+      lihat 05_sesi5_render_events.yaml) — hanya dicatat sebagai konteks
+      penting untuk siapa pun yang nanti mengerjakan RFC event bus, supaya
+      tidak mengira sesi 4 dan sesi 5 itu dua masalah yang tidak berkaitan.
+
+aturan_global_semua_sesi:
+  - "Setiap task WAJIB diakhiri: (a) jalankan `verifikasi`, (b) jalankan `patchlog_cmd` untuk menulis entry docs/PATCHLOG.md, (c) jalankan `checkpoint_cmd` untuk membuat zip checkpoint. Urutan ini tidak boleh dibalik — jangan zip sebelum verifikasi hijau."
+  - "Task dengan `patchlog_group` yang sama ditulis SATU entry PATCHLOG gabungan setelah task terakhir dalam grup itu selesai, bukan satu entry per task."
+  - "Jangan pernah menebak nomor PATCH-YYYY-MM-DD-NNN — selalu jalankan `python automation/patchlog.py latest --n 1 --json` tepat sebelum menulis entry untuk tahu NNN berikutnya yang benar."
+  - "checkpoint_cmd zip HARUS dijalankan dari root repo, output disimpan di luar working tree kalau memungkinkan (mis. /tmp atau folder checkpoints/ yang di-.gitignore-kan di sesi 1) supaya tidak ikut ke-zip berulang."
+  - "Kalau task gagal verifikasi: JANGAN lanjut ke task berikutnya, JANGAN tetap menulis PATCHLOG/zip checkpoint seolah sukses. Perbaiki dulu sampai verifikasi hijau."
+  - "File conflict lintas sesi yang WAJIB diperhatikan: web/static/shared/js/services/auth.js disentuh sesi 2 (eslint) DAN sesi 4 (circular deps). Sesi 4 baru boleh mulai setelah sesi 2 selesai total dan di-checkpoint."
+
+zip_exclude_pattern: >
+  -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*"
+  -x "node_modules/*" -x "*.DS_Store" -x "checkpoints/*"
+
+urutan_eksekusi_sesi:
+  - sesi: 1
+    file: "01_sesi1_quickfix.yaml"
+    depends_on: []
+    boleh_paralel_dengan_sesi: [2, 3]
+  - sesi: 2
+    file: "02_sesi2_eslint.yaml"
+    depends_on: []
+    boleh_paralel_dengan_sesi: [1, 3]
+  - sesi: 3
+    file: "03_sesi3_visual_regression.yaml"
+    depends_on: []
+    boleh_paralel_dengan_sesi: [1, 2]
+  - sesi: 4
+    file: "04_sesi4_circular_deps.yaml"
+    depends_on: [2]
+    catatan: "medium risk, butuh konfirmasi eksplisit user sebelum mulai, TIDAK BOLEH paralel dengan sesi lain"
+  - sesi: 5
+    file: "05_sesi5_render_events.yaml"
+    status: "BLOCKED — bukan task eksekusi, hanya dokumentasi keputusan"
+  - sesi: 6
+    file: "06_sesi6_docs_sync.yaml"
+    depends_on: [4]
+    catatan: "terakhir, setelah struktur (sesi 1,2,4) stabil"

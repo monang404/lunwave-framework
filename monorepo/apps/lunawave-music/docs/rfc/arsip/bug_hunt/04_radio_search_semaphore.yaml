@@ -1,0 +1,107 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 04 — RADIO_SEARCH_SEM disambungkan di prefetcher
+# (temuan audit-lunawave-temuan.md #4)
+# Depends on: TIDAK ADA (independen)
+# Risiko: RENDAH-SEDANG | Effort: KECIL
+# Bagian dari seri: docs/rfc/temuan_audit_2026_07_27/ — BACA 00_index_and_decisions.yaml
+# LEBIH DULU (berisi decisions/keputusan desain & deviation_protocol yang
+# berlaku untuk SEMUA file di seri ini, termasuk file ini).
+# =============================================================================
+
+phase:
+  id: T04
+  title: "RADIO_SEARCH_SEM disambungkan di prefetcher"
+  temuan_ref: 4
+  closes_temuan: [4]
+  depends_on: []
+
+tasks:
+  - task_id: P1-T4
+    title: "RADIO_SEARCH_SEM disambungkan di prefetcher._do_prefetch"
+    temuan_ref: 4
+    severity_audit: "Sedang"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - engine/radio/prefetcher.py
+      modify_tests:
+        - tests/unit/engine/radio/test_prefetcher.py
+    steps:
+      - >
+        `view` engine/radio/prefetcher.py method `_do_prefetch` (baris
+        ~172-200 saat audit) dan `_resolve_one` di dalamnya. Konfirmasi
+        ini SATU-SATUNYA `asyncio.gather()` di seluruh engine/radio/
+        yang memicu network I/O paralel (resolve stream via yt-dlp per
+        track) -- kalau eksekutor menemukan gather() lain yang lebih
+        cocok dengan niat komentar asli "search lebih paralel" (mis.
+        pencarian per-artist), pakai keputusan `d3_radio_search_sem` di
+        atas untuk menyimpang secara sadar dan catat di PATCHLOG.
+      - >
+        Tambah import `from engine.radio.radio_config import
+        RADIO_SEARCH_SEM` (gabung dengan import ARTISTS_PER_BATCH,
+        track_task yang sudah ada dari radio_config, VERIFIKASI ULANG
+        baris import persisnya, satukan dalam satu statement `from
+        engine.radio.radio_config import (...)` kalau gaya file
+        memakai parenthesized import).
+      - >
+        Bungkus body `_resolve_one` dengan semaphore:
+        ```python
+        async def _resolve_one(track):
+            async with RADIO_SEARCH_SEM:
+                try:
+                    await controller.track_loader.resolver.resolve(track)
+                    ...
+                except Exception:
+                    ...
+        ```
+        JANGAN ubah timeout `asyncio.wait_for(self._do_prefetch(...),
+        timeout=25.0)` di `_prefetch_next` -- semaphore membatasi
+        concurrency, bukan total waktu; kalau PREFETCH_LOOKAHEAD lebih
+        besar dari kapasitas semaphore (4), resolve akan antre tapi
+        tetap harus selesai dalam window 25 detik yang sudah ada.
+      - >
+        Test baru di test_prefetcher.py: mock/patch
+        `controller.track_loader.resolver.resolve` supaya bisa
+        menghitung concurrency puncak (pola umum: counter +1 di awal
+        call, sleep kecil, -1 di akhir, assert counter maks tidak
+        pernah melebihi 4) saat `_do_prefetch` dipanggil dengan lebih
+        dari 4 candidate track sekaligus.
+      - >
+        Test regresi: test existing yang mengasersi semua candidate
+        ter-resolve (tanpa peduli urutan/concurrency) tetap hijau --
+        semaphore tidak mengubah HASIL akhir, hanya membatasi paralelisme.
+    acceptance_criteria:
+      - "RADIO_SEARCH_SEM benar-benar membatasi concurrency resolve stream radio ke maksimal 4 sekaligus, bukan lagi dead code."
+      - "Tidak ada regresi pada behavior prefetch existing (semua candidate tetap ter-resolve, best-effort failure handling tidak berubah)."
+    tests:
+      run:
+        - "pytest tests/unit/engine/radio/test_prefetcher.py -q"
+    patchlog:
+      type: bug_fix
+      area: "engine/radio"
+      title: "RADIO_SEARCH_SEM disambungkan di prefetcher untuk membatasi concurrency resolve"
+      reason: >
+        Semaphore RADIO_SEARCH_SEM dideklarasikan dengan komentar
+        'Bug #5 fix: naikkan semaphore dari 2 -> 4 agar search lebih
+        paralel' tapi tidak pernah di-acquire() di manapun -- dead
+        code yang tidak memberi proteksi apa pun terhadap lonjakan
+        proses yt-dlp paralel saat prefetch banyak track sekaligus.
+      root_cause: >
+        Kemungkinan titik pemanggilan semaphore terhapus/berpindah
+        saat refactor prefetcher tanpa semaphore-nya ikut disambungkan
+        ulang -- protective mechanism yang diklaim aktif tapi tidak
+        tersambung.
+      solution: >
+        _do_prefetch()::_resolve_one() sekarang membungkus pemanggilan
+        resolver.resolve() dengan `async with RADIO_SEARCH_SEM:`,
+        membatasi maksimal 4 resolve paralel sesuai nilai semaphore.
+      files: "engine/radio/prefetcher.py, tests/unit/engine/radio/test_prefetcher.py"
+      notes: "Tidak menyentuh file locked. Lihat decisions.d3_radio_search_sem kalau lokasi gather() berbeda saat eksekusi."
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/patchlog.py verify"
+  - "ruff check ."

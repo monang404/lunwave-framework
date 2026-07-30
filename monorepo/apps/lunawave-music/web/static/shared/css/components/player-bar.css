@@ -1,0 +1,609 @@
+/* ══ LunaWave player.css v2 ══ */
+
+/* ── Home Tab Layout ── */
+.full-player-view {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  position: relative;
+  z-index: 1;
+}
+
+.full-player-view::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Home Header (inside tab) ── */
+.home-header {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s4) var(--s5) var(--s3);
+  flex-shrink: 0;
+}
+
+.home-greeting {
+  font-size: var(--t-xs);
+  color: var(--text-2);
+  font-weight: var(--w-regular);
+  letter-spacing: 0.2px;
+}
+
+.home-brand {
+  font-size: var(--t-xl);
+  font-weight: var(--w-bold);
+  color: var(--text-1);
+  letter-spacing: -0.4px;
+  line-height: 1.2;
+}
+
+/* ── Album Art Hero ── */
+.home-art-section {
+  display: flex;
+  justify-content: center;
+  padding: var(--s6) var(--s5) var(--s5);
+  flex-shrink: 0;
+}
+
+.home-art-frame {
+  width: 78%;
+  max-width: 300px;
+  aspect-ratio: 1 / 1;
+  border-radius: 24px;
+  overflow: hidden;
+  background: var(--bg-elevated);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 2px 4px rgba(0, 0, 0, 0.35),
+    0 10px 28px rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: box-shadow 0.55s cubic-bezier(0.0, 0.0, 0.2, 1);
+}
+
+.home-art-frame.visualizer-active,
+.home-art-frame.playing {
+  /* UI-02 fix: box-shadow statis, glow beat dipindah ke ::before */
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.10),
+    0 4px 8px rgba(0, 0, 0, 0.45),
+    0 18px 48px rgba(0, 0, 0, 0.65);
+  transition: box-shadow 0.55s cubic-bezier(0.0, 0.0, 0.2, 1);
+}
+
+/* UI-02 fix: ::before glow — opacity composited, tidak trigger repaint */
+/* Catatan: ::after sudah dipakai untuk gradient overlay, pakai ::before */
+.home-art-frame::before {
+  content: '';
+  position: absolute;
+  inset: -20px;
+  border-radius: inherit;
+  background: radial-gradient(
+    ellipse,
+    rgba(var(--color-r, 255), var(--color-g, 255), var(--color-b, 255), 0.3),
+    transparent 70%
+  );
+  opacity: var(--beat-glow-opacity, 0);
+  transition: opacity var(--beat-glow-transition, 0.4s) ease;
+  pointer-events: none;
+  z-index: -1;
+  will-change: opacity;
+}
+
+
+
+
+
+/* subtle gradient overlay di bawah artwork */
+.home-art-frame::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, transparent 55%, rgba(9, 10, 13, 0.25) 100%);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.home-art-placeholder {
+  font-size: 72px;
+  color: var(--text-3);
+}
+
+/* ── Track Info Row ── */
+.home-track-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s3) var(--s10) var(--s3) var(--s10);
+}
+
+.home-track-info {
+  min-width: 0;
+  text-align: center;
+}
+
+.mti-title {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: var(--t-xl);
+  font-weight: bold;
+  color: var(--text-1);
+  letter-spacing: -0.3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+  text-transform: capitalize;
+  text-align: center;
+}
+
+.mti-artist {
+  font-size: var(--t-md);
+  color: var(--text-2);
+  font-weight: var(--w-regular);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+
+
+.home-fav-btn.active i::before {
+  content: "\ecd5";
+}
+
+/* ti-heart-filled */
+
+/* ── Recently Played Section ── */
+.home-recent-section {
+  flex: 1;
+}
+
+.home-recent-list {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: var(--s8);
+}
+
+.home-recent-item, .radio-queue-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3) var(--s5);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.home-recent-item:hover, .radio-queue-item:hover {
+  background: var(--fm-color-hover);
+}
+
+.home-recent-item.current, .radio-queue-item.current {
+  background: var(--accent-alpha);
+}
+
+.home-recent-thumb, .radio-queue-thumb {
+  width: 46px;
+  height: 46px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-elevated);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  font-size: 18px;
+  position: relative;
+}
+
+/* EQ Overlay inside Thumbnail */
+.thumb-eq-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(14, 14, 18, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.home-recent-item.current .thumb-eq-overlay,
+.radio-queue-item.current .thumb-eq-overlay,
+.sr-item.current .thumb-eq-overlay {
+  opacity: 1;
+}
+
+.thumb-eq-overlay .eq-anim-icon {
+  height: 12px;
+  width: 14px;
+  gap: 2.2px;
+}
+
+.thumb-eq-overlay .eq-anim-icon span {
+  width: 2.5px;
+  background: var(--accent); /* Yellow / Amber Accent */
+  animation-play-state: paused;
+}
+
+.home-recent-item.playing .thumb-eq-overlay .eq-anim-icon span,
+.radio-queue-item.playing .thumb-eq-overlay .eq-anim-icon span,
+.sr-item.playing .thumb-eq-overlay .eq-anim-icon span {
+  animation-play-state: running;
+}
+
+.home-recent-thumb img, .radio-queue-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.home-recent-info, .radio-queue-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-recent-title, .radio-queue-title {
+  font-size: var(--t-md);
+  font-weight: var(--w-medium);
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-recent-item.current .home-recent-title,
+.radio-queue-item.current .radio-queue-title {
+  color: var(--accent);
+}
+
+.home-recent-artist, .radio-queue-artist {
+  font-size: var(--t-sm);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.home-recent-more, .radio-queue-more {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  font-size: 18px;
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-sm);
+  flex-shrink: 0;
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.home-recent-more:hover {
+  color: var(--text-2);
+}
+
+/* ── Lyrics Inline ── */
+.lyrics-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: var(--s3) var(--s6);
+}
+
+.lyric-sync-ctrls {
+  position: absolute;
+  right: 0;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  padding: 4px 12px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.3s var(--ease), transform 0.3s var(--ease);
+  pointer-events: none;
+  z-index: 10;
+}
+
+.lyric-sync-ctrls.active {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+body[data-has-lyrics="false"] .lyric-sync-ctrls {
+  display: none !important;
+}
+
+.lyric-sync-btn {
+  background: none;
+  border: none;
+  color: var(--text-2);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  transition: color 0.2s, transform 0.2s;
+}
+
+.lyric-sync-btn:hover {
+  color: var(--accent);
+  transform: scale(1.1);
+}
+
+.lyric-sync-btn:active {
+  transform: scale(0.9);
+}
+
+#sync-val {
+  color: var(--text-1);
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 32px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+#lyrics-text-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 140px;
+  position: relative;
+}
+
+.lyrics-line {
+  position: absolute;
+  width: 95%;
+  font-family: var(--font);
+  font-weight: 700;
+  font-size: 18px; /* Ukuran dasar sama untuk semua, diatur via scale */
+  line-height: 1.35;
+  letter-spacing: -0.3px;
+  text-align: center;
+  transform-origin: center center;
+  will-change: transform, opacity, filter, color;
+}
+
+.lyrics-line.current {
+  color: var(--text-1);
+  transform: scale(1.15) translateY(0);
+  opacity: 1;
+  filter: blur(0px);
+  text-shadow: 0 4px 24px rgba(255, 255, 255, 0.2);
+  z-index: 3;
+}
+.lyrics-line.current.lyric-pop {
+  animation: lyricPopCurrent 0.7s cubic-bezier(0.2, 0.9, 0.1, 1) forwards;
+}
+
+.lyrics-line.prev {
+  color: var(--text-3);
+  transform: scale(0.9) translateY(-40px);
+  opacity: 0.15;
+  filter: blur(1.5px);
+  z-index: 1;
+}
+.lyrics-line.prev.lyric-pop {
+  animation: lyricPopPrev 0.7s cubic-bezier(0.2, 0.9, 0.1, 1) forwards;
+}
+
+.lyrics-line.next {
+  color: var(--text-2);
+  transform: scale(0.9) translateY(40px);
+  opacity: 0.35;
+  filter: blur(1px);
+  z-index: 2;
+}
+.lyrics-line.next.lyric-pop {
+  animation: lyricPopNext 0.7s cubic-bezier(0.2, 0.9, 0.1, 1) forwards;
+}
+
+@keyframes lyricPopCurrent {
+  0% { transform: scale(0.9) translateY(40px); opacity: 0.35; filter: blur(1px); color: var(--text-2); text-shadow: none; }
+  100% { transform: scale(1.15) translateY(0); opacity: 1; filter: blur(0px); color: var(--text-1); text-shadow: 0 4px 24px rgba(255, 255, 255, 0.2); }
+}
+
+@keyframes lyricPopPrev {
+  0% { transform: scale(1.15) translateY(0px); opacity: 1; filter: blur(0px); color: var(--text-1); text-shadow: 0 4px 24px rgba(255, 255, 255, 0.2); }
+  100% { transform: scale(0.9) translateY(-40px); opacity: 0.15; filter: blur(1.5px); color: var(--text-3); text-shadow: none; }
+}
+
+@keyframes lyricPopNext {
+  0% { transform: scale(0.8) translateY(65px); opacity: 0; filter: blur(3px); }
+  100% { transform: scale(0.9) translateY(40px); opacity: 0.35; filter: blur(1px); }
+}
+
+/* ── Player Bar: Home mode ── */
+body[data-active-tab="home"] #app-header {
+  display: none !important;
+}
+
+/* ── Seek thumb visible on home (full player) ── */
+body[data-active-tab="home"] .pb-track {
+  height: 3px;
+}
+
+body[data-active-tab="home"] .pb-track:active .pb-thumb {
+  opacity: 1;
+}
+
+/* Workaround for Mini Player when player-bar is inside tab-home */
+body:not([data-active-tab="home"]) #tab-home {
+  display: flex !important;
+  height: 0;
+  overflow: visible;
+}
+
+body:not([data-active-tab="home"]) #tab-home>*:not(#player-bar) {
+  display: none !important;
+}
+
+/* Transparent player bar on home tab */
+body[data-active-tab="home"] #player-bar {
+  background: transparent;
+  border: none;
+  padding-top: 10px;
+  padding-bottom: 20px;
+}
+
+/* Fix player control symmetry */
+.pb-ctrl {
+  position: relative;
+}
+
+.pb-badges {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  margin-top: 8px;
+}
+
+/* Hover & active colors for player controls */
+.btn-prev,
+.btn-next {
+  color: #fff !important;
+}
+
+.btn-prev:hover, .btn-next:hover, .btn-repeat:hover, .btn-shuffle:hover { color: var(--text-1); background: rgba(255,255,255,0.05); }
+.btn-repeat.active, .btn-shuffle.active { color: var(--accent); }
+
+/* ── PLAYER BAR ── */
+#player-bar {
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-1);
+  padding: var(--s3) var(--s5) var(--s4);
+  flex-shrink: 0;
+  position: relative;
+  min-height: 64px;
+}
+
+
+
+.pb-row1 {
+  display: none;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--s2);
+}
+
+.pb-title {
+  font-size: var(--t-sm); font-weight: var(--w-medium);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 200px; color: var(--text-1);
+}
+
+.pb-badge {
+  font-size: 10px; padding: 2px 8px;
+  border-radius: var(--r-full); flex-shrink: 0;
+  font-weight: var(--w-medium);
+  background: var(--accent-dark); color: var(--accent);
+}
+.pb-badge.queue { background: rgba(96,165,250,0.12); color: var(--fm-blue); }
+
+/* Progress bar */
+.pb-seek {
+  display: flex; align-items: center; gap: var(--s2);
+  margin-bottom: var(--s3);
+}
+
+.pb-time {
+  font-size: var(--t-xs); color: var(--text-3);
+  min-width: 32px; font-weight: var(--w-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-track {
+  flex: 1; height: 3px;
+  background: rgba(255,255,255,0.10);
+  border-radius: var(--r-full); cursor: pointer;
+  position: relative; touch-action: none;
+}
+
+.pb-fill {
+  height: 100%; background: var(--accent);
+  border-radius: var(--r-full);
+}
+
+.pb-thumb {
+  position: absolute; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 13px; height: 13px;
+  background: var(--accent); border-radius: 50%;
+  cursor: grab; opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.pb-track:hover .pb-thumb { opacity: 1; }
+
+/* Badges SM */
+.pb-badge-sm {
+  font-size: 10px; padding: 2px 6px;
+  border-radius: var(--r-full); font-weight: var(--w-medium);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.pb-badge-sm.cached { background: rgba(34,197,94,0.12); color: var(--green); }
+.pb-badge-sm.stream { display: none !important; }
+.pb-badge-sm.sb     { display: none !important; }
+.pb-badge-sm.dl     { background: rgba(96,165,250,0.12); color: var(--fm-blue); }
+
+/* ── Mini player (non-home tabs) ── */
+
+
+/* FIX PROGRESS BAR THUMB - CENTERED */
+.pb-progress-track {
+  min-height: 44px;
+  touch-action: none;
+}
+
+.pb-thumb {
+  position: absolute !important;
+  top: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  width: 18px;
+  height: 18px;
+  background: var(--accent);
+  border-radius: 50%;
+  box-shadow: 0 0 8px rgba(242, 181, 68, 0.6);
+  z-index: 10;
+  transition: left 0.05s linear;
+  pointer-events: none;
+}
+
+.pb-track:hover .pb-thumb,
+body[data-active-tab="home"] .pb-track .pb-thumb {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1.15) !important;
+}
+
+/* PATCH-HIDE-PB-SEEK-THUMB-01: sembunyikan tombol bulat seek, progress bar
+   tetap jalan (pb-fill) tanpa knob yang mengganggu. */
+.pb-thumb {
+  display: none !important;
+}

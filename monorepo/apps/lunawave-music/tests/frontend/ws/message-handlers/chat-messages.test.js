@@ -1,0 +1,1 @@
+import { describe, it, expect } from "vitest"; import { handleChatMessage } from "../../../../web/static/shared/js/ws/message-handlers/chat-messages.js"; describe("chat-messages.js", () => { it("handles chat_history message", () => { expect(() => handleChatMessage({ type: "chat_history", data: [] })).not.toThrow(); }); });

@@ -1,0 +1,107 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 06 — raise di dalam except pakai 'from None' (5 lokasi)
+# (temuan audit-lunawave-temuan.md #7)
+# Depends on: TIDAK ADA (independen)
+# Risiko: SANGAT RENDAH | Effort: KECIL
+# Bagian dari seri: docs/rfc/temuan_audit_2026_07_27/ — BACA 00_index_and_decisions.yaml
+# LEBIH DULU (berisi decisions/keputusan desain & deviation_protocol yang
+# berlaku untuk SEMUA file di seri ini, termasuk file ini).
+# =============================================================================
+
+phase:
+  id: T06
+  title: "raise di dalam except pakai 'from None' (5 lokasi)"
+  temuan_ref: 7
+  closes_temuan: [7]
+  depends_on: []
+
+tasks:
+  - task_id: P2-T2
+    title: "raise di dalam except pakai 'from e'/'from None' (5 lokasi)"
+    temuan_ref: 7
+    severity_audit: "Rendah"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - server/handlers/ws_schemas.py
+        - adapters/ytdlp/resolver.py
+      modify_tests:
+        - tests/unit/server/handlers/test_ws_schemas.py
+        - tests/unit/adapters/ytdlp/test_resolver.py
+    steps:
+      - >
+        `view` server/handlers/ws_schemas.py baris ~40-95. VERIFIKASI
+        ULANG 4 lokasi persis: `except (TypeError, ValueError): raise
+        WsValidationError(...)` di method parse() milik
+        VolumeSetPayload (~baris 43), SetSpeedPayload (~baris 60),
+        LyricsOffsetPayload (~baris 77), SetSleepTimerPayload
+        (~baris 91). Tambahkan `from None` di keempat raise ini --
+        bukan `from e` (nama exception asli TypeError/ValueError tidak
+        informatif untuk user, `from None` sengaja memutus chain karena
+        WsValidationError sudah membawa pesan yang lebih berguna,
+        konsisten dengan pola `from None` yang sudah dipakai resolver.py
+        baris ~101-102 untuk kasus serupa).
+      - >
+        `view` adapters/ytdlp/resolver.py baris ~73-83
+        (`get_stream_url`, blok `except TimeoutError:` PALING LUAR,
+        BUKAN yang di baris ~100-102 yang sudah benar pakai `from
+        None`). Tambahkan `from None` di `raise RuntimeError(f"Timeout
+        ({YTDLP_RESOLVE_TIMEOUT_SEC}s) saat mengambil stream URL untuk
+        {video_id}")` -- konsisten dengan raise TimeoutError lain di
+        file yang sama.
+      - >
+        JANGAN ubah 3 raise lain di resolver.py yang SUDAH benar
+        (`raise classified2 from e2`, `raise classified from e`, `raise
+        RuntimeError(...) from e`) -- hanya 1 titik di file ini yang
+        kurang.
+      - >
+        Test: untuk tiap payload class di ws_schemas.py, panggil
+        `.parse({"volume": "abc"})` (dst. untuk field lain) dan assert
+        `exc.value.__cause__ is None` (membuktikan `from None` bekerja
+        -- chain terputus dengan sengaja, bukan hilang karena lupa).
+        Untuk resolver.py, mock `_resolve_once` supaya raise
+        `TimeoutError`, assert `WsValidationError`-nya (atau
+        RuntimeError yang relevan) `__cause__ is None`.
+      - >
+        Test regresi: pesan error yang ditampilkan ke user (isi string
+        exception) TIDAK berubah sama sekali -- ini murni perubahan
+        exception chaining, bukan pesan.
+    acceptance_criteria:
+      - "Kelima lokasi raise di dalam except sekarang eksplisit pakai 'from None', tidak lagi implicit chain yang membingungkan traceback."
+      - "Tidak ada perubahan pada pesan error yang dikirim ke user."
+    tests:
+      run:
+        - "pytest tests/unit/server/handlers/test_ws_schemas.py -q"
+        - "pytest tests/unit/adapters/ytdlp/test_resolver.py -q"
+    patchlog:
+      type: cleanup
+      area: "server/handlers, adapters/ytdlp"
+      title: "raise di dalam except pakai 'from None' eksplisit (5 lokasi)"
+      reason: >
+        4 lokasi di ws_schemas.py dan 1 di resolver.py melempar
+        exception baru di dalam blok except tanpa 'from err'/'from
+        None' -- traceback Python default tetap menampilkan exception
+        asli sebagai 'During handling of the above exception', tapi
+        tanpa penanda eksplisit ini rawan disalahsangka sebagai chain
+        yang hilang saat debugging.
+      root_cause: >
+        Pola `raise NewException(...)` ditulis tanpa mempertimbangkan
+        PEP 409 exception chaining eksplisit -- inkonsisten dengan
+        bagian lain resolver.py yang sudah rapi memakai 'from e'/'from
+        None'.
+      solution: >
+        Kelima lokasi ditambah 'from None' (memutus chain dengan
+        sengaja karena exception baru sudah membawa pesan yang lebih
+        jelas dari exception asli TypeError/ValueError/TimeoutError).
+      files: "server/handlers/ws_schemas.py, adapters/ytdlp/resolver.py, tests/unit/server/handlers/test_ws_schemas.py, tests/unit/adapters/ytdlp/test_resolver.py"
+      notes: >
+        Audit menyebut '4 lokasi' tapi verifikasi kode menemukan 5
+        (lihat decisions.d6_raise_from_scope). Tidak menyentuh file locked.
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/patchlog.py verify"
+  - "ruff check ."

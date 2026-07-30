@@ -1,0 +1,184 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 03 — Import audit + server/handlers/context.py (Temuan B / §3.B, Fase 2)
+# Depends on: TIDAK ADA
+# Risiko: RENDAH-SEDANG | Effort: SEDANG
+#
+# CATATAN AUDIT PENTING (temuan baru saat verifikasi kode langsung, BUKAN
+# cuma membaca proposal): grep aktual terhadap deferred import internal
+# (`from server|core|engine|persistence|services\.` di dalam badan
+# fungsi) menemukan 66 titik di 27 file — dekat dengan klaim proposal
+# (75), bukan identik, karena metode grep berbeda. LEBIH PENTING: untuk
+# 2 contoh konkret yang proposal sebut secara eksplisit
+# (websocket.py:231 -> ws_cache, websocket.py:235 -> ws_chat), verifikasi
+# langsung ke ws_cache.py dan ws_chat.py menunjukkan KEDUANYA TIDAK
+# mengimpor apapun dari server.handlers atau websocket.py sama sekali.
+# Artinya teori root-cause proposal ("circular import dua arah") TIDAK
+# terbukti untuk 2 contoh spesifik itu -- deferred import di titik itu
+# kemungkinan besar sisa refactor lama yang sudah tidak perlu, bukan
+# circular-dependency aktif. Plan ini menyesuaikan: task P03-T2 memakai
+# hasil audit otomatis (bukan asumsi manual) untuk memutuskan mana yang
+# aman dipromosikan ke top-level SEKARANG.
+# =============================================================================
+
+phase:
+  id: P03
+  title: "Import audit otomatis + pemisahan server/handlers/context.py"
+  proposal_ref: "§3.B"
+  closes_temuan: [B]
+  depends_on: []
+
+tasks:
+  - task_id: P03-T1
+    title: "Buat automation/import_audit.py — klasifikasi CIRCULAR vs PATCHABILITY vs UNKNOWN"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      create:
+        - automation/import_audit.py
+        - tests/unit/automation/test_import_audit.py
+    steps:
+      - >
+        Buat automation/import_audit.py mengikuti konvensi automation/*
+        lain di repo (lihat automation/find_owner.py atau
+        automation/patchlog.py untuk gaya CLI argparse + output JSON
+        opsional via --json, TIDAK menulis file — hanya print ke
+        stdout, sesuai tabel di AI_CONTEXT.md baris 81-82).
+      - >
+        Algoritma: (1) scan semua file .py di server/, engine/, core/,
+        persistence/, services/, bootstrap/, plugins/, adapters/, main.py
+        (exclude tests/, .cache/); (2) untuk tiap baris import yang
+        BERINDENTASI (di dalam fungsi/method, bukan top-level, bukan di
+        dalam blok `if TYPE_CHECKING:`) yang meng-import modul internal
+        (prefix server/core/engine/persistence/services/bootstrap/
+        plugins/adapters/config), catat (file_asal, baris, modul_target);
+        (3) untuk tiap titik itu, parse modul_target dan cek SECARA
+        REKURSIF (bukan cuma 1 level) apakah modul_target -- atau modul
+        yang di-import modul_target -- pada akhirnya meng-import balik
+        modul_asal di LEVEL TOP-LEVEL modul tsb. Kalau ya -> label
+        `CIRCULAR`. Kalau tidak ada jejak impor balik SAMA SEKALI ->
+        label `SAFE_TO_PROMOTE` (bisa langsung dipindah ke top-level
+        tanpa risiko). Kalau ada komentar di baris/fungsi yang
+        menyinggung kata "patch"/"mock"/"test" di dekat baris import ->
+        tambahkan label `PATCHABILITY` (bisa tumpang tindih dengan
+        SAFE_TO_PROMOTE -- laporkan keduanya kalau relevan, jangan
+        paksa exclusive).
+      - "Output default: tabel ringkas ke stdout (file, baris, target, label). Dengan --json: array of objects untuk dikonsumsi tooling lain."
+      - >
+        Test wajib: siapkan fixture kecil (2-3 file .py dummy di
+        tests/unit/automation/fixtures/ atau inline string) yang
+        merepresentasikan 3 kasus (circular nyata, safe-to-promote,
+        patchability) supaya heuristik tervalidasi tanpa bergantung pada
+        struktur repo asli (yang bisa berubah).
+    acceptance_criteria:
+      - "python automation/import_audit.py --json menghasilkan JSON valid, tidak menulis file apapun ke disk."
+      - "Menjalankan tool ini terhadap websocket.py:231 dan :235 (ws_cache, ws_chat) menghasilkan label SAFE_TO_PROMOTE (memvalidasi temuan manual di atas) -- kalau hasil tool BERBEDA dari ini, STOP dan investigasi manual dulu sebelum lanjut ke P03-T2 (jangan percaya buta ke satu sumber)."
+    tests:
+      run:
+        - "pytest tests/unit/automation/test_import_audit.py -q"
+
+  - task_id: P03-T2
+    title: "Promosikan deferred import websocket.py (ws_cache, ws_chat) ke top-level"
+    depends_on: [P03-T1]
+    touches_locked_files: true
+    locked_file_justification: >
+      server/handlers/websocket.py locked di AI_CONTEXT.md. Task ini
+      TIDAK memecah struktur file, hanya memindah 2 baris import dari
+      dalam fungsi ke top-of-file -- perubahan mekanis minimal. Otorisasi
+      tercatat di 00_index_and_decisions.yaml.
+    files:
+      modify:
+        - server/handlers/websocket.py
+    steps:
+      - "Jalankan `python automation/import_audit.py` dulu dan KONFIRMASI baris 231 & 235 (atau baris baru kalau sudah bergeser -- cari string 'from server.handlers.ws_cache import' dan 'from server.handlers.ws_chat import') memang berlabel SAFE_TO_PROMOTE."
+      - "Kalau terkonfirmasi SAFE_TO_PROMOTE: pindahkan kedua baris import tsb ke bagian import top-level file (grup bersama import server.handlers lain yang sudah ada di sana)."
+      - "Kalau audit ternyata melabeli CIRCULAR (berbeda dari temuan manual di atas): JANGAN dipromosikan -- catat sebagai deviasi di PATCHLOG notes, lanjut ke P03-T3 tanpa mengubah websocket.py di task ini."
+      - "Jalankan `python main.py` (atau start.sh) secara singkat / jalankan seluruh test suite untuk memastikan tidak ada ImportError akibat circular yang ternyata terlewat oleh heuristik."
+    acceptance_criteria:
+      - "Tidak ada ImportError saat start server maupun saat pytest collection (`pytest --collect-only -q`)."
+      - "2 baris `from server.handlers.ws_cache import ...` dan `from server.handlers.ws_chat import ...` sudah ada di top-level websocket.py (bukan di dalam handle_ws_message()), KECUALI deviasi dicatat sesuai langkah di atas."
+    tests:
+      run:
+        - "pytest --collect-only -q"
+        - "pytest tests/unit/server/handlers -q"
+        - "pytest tests/integration -q -k ws"
+
+  - task_id: P03-T3
+    title: "Pisahkan server/handlers/__init__.py -> context.py (accessor murni)"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      create:
+        - server/handlers/context.py
+    modify_note: "server/handlers/__init__.py TIDAK dianggap locked -- bukan bagian daftar file locked AI_CONTEXT.md."
+    files_modify:
+      - server/handlers/__init__.py
+    steps:
+      - >
+        Pindahkan SELURUH isi server/handlers/__init__.py saat ini (8
+        fungsi accessor: get_repos, get_tracks_repo, get_conn, get_state,
+        get_manager, get_ytdlp, get_playback_controller, get_server_clock,
+        beserta import AppKey constants dari server.app dan blok
+        TYPE_CHECKING) ke server/handlers/context.py APA ADANYA (copy
+        persis, hanya ganti lokasi file).
+      - >
+        Ganti isi server/handlers/__init__.py menjadi HANYA:
+        `from server.handlers.context import *  # noqa: F401, F403` plus
+        docstring singkat yang menjelaskan ini adalah backward-compat
+        re-export, isi baru harus ditambah di context.py bukan di sini.
+      - >
+        Verifikasi seluruh caller existing (audio_stream_handler.py,
+        http.py, setup.py, websocket.py -- lihat hasil grep audit di
+        atas) yang melakukan `from server.handlers import get_state` dkk
+        TETAP bekerja tanpa perubahan satu baris pun di caller (ini
+        murni internal move, public import path server.handlers.get_state
+        tidak berubah berkat re-export `*`).
+    acceptance_criteria:
+      - "server/handlers/__init__.py tidak lagi berisi logic accessor langsung -- hanya re-export."
+      - "context.py TIDAK mengimpor dari websocket.py, ws_playback.py, ws_queue.py, ws_cache.py, ws_chat.py, ws_discovery.py, ws_download.py, event_listeners.py, atau modul handler manapun -- harus leaf module murni (dependency hanya ke core.ports, core.state, server.app, dan TYPE_CHECKING-only ke server_clock/controller/persistence/connection_manager)."
+      - "Seluruh 4 caller existing (audio_stream_handler.py, http.py, setup.py, websocket.py) tidak diubah satu baris pun."
+    tests:
+      run:
+        - "pytest --collect-only -q"
+        - "pytest tests/unit/server -q"
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/generate_file_index.py"
+  - "python automation/generate_report.py"
+
+patchlog_single_entry:
+  # Task P03-T1/T2/T3 dicatat sebagai SATU entry PATCHLOG (1 fase = 1 entry,
+  # bukan 1 task = 1 entry, karena T1-T3 bersama-sama menutup Temuan B).
+  type: refactor
+  area: "server/handlers, automation"
+  title: "Import audit tool + pemisahan server/handlers/context.py"
+  reason: >
+    75(klaim proposal)/66(hasil audit ulang) deferred import tersebar di
+    27 file tanpa klasifikasi -- sebagian circular asli, sebagian sisa
+    refactor lama yang sudah aman dipromosikan, tanpa tooling untuk
+    membedakan keduanya secara sistematis.
+  root_cause: >
+    server/handlers/__init__.py sebelumnya mencampur accessor dengan
+    posisi yang berpotensi menimbulkan asumsi circular; verifikasi
+    langsung menunjukkan setidaknya 2 dari titik yang disebut proposal
+    TIDAK benar-benar circular. Tidak ada tooling sebelumnya untuk
+    memverifikasi klaim semacam ini secara otomatis dan berulang.
+  solution: >
+    automation/import_audit.py baru untuk klasifikasi otomatis
+    (CIRCULAR/SAFE_TO_PROMOTE/PATCHABILITY), server/handlers/context.py
+    baru sebagai leaf accessor module, __init__.py jadi re-export murni,
+    2 deferred import di websocket.py dipromosikan ke top-level SETELAH
+    dikonfirmasi audit (bukan diasumsikan). Sisa ~60 titik deferred
+    import lain DICATAT sebagai backlog terklasifikasi di
+    08_backlog_deferred.yaml, TIDAK dieksekusi migrasinya di fase ini.
+  files: "automation/import_audit.py, server/handlers/context.py, server/handlers/__init__.py, server/handlers/websocket.py, tests/unit/automation/test_import_audit.py"
+  notes: >
+    Menyentuh file locked server/handlers/websocket.py (hanya
+    memindah 2 baris import, bukan memecah struktur) -- otorisasi
+    tercatat di 00_index_and_decisions.yaml. Jalankan
+    `python automation/import_audit.py --json` sebagai lampiran hasil
+    audit lengkap 66 titik untuk arsip PATCHLOG (simpan output ke
+    catatan manual, BUKAN file baru di repo -- tool ini tidak menulis
+    file sesuai konvensi automation/*).

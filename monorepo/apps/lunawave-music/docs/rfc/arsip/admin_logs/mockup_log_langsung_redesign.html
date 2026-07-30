@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MOCKUP — Redesign Log Langsung</title>
+<!--
+  ============================================================================
+  MOCKUP INTERAKTIF — fokus SATU tab: "Log Langsung" (live tail).
+  Data statis/sample (bukan fetch API sungguhan), tapi logika GROUPING &
+  render row DI FILE INI beneran jalan di JS bawah — buka di browser, coba:
+    - toggle "Kelompokkan baris berulang" (nyala/mati)
+    - resize <640px untuk lihat baris mode mobile (2 baris ringkas)
+    - klik baris terkelompok untuk expand/collapse
+
+  MASALAH YANG DIPERBAIKI (dari screenshot yang dikirim user):
+  [M1] Log dibanjiri baris identik berulang (polling GET /health & GET
+       /api/logs/stats tiap ~5 detik) — event penting (radio_prefetch,
+       auth, dsb) tertimbun di antaranya, susah di-scan.
+  [M2] Tiap field jadi "chip" kotak berbingkai terpisah (status/dur/req_id)
+       — makan tempat vertikal & horizontal, terutama parah di mobile
+       (screenshot 1: satu baris log jadi 3-4 baris tampilan).
+  [M3] Nama komponen (server.traffic_middleware) tampil sama besar/tebal
+       dengan nama event, bersaing untuk perhatian padahal event yang
+       lebih penting untuk di-scan cepat.
+  [M4] Tidak ada pembeda visual per kategori selain teks kecil abu-abu —
+       mata harus membaca, bukan langsung mengenali warna.
+
+  PERUBAHAN:
+  [F1] Grouping baris berturutan dengan signature sama (level+kategori+
+       komponen+event, setelah status/dur/req_id dilepas) jadi SATU baris
+       ringkasan "×N kali" + rentang waktu + status/dur teragregasi,
+       bisa expand untuk lihat detail tiap kejadian. Toggle on/off
+       (default ON) supaya admin tetap bisa lihat mentahnya kalau perlu.
+  [F2] Meta (status/dur/req_id) jadi teks inline ringkas berwarna, BUKAN
+       kotak chip berbingkai — satu baris di desktop, satu baris tambahan
+       kecil di mobile.
+  [F3] Komponen didorong jadi prefix kecil/redup, event jadi elemen paling
+       menonjol.
+  [F4] Pita warna tipis kiri per kategori (konsisten di legend atas) untuk
+       scan cepat tanpa baca teks.
+  ============================================================================
+-->
+<style>
+  :root {
+    --bg-primary: #0E0E12; --bg-surface: #151518; --bg-elevated: #1C1C22;
+    --accent: #F2B544; --accent-rgb: 242,181,68; --accent-hover: #FFC857; --accent-dark: #3B2B10;
+    --accent-alpha: rgba(var(--accent-rgb), 0.12);
+    --text-1: #FFFFFF; --text-2: #9AA0AA; --text-3: #8B92A5;
+    --border-1: rgba(255,255,255,0.05); --border-2: rgba(255,255,255,0.09); --border-3: rgba(255,255,255,0.16);
+    --font: 'Inter', 'SF Pro Display', system-ui, sans-serif;
+    --mono: 'Consolas', 'JetBrains Mono', monospace;
+    --t-xs: 11px; --t-sm: 12px; --t-md: 14px;
+    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px;
+    --r-sm: 8px; --r-md: 14px; --r-full: 999px;
+    --green: #22C55E; --red: #EF4444; --warn: #F59E0B;
+    --lvl-debug: #5eead4; --lvl-info: #86efac; --lvl-warning: #fde047; --lvl-error: #fca5a5;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: var(--font); background: var(--bg-primary); color: var(--text-1); }
+  .icon { width:14px; height:14px; stroke: currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; flex-shrink:0; }
+  .mockup-flag { background: repeating-linear-gradient(45deg, var(--accent-dark), var(--accent-dark) 10px, #241a08 10px, #241a08 20px); color: var(--accent-hover); font-size: var(--t-xs); font-weight:600; text-align:center; padding:4px; text-transform:uppercase; letter-spacing:.5px; }
+
+  .app { max-width: 1400px; margin: 0 auto; padding: var(--s4); display:flex; flex-direction:column; gap: var(--s3); height: calc(100vh - 26px); }
+
+  /* ── Toolbar ── */
+  .toolbar { background: var(--bg-elevated); border: 1px solid var(--border-1); border-radius: var(--r-md); padding: var(--s3) var(--s4); display:flex; flex-wrap:wrap; gap: var(--s2) var(--s3); align-items:center; }
+  select, input { background: var(--bg-primary); color: var(--text-1); border: 1px solid var(--border-2); padding: 7px var(--s3); border-radius: var(--r-sm); font-family: inherit; font-size: var(--t-sm); }
+  input#search { flex: 1; min-width: 140px; }
+  .toggle { display:flex; align-items:center; gap: 6px; font-size: var(--t-sm); color: var(--text-2); cursor:pointer; user-select:none; white-space:nowrap; }
+  .toggle input { accent-color: var(--accent); width:14px; height:14px; }
+  .toggle.emphasis { background: var(--accent-alpha); color: var(--accent); padding: 5px 10px; border-radius: var(--r-full); border: 1px solid rgba(var(--accent-rgb),0.25); }
+
+  /* ── Legend kategori [F4] ── */
+  .legend { display:flex; flex-wrap:wrap; gap: var(--s2) var(--s3); font-size: var(--t-xs); color: var(--text-3); padding: 0 var(--s1); }
+  .legend span { display:inline-flex; align-items:center; gap:5px; }
+  .legend .dot { width:8px; height:8px; border-radius:2px; }
+
+  /* ── Log panel ── */
+  .log-panel { flex:1; min-height:0; background: var(--bg-surface); border:1px solid var(--border-1); border-radius: var(--r-md); overflow:hidden; display:flex; flex-direction:column; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+  .log-scroll { flex:1; overflow-y:auto; }
+
+  /* [F1] Baris terkelompok */
+  .grp {
+    display:grid; grid-template-columns: 3px 58px auto 1fr auto 20px;
+    align-items:center; gap: var(--s3); padding: 7px var(--s4) 7px var(--s2);
+    border-bottom: 1px solid var(--border-1); cursor:pointer; font-size: 13px;
+  }
+  .grp:hover { background: rgba(255,255,255,0.02); }
+  .grp .catbar { align-self:stretch; border-radius:2px; }
+  .grp .time { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+  .grp .badges { display:flex; align-items:center; gap:6px; flex-shrink:0; }
+  .lvl-pill { font-size:9px; font-weight:700; letter-spacing:.4px; padding:1px 5px; border-radius:4px; }
+  .lvl-INFO .lvl-pill { color: var(--lvl-info); background: rgba(134,239,172,0.1); }
+  .lvl-WARNING .lvl-pill { color: var(--lvl-warning); background: rgba(253,224,71,0.12); }
+  .lvl-ERROR .lvl-pill { color: var(--lvl-error); background: rgba(252,165,165,0.14); }
+  .lvl-DEBUG .lvl-pill { color: var(--lvl-debug); background: rgba(94,234,212,0.1); }
+  .cat-pill { font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:.4px; color: var(--text-2); background: rgba(255,255,255,.05); padding:1px 6px; border-radius:4px; }
+  .grp .msg { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .grp .comp { color: var(--text-3); font-size: 11px; font-family: var(--mono); }
+  .grp .comp::after { content:" › "; color: var(--border-3); }
+  .grp .evt { color: var(--text-1); font-weight:500; font-family: var(--mono); }
+  .grp .count-badge { background: var(--accent-alpha); color: var(--accent); font-size:10px; font-weight:700; padding: 1px 7px; border-radius: var(--r-full); margin-left: 8px; }
+  .grp .meta { font-family: var(--mono); font-size: 11px; color: var(--text-3); white-space:nowrap; flex-shrink:0; }
+  .grp .meta .ok { color: var(--green); }
+  .grp .meta .err { color: var(--red); }
+  .grp .chev { color: var(--text-3); transition: transform .15s; flex-shrink:0; }
+  .grp.open .chev { transform: rotate(90deg); }
+
+  .grp-children { display:none; background: rgba(0,0,0,0.15); }
+  .grp.open + .grp-children { display:block; }
+  .grp-children .row { padding-left: calc(var(--s4) + 58px + 3px + var(--s3) + var(--s3)); }
+
+  /* Baris tunggal (tidak dikelompokkan / hasil expand) */
+  .row {
+    display:grid; grid-template-columns: 3px 58px auto 1fr auto 20px;
+    align-items:center; gap: var(--s3); padding: 6px var(--s4) 6px var(--s2);
+    border-bottom: 1px solid var(--border-1); font-size: 13px; position:relative;
+  }
+  .row:hover { background: rgba(255,255,255,0.02); }
+  .row .catbar { align-self:stretch; border-radius:2px; }
+  .row .time { font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+  .row .badges { display:flex; align-items:center; gap:6px; flex-shrink:0; }
+  .row .msg { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .row .comp { color: var(--text-3); font-size: 11px; font-family: var(--mono); }
+  .row .comp::after { content:" › "; color: var(--border-3); }
+  .row .evt { color: var(--text-1); font-weight:500; font-family: var(--mono); }
+  .row .meta { font-family: var(--mono); font-size: 11px; color: var(--text-3); white-space:nowrap; flex-shrink:0; }
+  .row .meta .ok { color: var(--green); } .row .meta .err { color: var(--red); }
+  .row .copy { opacity:0; background:none; border:none; color:var(--text-3); cursor:pointer; padding:2px; }
+  .row:hover .copy { opacity:1; }
+
+  /* Kategori -> warna pita [F4] (konsisten dgn legend) */
+  .c-lifecycle { background:#9CA3AF; } .c-session { background:#60A5FA; } .c-auth { background:#F87171; }
+  .c-command { background:#C084FC; } .c-event { background:#818CF8; } .c-playback { background:#34D399; }
+  .c-queue { background:#4ADE80; } .c-radio { background:#F2B544; } .c-download { background:#38BDF8; }
+  .c-resolve { background:#FB923C; } .c-cache { background:#2DD4BF; } .c-persistence { background:#A78BFA; }
+  .c-external { background:#F472B6; } .c-security { background:#EF4444; } .c-system { background:#94A3B8; }
+
+  .empty-hint { padding: var(--s5); text-align:center; color: var(--text-3); font-size: var(--t-sm); }
+
+  /* ══════════════ MOBILE (<640px): 2-baris ringkas [M2] fix ══════════════ */
+  @media (max-width: 640px) {
+    .app { padding: var(--s2); height: calc(100vh - 26px); }
+    .toolbar { padding: var(--s2) var(--s3); }
+    .legend { display:none; } /* hemat tempat; warna pita tetap ada di tiap baris */
+
+    .grp, .row {
+      grid-template-columns: 3px 1fr 20px;
+      grid-template-rows: auto auto;
+      row-gap: 3px; padding: 8px var(--s3) 8px var(--s2);
+    }
+    .grp .time, .row .time { grid-column: 2; grid-row: 1; order: unset; }
+    .grp .badges, .row .badges { grid-column: 2; grid-row: 1; margin-left: auto; }
+    .grp .msg, .row .msg { grid-column: 2; grid-row: 1; white-space: normal; }
+    /* line 1 gabung time+badges+msg jadi flex wrap satu baris logis */
+    .grp, .row { display:flex; flex-wrap: wrap; align-items:center; gap: 4px 8px; }
+    .grp .catbar, .row .catbar { align-self: stretch; }
+    .grp .msg, .row .msg { flex: 1 1 100%; order: 3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .grp .time, .row .time { order:1; }
+    .grp .badges, .row .badges { order:2; }
+    .grp .meta, .row .meta { order:4; flex: 1 1 100%; font-size: 10px; color: var(--text-3); opacity: .85; }
+    .grp .chev, .row .chev, .row .copy { order:5; align-self:flex-start; }
+    .grp .count-badge { order: 2; }
+  }
+</style>
+</head>
+<body>
+<div class="mockup-flag">MOCKUP — redesign tab "Log Langsung" — data contoh statis, grouping JS beneran jalan</div>
+
+<div class="app">
+  <div class="toolbar">
+    <select><option>Semua Level</option><option>DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option></select>
+    <select><option>Semua Kategori</option><option>lifecycle</option><option>radio</option><option>auth</option></select>
+    <input id="search" placeholder="Cari dalam event atau field...">
+    <label class="toggle emphasis"><input type="checkbox" id="grpToggle" checked> <svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg> Kelompokkan baris berulang</label>
+    <label class="toggle"><input type="checkbox" checked> Auto-scroll</label>
+  </div>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="log-panel">
+    <div class="log-scroll" id="logScroll"></div>
+  </div>
+</div>
+
+<script>
+const CATS = ["lifecycle","session","auth","command","event","playback","queue","radio","download","resolve","cache","persistence","external","security","system"];
+const legend = document.getElementById('legend');
+CATS.forEach(c => legend.innerHTML += `<span><span class="dot c-${c}"></span>${c}</span>`);
+
+// ── Sample data: campuran noise (health/stats polling) + event bermakna,
+//    persis pola di screenshot yang dikirim user ──
+function buildSample() {
+  const logs = [];
+  let t = 2 * 3600 + 48 * 60; // 02:48:00
+  const fmt = s => new Date(s * 1000).toISOString().substr(11, 8);
+
+  logs.push({t: t+=5, level:'INFO', cat:'lifecycle', comp:'server.traffic_middleware', evt:'GET /health', status:200, dur:61, req:'052b8cf7'});
+  logs.push({t: t+=5, level:'INFO', cat:'lifecycle', comp:'server.traffic_middleware', evt:'GET /health', status:200, dur:60, req:'a6410394'});
+  logs.push({t: t+=1, level:'DEBUG', cat:'radio', comp:'radio.prefetcher', evt:'radio_prefetch_resolved', video_id:'_oqRZf1k-vA'});
+  logs.push({t: t+=4, level:'INFO', cat:'lifecycle', comp:'server.traffic_middleware', evt:'GET /api/logs/stats', status:200, dur:1255, req:'85e9ed1b'});
+  logs.push({t: t+=4, level:'INFO', cat:'lifecycle', comp:'server.traffic_middleware', evt:'GET /health', status:200, dur:61, req:'babd60a9'});
+  logs.push({t: t+=5, level:'INFO', cat:'lifecycle', comp:'server.traffic_middleware', evt:'GET /health', status:200, dur:96, req:'be92a113'});
+  logs.push({t: t+=1, level:'WARNING', cat:'auth', comp:'server.auth', evt:'token_near_expiry', uid:'8a3921f'});
+  logs.push({t: t+=4, level:'INFO', cat:'lifecycle', comp:'server.traffic_middleware', evt:'GET /api/logs/stats', status:200, dur:1222, req:'a59b692d'});
+  logs.push({t: t+=4, level:'INFO', cat:'lifecycle', comp:'server.traffic_middleware', evt:'GET /health', status:200, dur:81, req:'15507d79'});
+  logs.push({t: t+=5, level:'INFO', cat:'lifecycle', comp:'server.traffic_middleware', evt:'GET /health', status:200, dur:80, req:'6f0547df'});
+  logs.push({t: t+=1, level:'ERROR', cat:'resolve', comp:'core.resolver', evt:'stream_url_timeout', video_id:'9fKz2plQ'});
+  logs.push({t: t+=4, level:'INFO', cat:'lifecycle', comp:'server.traffic_middleware', evt:'GET /api/logs/stats', status:200, dur:1283, req:'f58f1095'});
+  logs.push({t: t+=4, level:'INFO', cat:'lifecycle', comp:'server.traffic_middleware', evt:'GET /health', status:502, dur:240, req:'f1f6db20'});
+  logs.push({t: t+=1, level:'INFO', cat:'session', comp:'server.ws', evt:'client_connected', ip:'192.168.1.22'});
+  logs.push({t: t+=4, level:'INFO', cat:'lifecycle', comp:'server.traffic_middleware', evt:'GET /health', status:200, dur:60, req:'3a8ed9e9'});
+  logs.push({t: t+=5, level:'INFO', cat:'lifecycle', comp:'server.traffic_middleware', evt:'GET /api/logs/stats', status:200, dur:1267, req:'00e48776'});
+  return logs.map(l => ({...l, time: fmt(l.t)}));
+}
+const SAMPLE = buildSample();
+
+function metaHtml(l) {
+  const parts = [];
+  if (l.status !== undefined) parts.push(`<span class="${l.status < 400 ? 'ok' : 'err'}">${l.status}</span>`);
+  if (l.dur !== undefined) parts.push(`${l.dur}ms`);
+  if (l.req) parts.push(l.req);
+  if (l.video_id) parts.push(`video=${l.video_id}`);
+  if (l.uid) parts.push(`uid=${l.uid}`);
+  if (l.ip) parts.push(`ip=${l.ip}`);
+  return parts.join('  ·  ');
+}
+
+function rowHtml(l, indented) {
+  return `<div class="row lvl-${l.level}">
+    <div class="catbar c-${l.cat}"></div>
+    <div class="time">${l.time}</div>
+    <div class="badges"><span class="cat-pill">${l.cat}</span></div>
+    <div class="msg"><span class="comp">${l.comp}</span><span class="evt">${l.evt}</span></div>
+    <div class="meta">${metaHtml(l)}</div>
+    <button class="copy" title="Salin"><svg class="icon" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button>
+  </div>`;
+}
+
+function groupHtml(sig, items) {
+  const first = items[0], last = items[items.length-1];
+  const statuses = [...new Set(items.map(i => i.status).filter(x => x !== undefined))];
+  const avgDur = items.some(i=>i.dur!==undefined) ? Math.round(items.reduce((a,i)=>a+(i.dur||0),0)/items.length) : null;
+  const anyErr = statuses.some(s => s >= 400);
+  const meta = [
+    statuses.length ? `<span class="${anyErr ? 'err' : 'ok'}">${statuses.join('/')}</span>` : '',
+    avgDur !== null ? `avg ${avgDur}ms` : ''
+  ].filter(Boolean).join('  ·  ');
+
+  const children = items.map(i => `<div class="row lvl-${i.level}" style="border-bottom:1px solid var(--border-1);">
+      <div class="catbar c-${i.cat}"></div><div class="time">${i.time}</div>
+      <div class="badges"><span class="cat-pill">${i.cat}</span></div>
+      <div class="msg"><span class="comp">${i.comp}</span><span class="evt">${i.evt}</span></div>
+      <div class="meta">${metaHtml(i)}</div>
+      <button class="copy" title="Salin"><svg class="icon" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button>
+    </div>`).join('');
+
+  return `<div class="grp lvl-${first.level}" data-open="0">
+    <div class="catbar c-${first.cat}"></div>
+    <div class="time">${first.time}–${last.time}</div>
+    <div class="badges"><span class="cat-pill">${first.cat}</span></div>
+    <div class="msg"><span class="comp">${first.comp}</span><span class="evt">${first.evt}</span><span class="count-badge">×${items.length}</span></div>
+    <div class="meta">${meta}</div>
+    <svg class="icon chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+  </div><div class="grp-children">${children}</div>`;
+}
+
+function render(grouped) {
+  const el = document.getElementById('logScroll');
+  if (!grouped) {
+    el.innerHTML = SAMPLE.map(l => rowHtml(l)).join('');
+    return;
+  }
+  // Kelompokkan baris BERTURUTAN dengan signature identik (level+cat+comp+evt)
+  const groups = [];
+  for (const l of SAMPLE) {
+    const sig = l.level + '|' + l.cat + '|' + l.comp + '|' + l.evt;
+    const lastGrp = groups[groups.length - 1];
+    if (lastGrp && lastGrp.sig === sig) {
+      lastGrp.items.push(l);
+    } else {
+      groups.push({ sig, items: [l] });
+    }
+  }
+  el.innerHTML = groups.map(g => g.items.length > 1 ? groupHtml(g.sig, g.items) : rowHtml(g.items[0])).join('');
+
+  el.querySelectorAll('.grp').forEach(g => {
+    g.addEventListener('click', () => g.classList.toggle('open'));
+  });
+}
+
+const toggle = document.getElementById('grpToggle');
+toggle.addEventListener('change', () => render(toggle.checked));
+render(true);
+</script>
+</body>
+</html>

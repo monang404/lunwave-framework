@@ -1,0 +1,61 @@
+/* ══ QUICK SEARCH DISCOVER (T-A6) ══
+   Styling untuk .discover-search-wrap (search bar + filter row) di
+   #tab-discover. .filter-bar/.segmented/.custom-dropdown DI-REUSE apa
+   adanya dari discover-cards.css -- tidak ada style baru untuk itu di
+   sini. Search bar sendiri mirror .search-wrap/#search-input di
+   search.css supaya konsisten dengan tab Search, disesuaikan dengan
+   spacing token --s* project-wide. Tanpa breakpoint baru -- responsif
+   lewat flex-wrap yang sudah ada di .filter-bar. */
+
+.discover-search-wrap {
+    padding: 0 var(--s5);
+    flex-shrink: 0;
+}
+
+.discover-search-input-row {
+    margin: var(--s2) 0 var(--s3);
+    display: flex;
+    align-items: center;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-2);
+    border-radius: 14px;
+    padding: 0 var(--s4);
+    gap: var(--s2);
+    transition: border-color var(--dur-fast) var(--ease);
+}
+
+.discover-search-input-row:focus-within {
+    border-color: var(--border-3);
+}
+
+.discover-search-input-row > i {
+    color: var(--text-3);
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+#discover-search-input {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--text-1);
+    font-size: var(--t-md);
+    font-family: var(--font);
+    padding: 13px 0;
+    caret-color: var(--accent);
+}
+
+#discover-search-input::placeholder {
+    color: var(--text-3);
+}
+
+/* Filter row (.discover-search-filter-row) sudah pakai class .filter-bar
+   apa adanya (sticky, backdrop-blur, dst) -- cukup lepas margin negatif
+   -var(--s5) horizontal supaya rata dengan sisi kiri/kanan container
+   sebagaimana .filter-bar lain di tab ini, karena wrap induknya kini
+   punya padding sendiri (beda dari #discover-filter-bar yang duduk
+   langsung di root #tab-discover tanpa wrapper). */
+.discover-search-filter-row {
+    margin: 0 calc(var(--s5) * -1);
+}

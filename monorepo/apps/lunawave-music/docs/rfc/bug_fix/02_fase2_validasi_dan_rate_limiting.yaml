@@ -1,0 +1,338 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 02 — Fase 2: IDOR chat, rate limiting chat, validasi ganda sleep timer
+# (proposal §3.1, §3.2, §3.5 — semua Prioritas Tinggi)
+# Depends on: TIDAK ADA (independen dari file 01)
+# Risiko: SEDANG (menyentuh boundary otorisasi chat) | Effort: SEDANG
+# =============================================================================
+
+phase:
+  id: P02
+  title: "IDOR chat (client_uid binding), rate limit chat terpisah, sleep timer validasi ganda"
+  proposal_ref: ["§3.1", "§3.2", "§3.5"]
+  closes_temuan: [1, 2, 6]
+  depends_on: []
+  scope_locked: >
+    Validasi ganda (edge + handler) HANYA diterapkan pada
+    CMD_SET_SLEEP_TIMER. Command lain TIDAK disentuh -- lihat keputusan d2
+    di 00_index_and_decisions.yaml.
+
+tasks:
+  # ---------------------------------------------------------------------
+  - task_id: P02-T1
+    title: "bind_client_uid() di ConnectionManager -- ikat client_uid ke koneksi sekali"
+    proposal_ref: "§3.1"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - server/connection_manager.py
+      create:
+        - tests/unit/server/test_connection_manager_bind_uid.py
+    steps:
+      - >
+        `view` server/connection_manager.py, konfirmasi struktur
+        `self.client_uids: dict = {}` (sekitar baris 63 saat audit --
+        VERIFIKASI ULANG).
+      - >
+        Tambah method baru `def bind_client_uid(self, ws, client_uid:
+        str) -> None:` di class ConnectionManager. Logika: kalau
+        `self.client_uids.get(ws)` sudah ada DAN berbeda dari
+        `client_uid` yang baru -- lempar `PermissionError("client_uid
+        koneksi ini sudah terikat")`. Kalau belum ada, atau sama persis
+        dengan yang sudah ter-bind -- set/pertahankan
+        `self.client_uids[ws] = client_uid` seperti biasa (idempotent
+        untuk uid yang sama).
+      - >
+        JANGAN ubah method existing `disconnect()` yang sudah membersihkan
+        `self.client_uids.pop(ws, None)` -- perilaku cleanup saat koneksi
+        putus tetap sama.
+      - >
+        Test: (a) bind_client_uid(ws, "uid-A") lalu bind_client_uid(ws,
+        "uid-A") lagi -- tidak error (idempotent). (b) bind_client_uid(ws,
+        "uid-A") lalu bind_client_uid(ws, "uid-B") pada ws yang SAMA --
+        harus raise PermissionError, dan client_uids[ws] TETAP "uid-A"
+        (tidak berubah ke uid-B). (c) dua ws berbeda masing-masing
+        bind_client_uid dengan uid berbeda -- tidak saling mengganggu.
+    acceptance_criteria:
+      - "bind_client_uid menolak mengganti client_uid yang sudah ter-bind ke koneksi yang sama dengan uid berbeda."
+      - "Tidak ada regresi pada disconnect()/cleanup existing (test existing test_connection_manager.py tetap hijau)."
+    tests:
+      run:
+        - "pytest tests/unit/server/test_connection_manager_bind_uid.py -q"
+        - "pytest tests/unit/server/test_connection_manager.py -q"
+
+  # ---------------------------------------------------------------------
+  - task_id: P02-T2
+    title: "ws_chat.py: non-admin tidak lagi menentukan target_uid dari payload"
+    proposal_ref: "§3.1"
+    depends_on: [P02-T1]
+    touches_locked_files: false
+    files:
+      modify:
+        - server/handlers/ws_chat.py
+      create:
+        - tests/unit/server/handlers/test_ws_chat_idor.py
+    steps:
+      - >
+        `view` server/handlers/ws_chat.py fungsi `handle_chat_command`
+        (baris 47-115 area, VERIFIKASI ULANG). Baris kunci saat ini:
+        `client_uid = (data.get("client_uid") or "").strip()[:80] or None`
+        lalu `if client_uid: manager.client_uids[ws] = client_uid`
+        (assignment langsung, tanpa proteksi).
+      - >
+        Ganti assignment langsung `manager.client_uids[ws] = client_uid`
+        menjadi pemanggilan `manager.bind_client_uid(ws, client_uid)`
+        (dari P02-T1), dibungkus try/except PermissionError -- kalau
+        PermissionError terlempar (percobaan klaim uid berbeda di
+        koneksi yang sudah ter-bind), kirim pesan error WS ("Sesi chat
+        tidak valid.") dan `return` (jangan lanjut proses command sama
+        sekali).
+      - >
+        Di blok `get_chat_history`: UBAH baris
+        `target_uid = client_uid` (untuk kasus non-admin) menjadi
+        `target_uid = manager.client_uids.get(ws)` -- non-admin TIDAK
+        LAGI memakai `client_uid` lokal hasil parsing payload untuk
+        menentukan thread yang dibaca, melainkan HANYA nilai yang sudah
+        ter-bind ke koneksi ini di ConnectionManager. Blok `is_admin`
+        (yang membaca `data.get("target_uid")` bebas) TIDAK berubah.
+      - >
+        Di blok `send_chat`: UBAH baris yang sama
+        (`target_uid_send = client_uid` untuk non-admin) dengan pola
+        identik -- `target_uid_send = manager.client_uids.get(ws)`.
+        Blok `is_admin` TIDAK berubah.
+      - >
+        Test IDOR utama: koneksi WS A mengirim command chat dengan
+        `client_uid: "uid-A"` (bind sukses). Koneksi WS B (BEDA objek ws,
+        simulasikan client berbeda) mengirim `get_chat_history` dengan
+        `client_uid: "uid-A"` (mencoba klaim uid milik A) -- assert B
+        MENERIMA error/thread kosong yang TERIKAT KE KONEKSI B (uid-B
+        yang di-bind B sendiri, BUKAN riwayat chat milik A), TIDAK
+        pernah melihat pesan milik A.
+      - >
+        Test kedua: koneksi WS A mengirim `send_chat` dengan payload
+        `client_uid` yang DIUBAH jadi "uid-lain" di request kedua
+        (setelah sebelumnya bind ke "uid-A") -- assert pesan TIDAK
+        tersimpan ke thread "uid-lain" (baik ditolak keseluruhan lewat
+        PermissionError, atau tetap dianggap "uid-A" -- pilih salah satu
+        sesuai implementasi bind_client_uid, lalu assert konsisten).
+      - >
+        Test regresi: admin dengan `target_uid` eksplisit di payload
+        TETAP bisa membaca/membalas thread client mana pun (perilaku
+        admin tidak boleh berubah).
+    acceptance_criteria:
+      - "Non-admin TIDAK BISA membaca atau mengirim pesan ke thread client_uid lain hanya dengan mengirim client_uid tersebut di payload -- satu-satunya sumber kebenaran adalah binding koneksi."
+      - "Perilaku admin (bebas memilih target_uid) tidak berubah sama sekali -- test admin existing tetap hijau."
+      - "Koneksi yang mengirim client_uid berbeda dari yang sudah ter-bind ditolak dengan pesan error, bukan silent-override."
+    tests:
+      run:
+        - "pytest tests/unit/server/handlers/test_ws_chat_idor.py -q"
+        - "pytest tests/unit/server/handlers -q -k chat"
+        - "pytest tests/frontend/ws/message-handlers/chat-messages.test.js"
+    patchlog:
+      type: security_fix
+      area: "server/handlers, server/connection_manager"
+      title: "IDOR chat: client_uid diikat ke koneksi, tidak lagi dipercaya mentah dari payload"
+      reason: >
+        Pengguna yang mengetahui/menebak client_uid milik orang lain bisa
+        membaca atau mengirim pesan pada thread chat pengguna tersebut,
+        karena client_uid dibaca langsung dari payload tanpa verifikasi
+        kepemilikan.
+      root_cause: >
+        client_uid berfungsi ganda sebagai identifier DAN credential --
+        tidak ada langkah yang mengikatnya ke koneksi/sesi tertentu di
+        sisi server, sehingga bisa dipalsukan bebas oleh client mana pun.
+      solution: >
+        ConnectionManager.bind_client_uid() mengikat client_uid ke
+        koneksi WS sekali (di pesan pertama), menolak percobaan klaim
+        ulang dengan uid berbeda pada koneksi yang sama. Non-admin di
+        ws_chat.py tidak lagi membaca target_uid dari payload sama
+        sekali -- hanya dari binding yang dikelola server.
+      files: "server/connection_manager.py, server/handlers/ws_chat.py, tests/unit/server/test_connection_manager_bind_uid.py, tests/unit/server/handlers/test_ws_chat_idor.py"
+      notes: "Tidak menyentuh file locked."
+
+  # ---------------------------------------------------------------------
+  - task_id: P02-T3
+    title: "check_chat_rate_limit(): kuota chat terpisah, dikunci per client_uid"
+    proposal_ref: "§3.2"
+    depends_on: [P02-T2]
+    touches_locked_files: true
+    locked_file_justification: >
+      Menambah 1 pemanggilan fungsi baru di dalam blok `elif action in
+      CHAT_CMDS:` yang sudah ada di handle_ws_message()
+      (server/handlers/websocket.py), sebelum handle_chat_command()
+      dipanggil. Tidak mengubah struktur file.
+    files:
+      modify:
+        - server/middleware/__init__.py
+        - server/connection_manager.py
+        - server/handlers/websocket.py
+      create:
+        - tests/unit/server/test_chat_rate_limit.py
+    steps:
+      - >
+        Di `server/connection_manager.py`, tambah atribut baru di
+        `__init__`: `self.chat_history: dict = {}` (pola identik dengan
+        `self.command_history` yang sudah ada untuk rate limit umum).
+      - >
+        Di `server/middleware/__init__.py`, tambah fungsi baru
+        `async def check_chat_rate_limit(manager, key: str, now: float,
+        limit: int = 10) -> bool:` dengan struktur IDENTIK
+        `check_rate_limit()` yang sudah ada (deque sliding-window 60
+        detik), tapi baca/tulis ke `manager.chat_history` (bukan
+        `manager.command_history`) dan gunakan parameter `limit` (default
+        10) alih-alih hardcode 30. Tambahkan docstring menjelaskan kuota
+        ini terpisah dari kuota command umum dan dikunci per
+        client_uid/client_ip (lihat pemanggil di ws_chat/websocket.py
+        untuk kenapa).
+      - >
+        `view` server/handlers/websocket.py bagian
+        `elif action == "send_chat"` atau blok dispatch `CHAT_CMDS`
+        (VERIFIKASI ULANG lokasi persis -- kemungkinan di dalam
+        percabangan `elif action in CHAT_CMDS:` yang memanggil
+        `handle_chat_command`). SEBELUM memanggil handle_chat_command
+        untuk action == "send_chat" SAJA (BUKAN get_chat_history --
+        membaca riwayat tidak perlu rate limit sekuat mengirim pesan),
+        tambahkan pengecekan:
+        `chat_key = manager.client_uids.get(ws) or client_ip` lalu
+        `if not await check_chat_rate_limit(manager, chat_key, now):`
+        kirim error ("Terlalu banyak pesan chat. Mohon tunggu sesaat.")
+        dan `return`/`continue` (jangan lanjut ke handle_chat_command).
+      - >
+        JANGAN hapus atau ubah pemanggilan `check_rate_limit()` (kuota
+        command umum 30/menit per IP) yang sudah ada -- ini murni
+        LAPISAN TAMBAHAN, bukan pengganti. Chat tetap kena kuota umum
+        DAN kuota khusus chat.
+      - >
+        Test: kirim 11 `send_chat` berturut-turut dalam <60 detik
+        (simulasi `now` yang sama/dekat) dari client_uid yang sama --
+        assert pesan ke-11 ditolak kuota chat meskipun kuota command
+        umum (30/menit) belum habis. Test kedua: dua client_uid BERBEDA
+        di balik `client_ip` yang SAMA (simulasi reverse proxy) --
+        assert kuota TIDAK saling mengganggu antara dua client_uid
+        (masing-masing dapat kuota 10 sendiri, bukan berbagi 10 karena
+        IP sama) -- ini bukti langsung perbaikan self-DoS yang disebut
+        proposal §3.2. Test ketiga: `get_chat_history` TIDAK terkena
+        rate limit chat (hanya send_chat).
+    acceptance_criteria:
+      - "Chat spam terkena limit terpisah (10/menit default) dari command umum, dikunci per client_uid bukan per IP."
+      - "Dua client_uid berbeda di balik IP yang sama tidak saling menghabiskan kuota chat masing-masing."
+      - "Kuota command umum (check_rate_limit existing, 30/menit per IP) tetap berjalan tanpa perubahan sebagai lapisan kedua."
+    tests:
+      run:
+        - "pytest tests/unit/server/test_chat_rate_limit.py -q"
+        - "pytest tests/unit/server/test_middleware.py -q"
+        - "pytest tests/unit/server/handlers -q -k chat"
+    patchlog:
+      type: security_fix
+      area: "server/middleware, server/connection_manager, server/handlers"
+      title: "Rate limit chat terpisah, dikunci per client_uid"
+      reason: >
+        Chat berbagi kuota rate limit dengan semua command WS lain (30
+        per menit per IP) -- di belakang reverse proxy (direkomendasikan
+        di README), banyak pengguna berbeda terlihat 1 IP sehingga bisa
+        saling menghabiskan kuota chat satu sama lain (self-DoS).
+      root_cause: >
+        check_rate_limit() satu-satunya rate limiter WS, dikunci per
+        client_ip dan dipakai rata untuk semua jenis command tanpa
+        membedakan chat dari playback/queue/dll.
+      solution: >
+        check_chat_rate_limit() baru, kuota terpisah (10/menit default),
+        dikunci per client_uid (fallback ke client_ip untuk koneksi
+        anonim, lihat keputusan d4) -- ditambahkan sebagai lapisan kedua
+        di atas kuota command umum yang sudah ada, bukan pengganti.
+      files: "server/middleware/__init__.py, server/connection_manager.py, server/handlers/websocket.py, tests/unit/server/test_chat_rate_limit.py"
+      notes: >
+        Menyentuh file locked server/handlers/websocket.py -- otorisasi
+        tercatat di 00_index_and_decisions.yaml. Perubahan murni 1
+        pengecekan tambahan di blok dispatch chat yang sudah ada.
+
+  # ---------------------------------------------------------------------
+  - task_id: P02-T4
+    title: "SleepTimer.set_timer(): validasi & clamp di handler, bukan cuma di edge WS"
+    proposal_ref: "§3.5"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - engine/sleep_timer.py
+      create:
+        - tests/unit/engine/test_sleep_timer_validation.py
+    steps:
+      - >
+        `view` engine/sleep_timer.py, konfirmasi signature
+        `async def set_timer(self, minutes: int):` dan baris
+        `if minutes <= 0:` (sekitar baris 34-40 saat audit -- VERIFIKASI
+        ULANG).
+      - >
+        Ubah type hint parameter dari `minutes: int` menjadi `minutes`
+        (tanpa hint ketat, karena sekarang menerima input tak terpercaya
+        yang mungkin bukan int). Di awal method, tambah:
+        ```
+        try:
+            minutes = int(minutes)
+        except (TypeError, ValueError):
+            minutes = 0
+        minutes = max(0, min(1440, minutes))
+        ```
+        SEBELUM baris `if minutes <= 0:` yang sudah ada. Batas 1440
+        (24 jam) dipilih AGAR KONSISTEN dengan batas yang sudah dipakai
+        `SetSleepTimerPayload` di server/handlers/ws_schemas.py (VERIFIKASI
+        ULANG angka batas di file itu sebelum menyalin -- kalau berbeda,
+        pakai angka yang sudah ada di ws_schemas.py sebagai acuan, JANGAN
+        buat batas baru yang berbeda).
+      - >
+        JANGAN ubah logic di bawahnya (`_wait_and_stop`, publish
+        LogMessageEvent, dll.) -- perubahan HANYA di validasi input di
+        awal `set_timer()`.
+      - >
+        Test: `set_timer("abc")` tidak melempar TypeError, melainkan
+        diperlakukan sebagai 0 (timer dimatikan, sesuai perilaku
+        `minutes <= 0` yang sudah ada). `set_timer(None)` sama.
+        `set_timer(99999)` di-clamp ke 1440. `set_timer(-5)` di-clamp ke
+        0 (dimatikan). `set_timer(30)` tetap berjalan normal seperti
+        sebelumnya (regresi check).
+      - >
+        Test tambahan yang membuktikan perbaikan nyata: panggil
+        `command_bus.execute(CMD_SET_SLEEP_TIMER, {"minutes": "invalid"})`
+        LANGSUNG (mem-bypass ws_schemas.py sepenuhnya, mensimulasikan
+        pemanggil masa depan yang tidak lewat WS) -- assert TIDAK ada
+        TypeError tak tertangani, command selesai dengan aman (timer
+        dianggap 0/off).
+    acceptance_criteria:
+      - "set_timer() tidak pernah melempar TypeError untuk input non-numerik apa pun -- selalu fallback ke 0 (timer off)."
+      - "Rentang 0-1440 (atau angka yang sama dengan ws_schemas.py) ditegakkan di dalam set_timer() itu sendiri, tidak bergantung pada pemanggil sudah memvalidasi lebih dulu."
+      - "Jalur existing lewat WS (ws_schemas.py -> SetSleepTimerPayload -> set_timer) tidak berubah perilaku untuk input valid."
+    tests:
+      run:
+        - "pytest tests/unit/engine/test_sleep_timer_validation.py -q"
+        - "pytest tests/unit/engine/test_sleep_timer.py -q"
+    patchlog:
+      type: bug_fix
+      area: "engine"
+      title: "Sleep timer: validasi & clamp input di handler, bukan hanya di edge WS"
+      reason: >
+        Command CMD_SET_SLEEP_TIMER hanya divalidasi di
+        server/handlers/ws_schemas.py (edge WS) -- pemanggil lain yang
+        memakai command_bus.execute() langsung (mis. automation, plugin,
+        endpoint baru di masa depan) akan memicu TypeError tak tertangani
+        di `minutes <= 0` kalau minutes bukan tipe numerik.
+      root_cause: >
+        Validasi hidup hanya di parser WS, bukan di titik pemakaian data
+        (SleepTimer.set_timer itu sendiri) -- pola yang sama dengan
+        akar masalah IDOR chat di P02-T2 (mempercayakan kebenaran data
+        ke lapisan yang jauh dari titik pemakaian).
+      solution: >
+        set_timer() sekarang memvalidasi & clamp input sendiri (cast int
+        dengan fallback 0, clamp ke rentang yang sama dipakai
+        ws_schemas.py) -- aman dipanggil dari jalur mana pun, ws_schemas.py
+        tetap dipertahankan sebagai validasi cepat-gagal dengan pesan
+        ramah di edge.
+      files: "engine/sleep_timer.py, tests/unit/engine/test_sleep_timer_validation.py"
+      notes: "Tidak menyentuh file locked."
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/generate_file_index.py"
+  - "python automation/generate_report.py"

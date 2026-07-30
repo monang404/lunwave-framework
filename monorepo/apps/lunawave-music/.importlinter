@@ -1,0 +1,126 @@
+[importlinter]
+include_external_packages = True
+root_packages =
+    core
+    music
+    adapters
+    engine
+    persistence
+    server
+    services
+    plugins
+    launcher
+    automation
+    data
+
+[importlinter:contract:core-is-isolated]
+name = core tidak boleh import lapisan lain
+type = forbidden
+source_modules = core
+forbidden_modules =
+    adapters
+    engine
+    server
+    persistence
+    services
+    plugins
+    launcher
+
+[importlinter:contract:music-domain-is-isolated]
+name = music (domain vocabulary) tidak boleh import lapisan lain -- ports/events/commands/exceptions/state di sini murni definisi tipe, bukan logic
+type = forbidden
+source_modules = music
+forbidden_modules =
+    adapters
+    engine
+    server
+    persistence
+    services
+    plugins
+    launcher
+
+[importlinter:contract:adapters-only-import-core]
+name = adapters hanya boleh import core
+type = forbidden
+source_modules = adapters
+forbidden_modules =
+    engine
+    server
+    persistence
+    services
+
+[importlinter:contract:persistence-only-import-core]
+name = persistence hanya boleh import core
+type = forbidden
+source_modules = persistence
+forbidden_modules =
+    adapters
+    engine
+    server
+    services
+
+[importlinter:contract:plugins-only-import-core]
+name = plugins hanya boleh import core
+type = forbidden
+source_modules = plugins
+forbidden_modules =
+    server
+    launcher
+
+[importlinter:contract:engine-no-server-import]
+name = engine tidak boleh import server (arah dependency harus server -> engine)
+type = forbidden
+source_modules = engine
+forbidden_modules = server
+
+[importlinter:contract:services-only-import-core-and-persistence]
+name = services hanya boleh import core dan persistence
+type = forbidden
+source_modules = services
+forbidden_modules =
+    adapters
+    engine
+    server
+    launcher
+
+[importlinter:contract:launcher-no-server-import]
+name = launcher tidak boleh import server (launcher menjalankan proses, bukan sebaliknya)
+type = forbidden
+source_modules = launcher
+forbidden_modules =
+    server
+    engine
+    services
+
+[importlinter:contract:automation-is-isolated]
+name = automation tidak boleh diimpor package lain
+type = forbidden
+source_modules =
+    core
+    music
+    adapters
+    engine
+    persistence
+    server
+    services
+    plugins
+    launcher
+    data
+forbidden_modules =
+    automation
+
+[importlinter:contract:data-only-imported-by-automation]
+name = data hanya boleh diimpor oleh automation (dan tests, di luar cakupan root_packages)
+type = forbidden
+source_modules =
+    core
+    music
+    adapters
+    engine
+    persistence
+    server
+    services
+    plugins
+    launcher
+forbidden_modules =
+    data

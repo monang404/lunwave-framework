@@ -1,0 +1,51 @@
+# 05_sesi5_render_events.yaml
+# Sesi 5 — BUKAN task eksekusi. Ini dokumentasi keputusan yang di-block
+# sampai ada RFC tertulis dan approval eksplisit dari user/product owner.
+# Jangan jalankan task apa pun di file ini tanpa approval eksplisit di luar
+# konteks task-breakdown ini.
+
+session: 5
+status: BLOCKED
+executable: false
+
+ruang_lingkup_setelah_investigasi_sesi_4: >
+  Scope aslinya (dokumen rencana) cuma render<->events cross-import (20
+  warning: 5 no-render-imports-events + 15 no-events-imports-render, atau
+  4+14 setelah fix sesi 2). Investigasi sesi 4 menemukan bahwa 65 dari 67
+  circular-dependencies warning berakar pada masalah STRUKTURAL YANG SAMA
+  (ws.js dan audio/playback-sync.js memanggil langsung fungsi render,
+  bukan lewat event). Karena itu keputusan RFC di sesi ini SEBAIKNYA
+  mencakup ketiganya sekaligus (render<->events, ws.js hub, playback-sync
+  hub) sebagai satu proyek arsitektur — bukan diputuskan terpisah-pisah,
+  supaya solusinya (event bus) tidak dibangun 2x dengan desain berbeda.
+
+data_konteks_untuk_rfc:
+  no_render_imports_events: 4
+  no_events_imports_render: 14
+  circular_dependencies_terkait: 65
+  total_warning_yang_perlu_keputusan_arsitektur: 83
+  sumber_data: "npx depcruise -T json setelah sesi 2 selesai (lihat 04_sesi4_circular_deps.yaml > data_mentah_edge_list_67 untuk breakdown)"
+  hub_node_utama: ["ws.js", "events/index.js", "audio/playback-sync.js", "render/search.js", "render/full-state.js", "events/settings-events.js"]
+
+larangan_eksplisit:
+  - "Jangan tambal pakai dynamic import untuk akal-akalan lolos linter — itu menyembunyikan masalah, sudah ditegaskan sejak dokumen rencana asli."
+  - "Jangan eksekusi apa pun di sini tanpa RFC tertulis dan approval eksplisit dari user, terpisah dari proses task-breakdown otomatis ini."
+
+jika_disetujui_kerangka_solusi_direkomendasikan:
+  nama_modul_baru: "web/static/shared/js/bus.js"
+  spesifikasi_minimal: >
+    Modul kecil tanpa dependency (~30 baris): export on(event, handler),
+    off(event, handler), emit(event, payload). Implementasi berbasis
+    Map<string, Set<function>> di module scope, tidak perlu EventTarget/DOM
+    API supaya bisa dipakai juga di test environment tanpa DOM.
+  prinsip_migrasi:
+    - "Modul 'bawah' (audio/playback-sync.js, ws.js) TIDAK BOLEH lagi import langsung fungsi render/*. Ganti dengan bus.emit('nama-event', payload) di titik yang sama."
+    - "Modul render/* subscribe lewat bus.on('nama-event', handler) saat init (dipanggil dari bootstrap app, bukan saat modul di-import, supaya urutan tidak bergantung pada urutan import)."
+    - "Arah sebaliknya (render/events memanggil fungsi kontrol di ws.js/playback-sync, mis. wsSend, getOrInitAudio) BOLEH TETAP jadi import langsung — itu bukan sumber masalah, hanya arah 'render -> ws.js/playback-sync untuk MEMERINTAH' yang legitimate; yang bermasalah adalah 'ws.js/playback-sync -> render untuk MERENDER'."
+    - "Migrasi bertahap per hub, urutan disarankan: (1) audio/playback-sync.js (11 edge, paling kecil), (2) ws.js (17 edge), (3) events/index.js (15 edge), (4) sisa hub sekunder. Regenerate depcruise setelah TIAP hub, bukan sekali di akhir."
+  estimasi: "proyek arsitektur multi-sesi, bukan 1 sesi — perlu RFC terpisah untuk breakdown detail per hub"
+
+prasyarat_sebelum_jadi_sesi_eksekusi_nyata:
+  - "RFC tertulis yang mencakup ketiga sumber warning (render<->events, ws.js, playback-sync) sebagai satu keputusan"
+  - "Approval eksplisit dari user/product owner"
+  - "Baru setelah itu, buat task_breakdown.yaml baru per hub (mirip format 04_sesi4_circular_deps.yaml) dengan detail migrasi per file"

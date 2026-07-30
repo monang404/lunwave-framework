@@ -1,0 +1,16 @@
+/* ══ LunaWave utilities.css ══
+   PATCH-UI-PERF-01: small set of utility classes replacing static inline
+   `style="..."` attributes in index.html that never change at runtime
+   (pure layout, no JS toggling). Keeps the same visual result while
+   moving presentation back into the stylesheet layer -- easier to theme,
+   grep, and reuse than one-off inline styles.
+   Intentionally NOT used for JS-toggled visibility (e.g. elements whose
+   `style.display` is flipped at runtime) -- those are left as-is since
+   swapping them needs to be verified against the exact JS that drives
+   them, not just a visual read of the markup. */
+
+.u-w-full { width: 100%; }
+.u-text-center { text-align: center; }
+.u-mt-10 { margin-top: 10px; }
+.u-no-decoration { text-decoration: none; }
+.u-flex-center-8 { display: flex; align-items: center; gap: 8px; }

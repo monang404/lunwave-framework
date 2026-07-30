@@ -1,0 +1,67 @@
+/* ══ LunaWave animations.css ══ */
+
+@keyframes fm-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes transmit-radio {
+    0% { transform: scale(1); opacity: 0.8; }
+    100% { transform: scale(2); opacity: 0; }
+}
+
+/* Skeleton Loading */
+@keyframes skeleton-shimmer {
+    0% { background-position: -200px 0; }
+    100% { background-position: calc(200px + 100%) 0; }
+}
+
+.skeleton-box {
+    background: var(--surface-2);
+    background-image: linear-gradient(90deg, var(--surface-2) 0px, var(--surface-3) 40px, var(--surface-2) 80px);
+    background-size: 200px 100%;
+    background-repeat: no-repeat;
+    animation: skeleton-shimmer 1.5s infinite linear;
+    border-radius: 4px;
+}
+
+@keyframes lyric-pop {
+  0% { transform: scale(0.95); opacity: 0.5; }
+  50% { transform: scale(1.05); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes eq-bounce {
+  0%   { transform: scaleY(0.3); transform-origin: bottom; }
+  100% { transform: scaleY(1);   transform-origin: bottom; }
+}
+
+@keyframes idle-text-fade {
+  0%   { opacity: 0; transform: translateY(30px) scale(0.95); }
+  10%  { opacity: 1; transform: translateY(0) scale(1); }
+  25%  { opacity: 1; transform: translateY(0) scale(1.02); }
+  33%  { opacity: 0; transform: translateY(-30px) scale(1.05); }
+  100% { opacity: 0; transform: translateY(-30px) scale(1.05); }
+}
+
+@keyframes ambientDrift {
+  0% { transform: translate(-8px, -4px) scale(1.1); }
+  50% { transform: translate(8px, 4px) scale(1.15); }
+  100% { transform: translate(-4px, 8px) scale(1.1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .skeleton-box {
+    animation: none !important;
+    background-image: none !important;
+    background: var(--surface-3) !important;
+  }
+}

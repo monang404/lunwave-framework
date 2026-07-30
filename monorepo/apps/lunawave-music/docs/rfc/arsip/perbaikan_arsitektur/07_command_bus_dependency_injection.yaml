@@ -1,0 +1,280 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 07 — CommandBus singleton -> web.AppKey DI (Temuan A / §3.A, Fase 4)
+# Depends on: 03_handlers_context_import_cleanup.yaml (accessor get_command_bus
+# butuh context.py sudah jadi leaf module yang rapi)
+# Risiko: SEDANG-TINGGI (menyentuh banyak file sekaligus, meski mekanis)
+# Effort: SEDANG-TINGGI
+#
+# WAJIB DIEKSEKUSI SEBAGAI SESI TERSENDIRI, TERPISAH dari file 01-06,
+# dengan 1 PATCHLOG entry sendiri (governance: menyentuh file locked
+# server/handlers/websocket.py).
+#
+# CATATAN AUDIT PENTING: proposal §3.A HANYA menyebut caller di
+# ws_playback.py, ws_queue.py, ws_discovery.py, ws_download.py,
+# ws_cache.py, ws_chat.py, websocket.py, event_listeners.py, main.py,
+# bootstrap/services.py. Grep aktual terhadap `command_bus` (bukan cuma
+# `from core.command_bus import`) menemukan SCOPE BERBEDA dari klaim
+# proposal:
+#   - ws_cache.py, ws_chat.py, ws_discovery.py, event_listeners.py:
+#     TIDAK memanggil command_bus sama sekali (proposal salah sebut).
+#   - engine/command_router.py, engine/download_manager.py,
+#     engine/sleep_timer.py, plugins/notifications.py: MEMANGGIL
+#     command_bus (register()/execute()) TAPI TIDAK DISEBUT proposal
+#     sama sekali -- ini gap nyata di proposal yang HARUS masuk scope
+#     task ini, kalau tidak, migrasi jadi tidak lengkap (2 sumber
+#     kebenaran command_bus akan tetap ada: yang di-DI via AppKey untuk
+#     server/handlers/*, dan singleton lama yang masih dipakai
+#     engine/command_router.py untuk register()).
+# File scope final (hasil audit ulang, BUKAN daftar proposal):
+#   core/command_bus.py, server/app.py, server/handlers/context.py,
+#   server/handlers/websocket.py, server/handlers/ws_playback.py,
+#   server/handlers/ws_queue.py, server/handlers/ws_download.py,
+#   engine/command_router.py, engine/download_manager.py,
+#   engine/sleep_timer.py, plugins/notifications.py, main.py,
+#   bootstrap/services.py (verifikasi isi saat eksekusi -- lihat P07-T1).
+# =============================================================================
+
+phase:
+  id: P07
+  title: "CommandBus dari module-level singleton -> web.AppKey (DI)"
+  proposal_ref: "§3.A"
+  closes_temuan: [A]
+  depends_on: [03_handlers_context_import_cleanup.yaml]
+  session_isolation: >
+    WAJIB sesi terpisah dari semua file 01-06. Tidak boleh digabung
+    commit/PATCHLOG dengan task lain.
+
+tasks:
+  - task_id: P07-T1
+    title: "Audit ulang seluruh pemanggil command_bus sebelum eksekusi (wajib, bukan opsional)"
+    depends_on: []
+    touches_locked_files: false
+    files: {}
+    steps:
+      - >
+        Jalankan `grep -rln "command_bus" --include=*.py .` (exclude
+        tests/, .cache/) dan bandingkan hasilnya dengan daftar
+        "File scope final" di atas. Kode bisa saja sudah berubah sejak
+        audit sesi ini dibuat.
+      - >
+        Untuk SETIAP file yang muncul di hasil grep tapi TIDAK ada di
+        daftar scope final: investigasi apakah itu caller baru yang
+        perlu ditambah ke scope task P07-T3/T4, atau false-positive
+        (mis. muncul di docstring/komentar saja). Update daftar
+        file_to_migrate di task P07-T3 sebelum lanjut.
+      - "Jalankan juga `grep -rln \"from core.event_bus import bus\\b\" --include=*.py .` untuk konfirmasi ulang klaim §3.A poin 3 proposal (EventBus singleton module-level jarang dipakai langsung, yang dipakai runtime adalah playback_controller.bus) -- ini PENTING karena task ini HANYA memigrasi CommandBus, BUKAN EventBus (EventBus sudah instantiable dan sudah di-DI via constructor PlaybackController, tidak perlu diubah)."
+    acceptance_criteria:
+      - "Daftar file_to_migrate final (hasil audit ulang) didokumentasikan di PATCHLOG notes fase ini sebelum P07-T2 dimulai."
+    tests: {}
+
+  - task_id: P07-T2
+    title: "CommandBus jadi AppKey di server/app.py, hapus module-level instance"
+    depends_on: [P07-T1]
+    touches_locked_files: false
+    files:
+      modify:
+        - core/command_bus.py
+        - server/app.py
+        - server/handlers/context.py
+    steps:
+      - "Di core/command_bus.py: HAPUS baris `command_bus = CommandBus()` (module-level singleton). Class CommandBus itu sendiri TIDAK berubah sama sekali (implementasi register/unregister/execute identik)."
+      - "HAPUS method `reset()` dari CommandBus SEKARANG JUGA (bukan ditunda ke P07-T5) -- caranya: cek dulu semua pemanggil `.reset()` di tests/ (langkah berikutnya di task ini), pastikan semua sudah diganti instansiasi baru per test SEBELUM method dihapus, supaya tidak ada test yang patah di antara commit."
+      - "Di server/app.py: tambahkan `COMMAND_BUS: web.AppKey[CommandBus] = web.AppKey(\"command_bus\", CommandBus)` di grup AppKey yang sudah ada (baris ~49-61 saat audit -- verifikasi ulang nomor baris)."
+      - "Ubah signature `create_app(playback_controller, ytdlp, repos, ...)` untuk menerima parameter `command_bus: CommandBus` baru, lalu `app[COMMAND_BUS] = command_bus` di body function."
+      - "Di server/handlers/context.py (BUKAN __init__.py langsung -- ini yang membuat P03 jadi prasyarat): tambahkan accessor baru `def get_command_bus(request) -> CommandBus: return request.app[COMMAND_BUS]`, pola identik dengan get_state/get_manager yang sudah ada di file yang sama."
+      - "Grep seluruh tests/ untuk `.reset()` dipanggil ke command_bus -- ganti tiap pemanggilan jadi instansiasi `CommandBus()` baru di setup/fixture test tsb (biasanya di conftest.py atau setUp/fixture per test file)."
+    acceptance_criteria:
+      - "core/command_bus.py tidak lagi punya module-level `command_bus = CommandBus()` atau method `reset()`."
+      - "server/app.py punya COMMAND_BUS AppKey, create_app() menerima command_bus sebagai parameter eksplisit."
+      - "context.py punya get_command_bus() dengan pola identik get_state()/get_manager()."
+      - "Tidak ada satupun test yang masih memanggil `command_bus.reset()` (grep 0 hasil)."
+    tests:
+      run:
+        - "pytest tests/unit/core -q -k command_bus"
+        - "pytest tests/unit/server -q"
+
+  - task_id: P07-T3
+    title: "Wiring: siapa yang membuat instance CommandBus baru & meneruskannya"
+    depends_on: [P07-T2]
+    touches_locked_files: false
+    files:
+      modify:
+        - main.py
+        - bootstrap/services.py
+    steps:
+      - >
+        Cari titik di bootstrap/services.py (atau main.py, verifikasi
+        yang mana saat audit -- struktur bootstrap bisa beda dari asumsi
+        proposal) tempat `PlaybackController`, `ytdlp`, `repos` dibuat
+        sebelum dipassing ke `create_app()`. Tambahkan
+        `command_bus = CommandBus()` SATU KALI di titik itu (instance
+        tunggal untuk seluruh lifecycle app, menggantikan singleton
+        module-level lama).
+      - "Pastikan instance `command_bus` yang baru dibuat ini yang di-passing baik ke create_app(..., command_bus=command_bus) MAUPUN ke engine/command_router.py (lihat P07-T4) -- HARUS instance yang SAMA, bukan 2 instance CommandBus berbeda (kalau beda, register() di command_router.py tidak akan terlihat oleh execute() yang dipanggil dari ws_playback.py -- bug fatal kalau sampai lolos)."
+      - "Update main.py `run_server()`: pastikan command_bus instance diteruskan dengan benar sepanjang call chain sampai ke create_app()."
+    acceptance_criteria:
+      - "Hanya ADA SATU instance CommandBus yang hidup sepanjang runtime aplikasi -- verifikasi dengan test integrasi startup (P07-T6)."
+      - "main.py's deferred import `from server.app import create_app` (motif #2 / PATCHABILITY di audit P03) TIDAK diubah jadi top-level -- itu bukan scope task ini, biarkan seperti sekarang (test-patchability yang sah, bukan circular import)."
+    tests: {}
+
+  - task_id: P07-T4
+    title: "Migrasi caller command_bus singleton -> parameter/instance yang di-DI"
+    depends_on: [P07-T3]
+    touches_locked_files: true
+    locked_file_justification: >
+      server/handlers/websocket.py locked di AI_CONTEXT.md. Task ini
+      PERSIS "murni mechanical refactor" seperti dijelaskan proposal
+      §3.A: ubah singleton import jadi parameter passing, tidak
+      mengubah 1 baris pun logika command. Otorisasi tercatat di
+      00_index_and_decisions.yaml (keputusan d4).
+    files:
+      modify:
+        - server/handlers/websocket.py
+        - server/handlers/ws_playback.py
+        - server/handlers/ws_queue.py
+        - server/handlers/ws_download.py
+        - engine/command_router.py
+        - engine/download_manager.py
+        - engine/sleep_timer.py
+        - plugins/notifications.py
+    steps:
+      - >
+        Di server/handlers/websocket.py (`ws_handler()` atau fungsi
+        entrypoint WS): tambahkan SATU baris
+        `command_bus = get_command_bus(request)` (import get_command_bus
+        dari server.handlers.context), lalu teruskan `command_bus`
+        sebagai parameter ke `handle_playback_command()`,
+        `handle_queue_command()`, `handle_download_command()` (HANYA
+        3 fungsi ini yang benar-benar memanggil command_bus, berdasarkan
+        audit P07-T1 -- BUKAN 6 fungsi seperti asumsi awal proposal).
+      - >
+        Di ws_playback.py, ws_queue.py, ws_download.py: ubah signature
+        `handle_*_command(action, data, ...)` menjadi menerima parameter
+        tambahan `command_bus: CommandBus`. HAPUS import
+        `from core.command_bus import command_bus` (singleton) di
+        ketiga file ini, GANTI dengan hanya import type/CMD_* constants
+        yang masih dibutuhkan dari core.command_bus (CMD_PLAY_TRACK dkk
+        tetap diimpor karena itu konstanta, bukan instance).
+      - "Ganti SETIAP pemanggilan `command_bus.execute(...)` di 3 file ini menjadi memakai parameter `command_bus` yang di-passing, BUKAN diimpor. Tidak ada perubahan argumen/logic command apapun -- murni ganti sumber variabel."
+      - >
+        engine/command_router.py, engine/download_manager.py,
+        engine/sleep_timer.py, plugins/notifications.py: file-file ini
+        TIDAK menerima `request` (mereka bukan handler HTTP/WS), jadi
+        polanya BEDA dari 3 file di atas -- command_bus harus di-DI lewat
+        CONSTRUCTOR, bukan parameter fungsi. Ubah `__init__` masing-masing
+        class (CommandRouter, DownloadManager, SleepTimer,
+        NotificationsPlugin -- cek nama class sebenarnya saat eksekusi)
+        untuk menerima `command_bus: CommandBus` sebagai parameter
+        constructor, simpan sebagai `self._command_bus` (atau nama
+        serupa yang konsisten dengan konvensi field private di class
+        tsb), lalu ganti semua pemanggilan `command_bus.register(...)`/
+        `command_bus.execute(...)` di dalam class jadi
+        `self._command_bus.register(...)` dst.
+      - >
+        Update SEMUA titik instansiasi 4 class di atas (di
+        bootstrap/services.py atau tempat lain yang menginstansiasi
+        CommandRouter/DownloadManager/SleepTimer/NotificationsPlugin)
+        untuk meneruskan instance command_bus yang sama dari P07-T3.
+    acceptance_criteria:
+      - "grep -rn 'from core.command_bus import command_bus' --include=*.py . (exclude tests) mengembalikan 0 hasil -- tidak ada lagi import singleton langsung."
+      - "grep -rn 'core.command_bus import CommandBus' menunjukkan CommandBus (class/type) tetap diimpor di tempat yang butuh type hint -- ini SAH, bukan singleton."
+      - "Command dispatch tetap berfungsi identik: kirim play_track/queue_add/download dkk lewat test client menghasilkan behavior sama seperti sebelum migrasi."
+    tests:
+      run:
+        - "pytest tests/unit/server/handlers -q"
+        - "pytest tests/unit/engine -q -k 'command_router or download_manager or sleep_timer'"
+        - "pytest tests/unit/plugins -q -k notifications"
+        - "pytest tests/integration -q"
+
+  - task_id: P07-T5
+    title: "Update seluruh test yang bergantung pada singleton lama"
+    depends_on: [P07-T4]
+    touches_locked_files: false
+    files:
+      modify:
+        - "tests/**/*.py (semua file yang sebelumnya import command_bus singleton atau memanggil .reset())"
+    steps:
+      - "grep -rln 'from core.command_bus import command_bus\\|command_bus.reset()' tests/ untuk daftar lengkap file test yang perlu diupdate."
+      - "Ganti tiap fixture/setUp yang bergantung pada singleton global menjadi instansiasi `CommandBus()` baru per test (isolasi otomatis by construction, tidak perlu reset() manual lagi)."
+      - "Untuk test yang menguji handler WS (ws_playback, ws_queue, ws_download): update pemanggilan test agar meneruskan instance CommandBus palsu/nyata sebagai parameter, sesuai signature baru dari P07-T4."
+      - "Untuk test CommandRouter/DownloadManager/SleepTimer/NotificationsPlugin: update instansiasi test agar menyertakan command_bus di constructor sesuai P07-T4."
+    acceptance_criteria:
+      - "pytest -q (SELURUH suite, bukan subset) lulus 100% tanpa RuntimeError 'already registered' atau AttributeError terkait command_bus."
+    tests:
+      run:
+        - "pytest -q"
+
+  - task_id: P07-T6
+    title: "Test integrasi startup: pastikan hanya 1 instance CommandBus hidup"
+    depends_on: [P07-T5]
+    touches_locked_files: false
+    files:
+      create:
+        - tests/integration/test_command_bus_wiring.py
+    steps:
+      - >
+        Buat test integrasi yang menjalankan proses bootstrap (atau
+        sebagian besarnya, sesuai pola test integrasi lain di
+        tests/integration/) dan memverifikasi: command_bus yang
+        di-register oleh engine/command_router.py adalah instance yang
+        SAMA (pakai `is` identity check, bukan `==`) dengan command_bus
+        yang diakses via `get_command_bus(request)` dari handler WS.
+      - "Ini test regresi paling kritis di seluruh fase P07 -- kalau gagal, kemungkinan besar ada 2 instance CommandBus berbeda yang tidak sinkron (bug diam-diam: command teregister di satu instance tapi execute() dipanggil ke instance lain -> RuntimeError 'No handler registered')."
+    acceptance_criteria:
+      - "Test identity check (`is`) lulus -- membuktikan single source of truth CommandBus benar-benar tercapai, bukan cuma tidak error saat startup."
+    tests:
+      run:
+        - "pytest tests/integration/test_command_bus_wiring.py -q"
+        - "pytest -q"
+    patchlog:
+      type: refactor
+      area: "core, server, engine, plugins"
+      title: "CommandBus: module-level singleton -> web.AppKey dependency injection"
+      reason: >
+        CommandBus.reset() harus ada semata-mata supaya test bisa jalan
+        berulang tanpa RuntimeError 'already registered' -- tanda test
+        isolation dipaksa lewat method khusus, bukan lewat instansiasi
+        baru per test. Tidak mungkin menjalankan 2 PlaybackController
+        independen dalam 1 proses karena keduanya register command name
+        yang sama ke singleton yang sama.
+      root_cause: >
+        command_bus = CommandBus() sebagai module-level singleton,
+        di-import langsung oleh banyak caller, kontras dengan pola DI
+        yang sudah dipakai project untuk AppState/PlaybackController/
+        Repositories via web.AppKey.
+      solution: >
+        COMMAND_BUS jadi web.AppKey di server/app.py, get_command_bus()
+        accessor baru di server/handlers/context.py, seluruh caller
+        (websocket.py + 3 handler WS lewat parameter passing;
+        command_router.py/download_manager.py/sleep_timer.py/
+        notifications.py lewat constructor injection) dimigrasi dari
+        import singleton ke instance yang di-DI. reset() dihapus.
+        SCOPE FILE HASIL AUDIT ULANG LEBIH LUAS dari proposal asli --
+        proposal tidak menyebut engine/command_router.py,
+        engine/download_manager.py, engine/sleep_timer.py,
+        plugins/notifications.py padahal keempatnya memanggil
+        command_bus.register()/execute() langsung; sebaliknya proposal
+        menyebut ws_cache.py/ws_chat.py/ws_discovery.py/event_listeners.py
+        yang ternyata TIDAK memanggil command_bus sama sekali.
+      files: >
+        core/command_bus.py, server/app.py, server/handlers/context.py,
+        server/handlers/websocket.py, server/handlers/ws_playback.py,
+        server/handlers/ws_queue.py, server/handlers/ws_download.py,
+        engine/command_router.py, engine/download_manager.py,
+        engine/sleep_timer.py, plugins/notifications.py, main.py,
+        bootstrap/services.py, tests/integration/test_command_bus_wiring.py,
+        plus seluruh test file yang bergantung pada singleton lama
+        (lihat P07-T5).
+      notes: >
+        Menyentuh file locked server/handlers/websocket.py -- otorisasi
+        tercatat di 00_index_and_decisions.yaml (keputusan d4). Dieksekusi
+        sebagai sesi tersendiri, terpisah dari file 01-06.
+
+post_phase_commands:
+  - "pytest -q"
+  - "npx vitest run"
+  - "python automation/doctor.py"
+  - "python automation/generate_file_index.py"
+  - "python automation/generate_report.py"

@@ -1,0 +1,182 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 03 — Fase 3: Kriptografi (PBKDF2 iterasi) & dependency pinning (yt-dlp)
+# (proposal §4.2, §4.7 — Prioritas Menengah)
+# Depends on: TIDAK ADA
+# Risiko: SEDANG (P03-T1 mengubah format hash password, butuh migrasi
+# backward-compatible) | Effort: RENDAH-SEDANG
+# =============================================================================
+
+phase:
+  id: P03
+  title: "Naikkan iterasi PBKDF2 dengan rehash transparan, pin yt-dlp ke versi eksak"
+  proposal_ref: ["§4.2", "§4.7"]
+  closes_temuan: [8, 13]
+  depends_on: []
+
+tasks:
+  # ---------------------------------------------------------------------
+  - task_id: P03-T1
+    title: "Naikkan PBKDF2 ke 600.000 iterasi, rehash transparan saat login sukses"
+    proposal_ref: "§4.2"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - core/security.py
+        - server/handlers/auth.py
+      create:
+        - tests/unit/core/test_security_rehash.py
+    steps:
+      - >
+        SEBELUM mengedit apa pun: verifikasi ulang rekomendasi iterasi
+        PBKDF2-HMAC-SHA256 terkini dari OWASP Password Storage Cheat
+        Sheet (web search, karena proposal menyebut ini sebagai
+        "rekomendasi terkini" bukan angka final yang boleh basi -- lihat
+        keputusan d5 di 00_index_and_decisions.yaml). Kalau rekomendasi
+        terbaru berbeda signifikan dari 600000, pakai angka terbaru dan
+        catat "DEVIASI DARI PLAN: OWASP direvisi ke X" di PATCHLOG notes.
+      - >
+        `view` core/security.py. Tambah konstanta modul baru
+        `PBKDF2_ITERATIONS = 600_000` (atau hasil verifikasi di atas) di
+        dekat import, sebelum `hash_password()`.
+      - >
+        Ubah `hash_password()`: ganti literal `100000` (baris ~35) jadi
+        `PBKDF2_ITERATIONS`, dan `100000` di f-string format hash (baris
+        ~36, `f"pbkdf2:sha256:100000$..."`) jadi
+        `f"pbkdf2:sha256:{PBKDF2_ITERATIONS}$..."`. Password BARU yang
+        dibuat setelah perubahan ini otomatis pakai iterasi baru.
+      - >
+        JANGAN ubah `verify_password()` sama sekali -- fungsi ini SUDAH
+        membaca jumlah iterasi dari string hash itu sendiri
+        (`int(iterations)` dari hasil split, baris ~46-51), jadi password
+        LAMA (hash dengan 100000 tersimpan literal di string hash-nya)
+        TETAP bisa diverifikasi benar tanpa perubahan apa pun di
+        verify_password(). Ini yang membuat migrasi backward-compatible
+        tanpa memaksa reset password admin.
+      - >
+        Tambah fungsi baru di core/security.py:
+        `def needs_rehash(hashed_password: str) -> bool:` yang mem-parse
+        jumlah iterasi dari string hash (pola parsing sama seperti awal
+        `verify_password()`) dan return True kalau iterasi tersimpan <
+        `PBKDF2_ITERATIONS`. Return False juga untuk hash yang gagal
+        di-parse (fail-safe: jangan crash, biarkan verify_password yang
+        sudah menangani hash rusak/invalid).
+      - >
+        `view` server/handlers/auth.py, cari titik SETELAH
+        `verify_password()` berhasil (login sukses) -- sekitar baris
+        128-151 area handling sesi baru (VERIFIKASI ULANG). Tambah
+        pengecekan: `if needs_rehash(db_account.password_hash):` maka
+        hash ulang password PLAINTEXT yang baru saja divalidasi (masih
+        ada di scope sebagai variabel lokal dari input login) dengan
+        `hash_password()` (otomatis pakai PBKDF2_ITERATIONS baru), lalu
+        panggil method baru (buat di admin_account_repo.py kalau belum
+        ada dari P01-T3 -- `update_password`) untuk menyimpan hash baru
+        ke DB. Ini terjadi TRANSPARAN, tidak mengganggu alur login yang
+        sedang berjalan (best-effort, kalau update DB gagal, log warning
+        tapi TETAP lanjutkan login -- rehash bukan syarat login sukses).
+      - >
+        Test `needs_rehash()`: hash dibuat manual dengan iterasi 100000
+        -> True. Hash dibuat dengan `hash_password()` versi baru (600000)
+        -> False. Hash format tidak valid -> False (fail-safe, tidak
+        crash).
+      - >
+        Test integrasi login: buat admin_account dengan password_hash
+        hasil hash_password() versi LAMA (simulasikan literal string
+        `pbkdf2:sha256:100000$...` dibuat manual dengan iterasi 100000
+        memakai password test dikenal), lakukan login via
+        `handle_auth()`/jalur yang sama seperti P01-T2 test, assert (a)
+        login SUKSES (password lama tetap valid), (b) SETELAH login,
+        password_hash di DB SUDAH berubah ke hash dengan iterasi baru
+        (verify_password password yang sama masih True dengan hash baru
+        itu).
+    acceptance_criteria:
+      - "Password admin yang dibuat SEBELUM perubahan ini (hash 100000 iterasi) tetap bisa login tanpa reset manual."
+      - "Setelah satu kali login sukses dengan hash lama, password_hash di DB otomatis ter-upgrade ke PBKDF2_ITERATIONS baru."
+      - "Password BARU (dibuat setelah perubahan ini, mis. lewat Initial Setup atau reset_admin_password dari P01-T3) langsung memakai iterasi baru sejak awal."
+      - "verify_password() tidak berubah perilakunya sama sekali untuk hash lama maupun baru."
+    tests:
+      run:
+        - "pytest tests/unit/core/test_security_rehash.py -q"
+        - "pytest tests/unit/core/test_security.py -q"
+        - "pytest tests/unit/server/handlers/test_auth.py -q"
+    patchlog:
+      type: security_fix
+      area: "core, server/handlers"
+      title: "PBKDF2 iterasi dinaikkan ke rekomendasi OWASP terkini, rehash transparan"
+      reason: >
+        Password admin di-hash dengan PBKDF2-HMAC-SHA256 100.000 iterasi,
+        di bawah rekomendasi OWASP Password Storage Cheat Sheet terkini,
+        membuat brute-force offline (jika hash bocor) lebih murah dari
+        seharusnya.
+      root_cause: >
+        Nilai iterasi di-hardcode 100000 di hash_password() sejak awal,
+        tidak pernah direvisi mengikuti rekomendasi industri yang berubah
+        seiring waktu.
+      solution: >
+        Konstanta PBKDF2_ITERATIONS dinaikkan; verify_password() TIDAK
+        berubah karena sudah membaca iterasi dari string hash itu sendiri
+        (backward-compatible by design). needs_rehash() + hook di
+        server/handlers/auth.py meng-upgrade hash lama secara transparan
+        satu kali setelah login sukses berikutnya, tanpa memaksa admin
+        reset password manual.
+      files: "core/security.py, server/handlers/auth.py, tests/unit/core/test_security_rehash.py"
+      notes: "Tidak menyentuh file locked. Verifikasi angka OWASP dicatat di PATCHLOG jika berbeda dari 600000 (lihat keputusan d5)."
+
+  # ---------------------------------------------------------------------
+  - task_id: P03-T2
+    title: "Pin yt-dlp ke versi eksak di requirements.txt"
+    proposal_ref: "§4.7"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - requirements.txt
+    steps:
+      - >
+        `view` requirements.txt baris 1 (`yt-dlp>=2026.6.9`, VERIFIKASI
+        ULANG versi -- kemungkinan sudah berbeda dari saat audit).
+      - >
+        Cek versi yt-dlp yang SAAT INI ter-install & lolos test suite
+        (`pip show yt-dlp` di environment eksekusi, atau lihat
+        lockfile/CI config kalau ada yang mencatat versi terkunci).
+        Ganti `>=` menjadi `==` dengan versi persis itu.
+      - >
+        Tambah komentar di atas baris tsb menjelaskan kenapa dipin ketat
+        (auto-update yt-dlp berpotensi merusak parsing YouTube yang
+        dipakai LunaWave tanpa peringatan) dan proses upgrade yang
+        diharapkan (upgrade terjadwal manual, bagian dari checklist
+        rilis -- BUKAN auto-update implisit saat instalasi baru).
+      - >
+        JANGAN pin dependency lain di file yang sama pada task ini --
+        scope hanya yt-dlp sesuai temuan audit.
+    acceptance_criteria:
+      - "requirements.txt baris yt-dlp memakai == bukan >=."
+      - "Instalasi fresh (pip install -r requirements.txt) menghasilkan versi yt-dlp yang identik dengan yang lolos test suite saat task ini dieksekusi."
+    tests:
+      run:
+        - "pip install -r requirements.txt --break-system-packages --dry-run 2>&1 | grep -i yt-dlp || true"
+        - "pytest tests/unit/adapters/ytdlp -q"
+    patchlog:
+      type: bug_fix
+      area: "dependencies"
+      title: "Pin yt-dlp ke versi eksak"
+      reason: >
+        yt-dlp>=X.Y.Z memungkinkan update otomatis saat instalasi baru
+        yang berpotensi merusak aplikasi tanpa peringatan (perubahan
+        internal yt-dlp yang mempengaruhi parsing/resolusi stream).
+      root_cause: >
+        Constraint versi dependency memakai >= alih-alih == untuk
+        dependency yang perilakunya kritikal terhadap fungsi inti
+        aplikasi (resolusi URL YouTube).
+      solution: >
+        Pin ke versi eksak yang sudah terverifikasi lolos test suite,
+        dengan proses upgrade terjadwal manual sebagai gantinya.
+      files: "requirements.txt"
+      notes: "Tidak menyentuh file locked."
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/generate_file_index.py"
+  - "python automation/generate_report.py"

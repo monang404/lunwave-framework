@@ -1,0 +1,410 @@
+@media (min-width: 1024px) {
+  .mobile-only {
+    display: none !important;
+  }
+
+  /* ── Body & App Shell ── */
+  body {
+    display: flex;
+    overflow: hidden;
+    height: 100vh;
+  }
+
+  #app {
+    max-width: 100%;
+    height: 100vh;
+    border-radius: 0;
+    border: none;
+    display: grid;
+    grid-template-columns: 88px 1fr;
+    grid-template-rows: auto 1fr;
+    grid-template-areas:
+      "sidebar header"
+      "sidebar main";
+  }
+
+  /* ── Sidebar Navigation ── */
+  #nav-bar {
+    grid-area: sidebar;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    border-right: 1px solid var(--fm-border, var(--border-1));
+    padding: 0 0 20px 0;
+    overflow-y: auto;
+  }
+
+  .nav-btn {
+    width: 100%;
+    flex-direction: column;
+    padding: 16px 0;
+    justify-content: center;
+    gap: 6px;
+    border-radius: 0;
+    height: auto;
+  }
+
+  .nav-btn .nav-icon {
+    font-size: 20px;
+  }
+
+  .nav-btn span {
+    font-size: 10px;
+    font-weight: 500;
+  }
+
+  .nav-btn.active {
+    background: rgba(255, 255, 255, 0.04);
+    border-left: 3px solid var(--fm-accent, var(--accent));
+  }
+
+  /* ── Header & Content Area ── */
+  #app-header {
+    grid-area: header;
+  }
+
+  #content-area {
+    grid-area: main;
+    overflow-y: auto;
+  }
+
+  /* ── Player Bar — Floating Pill ── */
+  #player-bar {
+    position: fixed !important;
+    bottom: 24px !important;
+    left: calc(50vw + 44px) !important;
+    transform: translateX(-50%) !important;
+    width: calc(100vw - 88px - 48px) !important;
+    max-width: 1000px !important;
+    height: 76px !important;
+    min-height: 76px !important;
+    z-index: 1000;
+    background: var(--bg-elevated) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    border-top: 1px solid var(--fm-border, var(--border-1)) !important;
+    border-radius: 16px !important;
+    padding: 0 24px !important;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6) !important;
+    gap: 24px !important;
+  }
+
+  body[data-player-state="IDLE"] #player-bar {
+    display: none !important;
+  }
+
+  /* ── Player Bar — Show All Sections on Desktop ── */
+  #player-bar .pb-row1 {
+    display: flex !important;
+  }
+
+  #player-bar .pb-seek {
+    display: flex !important;
+  }
+
+  #player-bar .pb-ctrl {
+    display: flex !important;
+  }
+
+  #player-bar .pb-track {
+    display: block !important;
+    flex: 1 !important;
+    width: 100% !important;
+    height: 4px !important;
+    min-width: 100px;
+  }
+
+  #player-bar .pb-time {
+    display: block !important;
+  }
+
+  #player-bar #btn-settings {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    position: absolute !important;
+    right: 24px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    z-index: 100 !important;
+    width: 40px !important;
+    height: 40px !important;
+    cursor: pointer !important;
+  }
+
+  #player-bar .pb-main-btns {
+    display: flex !important;
+  }
+
+  #player-bar .btn-play {
+    width: 42px !important;
+    height: 42px !important;
+    font-size: 16px !important;
+  }
+
+  #player-bar #pb-mode-badge {
+    display: none !important;
+  }
+
+  /* ── Player Bar — Symmetrical 3-Column Layout ── */
+  .pb-row1 {
+    display: flex !important;
+    align-items: center;
+    gap: 12px;
+    flex: 0 0 260px !important;
+    width: 260px !important;
+    min-width: 0;
+    margin: 0 !important;
+  }
+
+  .pb-seek {
+    flex: 1 !important;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    max-width: none !important;
+    gap: 16px;
+    padding: 0 16px;
+    margin: 0 !important;
+  }
+
+  .pb-ctrl {
+    flex: 0 0 260px !important;
+    width: 260px !important;
+    display: flex !important;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 16px !important;
+    min-width: 0;
+    flex-wrap: nowrap;
+    padding-top: 0;
+    padding-right: 44px !important;
+    margin: 0 !important;
+  }
+
+  .pb-ctrl .main-ctrl {
+    max-width: none;
+    width: auto;
+    justify-content: center;
+    gap: 16px;
+  }
+
+  .pb-ctrl .pb-sec {
+    position: static;
+    order: 3;
+    max-width: none;
+    width: auto;
+    justify-content: flex-end;
+    padding-top: 0;
+  }
+
+  /* ── Player Button Sizes ── */
+  .btn-prev,
+  .btn-next,
+  .btn-shuffle,
+  .btn-repeat {
+    width: 40px;
+    height: 40px;
+    font-size: 18px
+  }
+
+  .btn-play {
+    width: 42px;
+    height: 42px;
+    font-size: 16px
+  }
+
+  .pb-sec button {
+    width: 36px;
+    height: 36px;
+    font-size: 16px
+  }
+
+  /* ── Tab Panel Layout ── */
+  .tab-panel {
+    max-width: 1200px;
+    margin: 0 auto !important;
+    width: 100%;
+    padding: 0 40px 120px !important;
+  }
+
+  /* #tab-discover scroll sendiri (lihat discover-cards.css), jadi kalau
+     dia ikut max-width+margin+padding .tab-panel di atas, scrollbar-nya
+     jatuh ~79px dari tepi browser (39px auto-margin + 40px padding) —
+     keliatan "kurang mentok kanan". Fix: lepas constraint itu dari
+     #tab-discover-nya sendiri biar scrollbar mentok ke tepi asli, lalu
+     pindahin max-width/centering-nya ke direct children (yang semuanya
+     udah punya padding kiri-kanan var(--s5)=20px sendiri, jadi visualnya
+     tetap sama, cuma track scrollbar-nya yang geser ke edge). */
+  #tab-discover {
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 0 120px !important;
+  }
+  #tab-discover > * {
+    max-width: 1200px;
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .search-wrap {
+    max-width: 600px;
+    margin: 0 auto;
+  }
+
+  /* ── Desktop Home Tab — 2-Column Layout ── */
+  body[data-active-tab="home"] #tab-home {
+    display: grid !important;
+    grid-template-columns: 4fr 5fr;
+    grid-template-rows: 1fr;
+    grid-template-areas: "left right";
+    gap: 0 40px;
+    align-content: start;
+    align-items: start;
+  }
+
+  .home-left-col {
+    grid-area: left;
+    display: flex;
+    flex-direction: column;
+    padding-top: 80px;
+    align-items: center;
+  }
+
+  .home-right-col {
+    grid-area: right;
+    display: flex;
+    flex-direction: column;
+  }
+
+  body:not([data-active-tab="home"]) #tab-home {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .home-header {
+    display: none !important;
+  }
+
+  .home-art-section {
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .home-art-frame {
+    width: 100%;
+    max-width: 240px;
+    margin: 0;
+  }
+
+  #tab-home .home-track-row {
+    grid-area: track;
+    justify-content: center;
+    text-align: center;
+    padding: 24px 0 0 0;
+    gap: 20px;
+    width: 100%;
+    max-width: 380px;
+    position: relative;
+  }
+
+  #tab-home .home-track-info {
+    text-align: center;
+    flex: 1;
+  }
+
+  #tab-home .mti-title,
+  #tab-home .mti-artist {
+    text-align: center;
+  }
+
+  .lyrics-wrap {
+    grid-area: lyrics;
+    text-align: left;
+    padding: 24px 0;
+    width: 100%;
+    max-width: 380px;
+  }
+
+  .home-recent-section {
+    margin-top: 0;
+  }
+
+  .home-queue-section {
+    grid-area: queue;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  /* ── Settings Sheet — Desktop Centered Popover ── */
+  /* Selalu di tengah horizontal parent window, bukan kanan layar. */
+  /* Bekerja di normal, maximize, resize, dan multi-monitor. */
+  .settings-sheet {
+    position: fixed;
+    bottom: 100px;
+    left: 50%;
+    right: auto;
+    max-width: 400px;
+    width: 400px;
+    border-radius: var(--r-lg);
+    margin: 0;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateX(-50%) translateY(20px);
+    transition: opacity var(--dur-normal) var(--ease), transform var(--dur-normal) var(--ease), visibility var(--dur-normal);
+  }
+
+  .settings-sheet.open {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* ── Desktop IDLE / EMPTY QUEUE overrides ── */
+  body[data-player-state="IDLE"] #tab-home,
+  body[data-queue-empty="true"] #tab-home {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+  }
+
+  body[data-player-state="IDLE"] #tab-home .home-left-col,
+  body[data-queue-empty="true"] #tab-home .home-left-col {
+    width: 100%;
+  }
+
+  body[data-queue-empty="true"][data-has-lyrics="true"] #tab-home .home-left-col {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "art lyrics"
+      "track lyrics";
+    gap: 0 40px;
+    align-items: center;
+    justify-content: center;
+    max-width: 1000px;
+    margin: 0 auto;
+    padding-top: 0;
+  }
+
+  body[data-queue-empty="true"][data-has-lyrics="true"] #tab-home .home-left-col .home-art-section {
+    grid-area: art;
+    justify-self: center;
+  }
+
+  body[data-queue-empty="true"][data-has-lyrics="true"] #tab-home .home-left-col .home-track-row {
+    grid-area: track;
+    justify-self: center;
+  }
+
+  body[data-queue-empty="true"][data-has-lyrics="true"] #tab-home .home-left-col .lyrics-wrap {
+    grid-area: lyrics;
+    justify-self: center;
+    align-self: center;
+    width: 100%;
+    max-width: 440px;
+  }
+}

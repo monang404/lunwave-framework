@@ -1,0 +1,91 @@
+/* ══ LunaWave tabs.css v2 ══ */
+
+/* ── Tab Panels ── */
+.tab-panel {
+  display: none;
+  flex-direction: column;
+  height: 100%;
+}
+
+.tab-panel.active {
+  display: flex;
+}
+
+/* ── Bottom Navigation ── */
+.navrow {
+  display: flex;
+  align-items: stretch;
+  background: var(--bg-primary);
+  border-top: 1px solid var(--border-1);
+  padding-bottom: env(safe-area-inset-bottom);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 50;
+}
+
+.nav-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 10px 0 8px;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  font-size: 9px;
+  font-family: var(--font);
+  font-weight: var(--w-medium);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  cursor: pointer;
+  position: relative;
+  transition: color var(--dur-fast) var(--ease);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.nav-btn i {
+  font-size: 22px;
+  line-height: 1;
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.nav-btn span {
+  display: block;
+  line-height: 1;
+}
+
+.nav-btn:hover {
+  color: var(--text-2);
+}
+
+.nav-btn:active i {
+  transform: scale(0.92);
+}
+
+.nav-btn.active {
+  color: var(--accent);
+}
+
+/* Active dot (removed) */
+.nav-btn.active::after {
+  display: none;
+}
+
+.disc-row2 {
+  display: flex;
+  overflow-x: auto;
+  gap: var(--s3);
+  padding-bottom: var(--s2);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.disc-row2::-webkit-scrollbar {
+  display: none;
+}
+
+
+
+
+/* ─── Safe Area Insets (iPhone notch / Android nav bar) ─── */

@@ -1,0 +1,158 @@
+# 04_fase4_html_audit.yaml
+# Fase 4 -- Temuan M. Risiko rendah (murni audit untuk 2 dari 3 halaman;
+# sub-task admin-logs.html depends_on fase 2 selesai). Componentize
+# (langkah 6 proposal §4.M) BERSYARAT pada hasil audit -- TIDAK dieksekusi
+# di fase ini kecuali audit menunjukkan bukti konkret blok berulang manual.
+
+fase: 4
+temuan: M
+parallel_ok: false  # sub-task admin-logs.html menunggu fase 2 (lihat depends_on)
+risk: low
+depends_on: [2]  # hanya sub-task M.2 (admin-logs.html) yang benar2 depends_on fase 2; M.1 independen, lihat catatan per task
+
+konteks_terverifikasi:
+  audit_awal_dilakukan_saat_menyusun_rfc: >
+    Proposal §4.M eksplisit meminta "audit dulu, BUKAN langsung
+    componentize" -- audit kasar (bukan pengganti audit formal di task
+    M.1/M.2 di bawah) sudah dijalankan saat menyusun RFC ini untuk
+    memastikan breakdown ini benar2 actionable, bukan spekulasi:
+
+    wc -l + hitung baris di dalam tag <script>/<template> (awk kasar):
+      - web/static/pages/app/index.html: total 898 baris. 2 tag <script>
+        (baris 852 inline ~43 baris, baris 895 `<script type="module"
+        src="...">` external). Blok <template> HTML: 0.
+      - web/static/pages/client/client.html: total 290 baris. 3 tag
+        <script> (baris 259 inline ~28 baris, baris 287-288 dua
+        `<script type="module" src="...">` external). Blok <template>: 0.
+      - web/static/pages/admin-logs/admin-logs.html: total 1074 baris.
+        1 tag <script> (baris 1072, `<script type="module"
+        src="/static/pages/admin-logs/admin-logs.js">` -- TIDAK ADA
+        inline script sama sekali). Blok <template>: 0.
+
+    Cek blok markup berulang manual (grep class terbanyak):
+      - index.html: class terbanyak "card-row" (3x), "portal-card" (2x)
+        -- tidak ada pola template kartu yang digandakan puluhan kali.
+      - admin-logs.html: class terbanyak "status-item" (5x), "tab-content"/
+        "tab-btn" (3x) -- juga bukan pola template berulang signifikan.
+
+  kesimpulan_awal_belum_final: >
+    Angka di atas MENGARAH ke kesimpulan proposal §4.M langkah 3: markup
+    natural (bukan script) yang mendominasi ukuran ketiga halaman, DAN
+    tidak ditemukan blok kartu/komponen yang di-duplikasi manual berkali-
+    kali di markup statis (kartu track/artist di aplikasi ini dirender
+    dinamis lewat JS -- lihat createLogLineElement di admin-logs.js
+    Temuan I, atau render/*.js di shared/js -- BUKAN ditulis berulang di
+    HTML). INI BUKAN KEPUTUSAN FINAL -- diukur pakai awk/grep kasar,
+    BUKAN tool khusus. Task M.1/M.2 di bawah WAJIB mengukur ulang secara
+    formal (baris demi baris, bukan estimasi tag) sebagai audit resmi,
+    memakai angka di atas sebagai baseline sanity-check saja.
+
+tasks:
+  - id: M.1
+    title: "Audit formal rasio markup vs script/template -- index.html dan client.html (independen, tidak depends_on fase manapun)"
+    depends_on: []
+    deskripsi: >
+      Untuk KEDUA file (index.html, client.html), hitung dengan presisi
+      (baris demi baris, bukan estimasi tag pembuka/penutup seperti awk
+      kasar di atas): (a) total baris file, (b) baris markup HTML murni
+      (di luar <script>/<template>), (c) baris di dalam <script> inline
+      (bukan yang cuma `src="..."` eksternal), (d) baris di dalam
+      <template> tag native (kalau ada), (e) daftar SEMUA class/id yang
+      muncul >= 4 kali berikut potongan markup di sekitarnya, untuk
+      menilai apakah itu benar blok "kartu" berulang atau cuma
+      styling/layout wrapper generik (mis. "card-row" dipakai untuk 3
+      section BERBEDA, bukan 3 kartu identik -- perlu dicek isinya, bukan
+      cuma dihitung jumlahnya).
+    verifikasi:
+      - "python3 -c \"import re; content=open('web/static/pages/app/index.html').read(); print(len(content.splitlines()))\"  # cross-check total baris index.html = 898"
+      - "python3 -c \"import re; content=open('web/static/pages/client/client.html').read(); print(len(content.splitlines()))\"  # cross-check total baris client.html = 290"
+      - "Tulis hasil audit lengkap sebagai file baru docs/architecture/audit_html_markup_vs_script.md (atau tambahkan section baru di docs/architecture/frontend.md yang sudah ada) -- BUKAN cuma dijalankan lalu dibuang, harus terdokumentasi supaya keputusan M.3 (componentize atau tidak) bisa dirujuk ulang kapan saja tanpa mengulang audit."
+    patchlog_cmd: |
+      python automation/patchlog.py add \
+        --type Docs --area Frontend --priority Low \
+        --title "Audit formal rasio markup vs script index.html dan client.html" \
+        --reason "Temuan M (proposal_god_file_splitting.md) meminta audit ukuran markup-natural vs script/template SEBELUM memutuskan componentize atau tidak -- RFC #1 sengaja menunda audit ini" \
+        --files "docs/architecture/audit_html_markup_vs_script.md" \
+        --root-cause "Belum pernah ada audit ukuran markup-natural vs blok script/template untuk 3 halaman ini" \
+        --solution "Hitung baris markup vs script/template per halaman + daftar class/id berulang >=4x beserta konteksnya, didokumentasikan supaya keputusan componentize bisa dirujuk" \
+        --tests "Manual cross-check total baris via python splitlines() -> cocok dengan wc -l (898, 290)" \
+        --breaking No --risk Low --status Merged \
+        --related PATCH-2026-07-26-240
+    checkpoint_cmd: >
+      zip -rq checkpoints/lunawave-M1.zip . -x ".git/*" -x "*__pycache__*"
+      -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+      -x "*.DS_Store" -x "checkpoints/*"
+
+  - id: M.2
+    title: "Audit formal rasio markup vs script/template -- admin-logs.html (WAJIB setelah fase 2 selesai)"
+    depends_on: [2]
+    catatan_urutan: >
+      Proposal §4.M langkah 2 eksplisit: audit admin-logs.html "kemungkinan
+      besar sudah banyak berkurang setelah Temuan I dieksekusi (script
+      inline pindah ke file .js terpisah), audit ulang SETELAH Temuan I
+      selesai, bukan sebelum". Verifikasi saat menyusun RFC ini:
+      admin-logs.html SUDAH TIDAK PUNYA inline <script> sama sekali
+      (cuma 1 baris `<script type="module" src="...">` eksternal) --
+      artinya splitting fase 2 TIDAK MENGUBAH rasio markup-vs-script
+      admin-logs.html sama sekali (karena tidak ada inline script yang
+      dipindah dari HTML-nya sendiri, yang dipecah adalah admin-logs.js
+      yang SUDAH eksternal sejak awal). Audit ini tetap dijalankan
+      SETELAH fase 2 (bukan sebelum) sesuai urutan proposal, tapi
+      HARAPAN hasilnya TIDAK banyak berubah dari 1074 baris murni markup
+      -- kalau hasil audit menunjukkan sebaliknya (ada perubahan
+      signifikan), itu sinyal ada sesuatu yang tidak terduga terjadi di
+      fase 2, cek ulang.
+    deskripsi: "Sama seperti M.1 (breakdown markup/script/template + class/id berulang >=4x), untuk admin-logs.html (1074 baris)."
+    verifikasi:
+      - "python3 -c \"print(len(open('web/static/pages/admin-logs/admin-logs.html').read().splitlines()))\"  # baseline sebelum fase 2: 1074 -- catat angka SETELAH fase 2 juga, bandingkan"
+      - "Tambahkan hasil audit admin-logs.html ke file yang sama dari M.1 (docs/architecture/audit_html_markup_vs_script.md)"
+    patchlog_cmd: |
+      python automation/patchlog.py add \
+        --type Docs --area Frontend --priority Low \
+        --title "Audit formal rasio markup vs script admin-logs.html (pasca Temuan I)" \
+        --reason "Temuan M proposal_god_file_splitting.md -- audit ini sengaja menunggu Temuan I (fase 2) selesai supaya hasil pasca-split .js lebih akurat" \
+        --files "docs/architecture/audit_html_markup_vs_script.md" \
+        --root-cause "Belum pernah ada audit ukuran markup-natural vs blok script untuk admin-logs.html" \
+        --solution "Hitung baris markup vs script setelah fase 2 selesai, dokumentasikan bersama audit M.1" \
+        --tests "Manual cross-check total baris via python splitlines()" \
+        --breaking No --risk Low --status Merged \
+        --related PATCH-2026-07-26-240
+    checkpoint_cmd: >
+      zip -rq checkpoints/lunawave-M2.zip . -x ".git/*" -x "*__pycache__*"
+      -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+      -x "*.DS_Store" -x "checkpoints/*"
+
+  - id: M.3
+    title: "Keputusan componentize -- KONDISIONAL, BUKAN task eksekusi pasti"
+    status: "BLOCKED — bukan task eksekusi, hanya dokumentasi keputusan (pola sama seperti sesi 5 RFC pemulihan_frontend, 05_sesi5_render_events.yaml)"
+    logika_keputusan: >
+      Proposal §4.M langkah 3-4 (BUKAN keputusan bebas, ikuti persis):
+        - JIKA hasil M.1/M.2 menunjukkan markup natural (bukan script)
+          yang mendominasi ukuran, DAN tidak ada blok markup berulang
+          signifikan -> componentize TIDAK DIPERLUKAN. Ukuran itu wajar
+          untuk aplikasi sekompleks ini (banyak state UI berbeda: home/
+          discover/queue/lyrics/dst dalam 1 SPA-like page). TUTUP Temuan
+          M di titik ini, catat keputusan "tidak componentize" di
+          PATCHLOG dengan tipe Docs, JANGAN lanjut ke pekerjaan lain.
+        - JIKA hasil M.1/M.2 (bukan audit awal kasar di atas, HARUS audit
+          formal M.1/M.2) menunjukkan banyak blok markup berulang manual
+          (mis. template kartu track/artist diulang manual, bukan
+          dirender JS) -> BARU componentize pakai `<template>` tag
+          native (tanpa framework, batasan §6 RFC #1 -- "Tidak boleh
+          tambah JS framework") untuk blok repetitif itu SAJA, bukan
+          restrukturisasi total halaman.
+      Audit awal (kasar) yang dilakukan saat menyusun RFC ini MENGARAH
+      ke opsi pertama (tidak componentize) untuk ketiga halaman -- TAPI
+      keputusan resmi WAJIB menunggu hasil M.1/M.2 formal, bukan dipakai
+      langsung dari sini. Task ini TIDAK PUNYA `files`/`verifikasi`/
+      `patchlog_cmd` sendiri karena isinya murni "baca hasil M.1/M.2,
+      lalu tulis 1 entry PATCHLOG (Type: Docs) berisi keputusan akhir
+      dan alasannya" -- entry itu ditulis SETELAH M.1/M.2 selesai,
+      polanya sudah tercakup di patchlog_cmd masing2 task M.1/M.2 kalau
+      keputusannya "tidak componentize" (paling mungkin berdasar audit
+      awal). Kalau keputusannya componentize, itu RFC/task breakdown
+      BARU (di luar scope file ini), bukan ditambahkan dadakan ke fase 4.
+
+verifikasi_fase_selesai:
+  - "docs/architecture/audit_html_markup_vs_script.md (atau section baru di frontend.md) ada dan berisi audit ke-3 halaman + keputusan componentize/tidak"
+  - "2 entry baru muncul di docs/PATCHLOG.md (M.1 dan M.2, masing2 independen -- TIDAK digabung, karena hasil salah satu tidak menggantungkan validitas yang lain, beda dengan patchlog_group di fase 1/2/3 yang task-nya saling bergantung)"

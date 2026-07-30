@@ -1,0 +1,137 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 02 — WS command schema validation (Temuan C / proposal §3.C, Fase 3)
+# Depends on: TIDAK ADA
+# Risiko: RENDAH-SEDANG | Effort: RENDAH-SEDANG
+# Scope: HANYA 4 command (keputusan d3, lihat 00_index_and_decisions.yaml).
+# Tidak menambah library baru (dataclass stdlib saja, sesuai batasan §6).
+# =============================================================================
+
+phase:
+  id: P02
+  title: "Command schema registry untuk 4 command paling rawan input numerik"
+  proposal_ref: "§3.C"
+  closes_temuan: [C]
+  depends_on: []
+  scope_locked: >
+    HANYA volume_set, set_speed, lyrics_offset, set_sleep_timer. Command
+    lain (19 command playback + 6 command queue lainnya) TIDAK disentuh
+    di file ini — lihat 08_backlog_deferred.yaml untuk daftar backlog.
+
+tasks:
+  - task_id: P02-T1
+    title: "Buat server/handlers/ws_schemas.py + WsValidationError"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      create:
+        - server/handlers/ws_schemas.py
+        - tests/unit/server/handlers/test_ws_schemas.py
+    steps:
+      - "Buat exception `WsValidationError(Exception)` dengan docstring: 'Pesan siap-tampil untuk client, terpisah dari internal exception.'"
+      - >
+        Buat 4 dataclass, masing-masing dengan classmethod `parse(cls,
+        data: dict) -> Self` yang melempar `WsValidationError` dengan
+        pesan Bahasa Indonesia siap-tampil (bukan pesan Python mentah):
+        - `VolumeSetPayload(volume: int)` — parse dari `data.get("volume", 80)`, cast int, validasi 0<=volume<=100.
+        - `SetSpeedPayload(speed: float)` — parse dari key `speed`, cast float, validasi rentang wajar (tentukan batas dari nilai yang sudah dipakai UI existing — cek `web/static/shared/js` untuk range slider speed sebelum menetapkan batas; kalau tidak ditemukan batas eksplisit di frontend, pakai 0.25–3.0 sebagai default aman untuk playback speed).
+        - `LyricsOffsetPayload(offset: float)` — parse dari key `offset`, cast float, tanpa batas rentang kecuali frontend punya batas eksplisit (cek dulu; kalau tidak ada, terima rentang bebas tapi tetap validasi tipe).
+        - `SetSleepTimerPayload(minutes: int)` — parse dari key `minutes`, cast int, validasi > 0 (dan <= batas wajar, mis. 24*60 kalau tidak ada batas eksplisit lain di kode existing — cek dulu sebelum menetapkan angka).
+      - "Setiap parse() HARUS menangkap (TypeError, ValueError) dari cast, lempar WsValidationError dengan pesan domain, BUKAN membiarkan exception Python mentah lolos."
+      - "Tambahkan docstring module bergaya konvensi repo (Module/Purpose/Responsibilities/Depends on/dst)."
+      - >
+        Buat test_ws_schemas.py dengan kasus PER dataclass: valid,
+        invalid-type (string non-numerik), out-of-range (untuk yang
+        punya rentang), missing-key (pakai default kalau ada default,
+        atau WsValidationError kalau wajib).
+    acceptance_criteria:
+      - "ws_schemas.py TIDAK mengimpor apapun dari server.handlers.websocket atau ws_playback.py (harus jadi leaf module, dependency satu arah)."
+      - "Semua parse() method mengembalikan instance dataclass ATAU melempar WsValidationError — tidak pernah membiarkan ValueError/TypeError builtin lolos ke caller."
+    tests:
+      run:
+        - "pytest tests/unit/server/handlers/test_ws_schemas.py -q"
+
+  - task_id: P02-T2
+    title: "Migrasikan 4 command di ws_playback.py ke ws_schemas.py"
+    depends_on: [P02-T1]
+    touches_locked_files: false
+    files:
+      modify:
+        - server/handlers/ws_playback.py
+    steps:
+      - "Import ke-4 dataclass dari server.handlers.ws_schemas."
+      - >
+        Ganti body `elif action == \"volume_set\":` (baris ~82 saat
+        audit, VERIFIKASI ULANG nomor baris sebelum edit karena file
+        bisa sudah berubah) dari `int(vol)` manual menjadi:
+        `payload = VolumeSetPayload.parse(data); await command_bus.execute(CMD_VOLUME_SET, {"volume": payload.volume})`.
+      - "Ulangi pola yang sama untuk set_speed (CMD_SET_SPEED), lyrics_offset (CMD_LYRICS_OFFSET), set_sleep_timer (CMD_SET_SLEEP_TIMER) — cast manual (float(...)/int(...)) diganti pemanggilan `<Payload>.parse(data)`."
+      - "JANGAN ubah 15 command playback lain di file yang sama pada task ini — hanya 4 command di scope_locked."
+    acceptance_criteria:
+      - "grep -n 'int(vol)\\|float(offset)\\|int(minutes)\\|float(speed)' di ws_playback.py untuk 4 command tsb sudah tidak ada cast manual langsung di body elif — semua lewat <Payload>.parse()."
+      - "15 command playback lain di file yang sama tidak berubah sama sekali (diff hanya menyentuh 4 blok elif + import statement)."
+    tests:
+      run:
+        - "pytest tests/unit/server/handlers -q -k playback"
+
+  - task_id: P02-T3
+    title: "Tangani WsValidationError terpisah di websocket.py"
+    depends_on: [P02-T2]
+    touches_locked_files: true
+    locked_file_justification: >
+      server/handlers/websocket.py masuk daftar locked di AI_CONTEXT.md
+      ("jangan pecah dulu tanpa persetujuan eksplisit"). Task ini TIDAK
+      memecah file (tidak mengubah struktur/split), hanya menambah 1
+      except clause baru sebelum except generik yang sudah ada — tetap
+      butuh dicatat sebagai penyentuhan file locked sesuai governance,
+      dan sudah dicakup otorisasi menyeluruh di 00_index_and_decisions.yaml.
+    files:
+      modify:
+        - server/handlers/websocket.py
+    steps:
+      - "Import WsValidationError dari server.handlers.ws_schemas."
+      - >
+        Cari blok try/except generik yang membungkus pemanggilan
+        handle_playback_command() dkk di handle_ws_message() /
+        ws_handler(). Tambahkan `except WsValidationError as e:` SEBELUM
+        `except Exception as e:` generik — kirim
+        `{"type": "error", "data": str(e)}` ke client via ws.send_str
+        (format identik dengan pola error existing di file yang sama,
+        cek pola send_str yang sudah ada untuk konsistensi format JSON).
+      - "except Exception generik yang sudah ada TETAP seperti sekarang (log detail internal, pesan generik ke client) — tidak diubah, hanya ditempatkan setelah except WsValidationError yang baru."
+    acceptance_criteria:
+      - "Mengirim {'action':'volume_set','volume':'abc'} lewat WS test client menghasilkan pesan error field 'data' berbunyi domain message ('Nilai volume harus berupa angka.'), BUKAN pesan Python 'invalid literal for int()...'."
+      - "Command lain (non-4-command-tsb) yang error tetap menghasilkan pesan generik seperti sebelumnya (regression check)."
+    tests:
+      run:
+        - "pytest tests/unit/server/handlers -q -k websocket"
+        - "pytest tests/integration -q -k ws"
+    patchlog:
+      type: refactor
+      area: "server/handlers"
+      title: "Command schema validation untuk volume_set, set_speed, lyrics_offset, set_sleep_timer"
+      reason: >
+        ValueError mentah dari cast Python (int()/float()) bocor ke
+        client sebagai pesan error implementasi, bukan pesan domain yang
+        berarti bagi user.
+      root_cause: >
+        WS command dispatch memvalidasi & cast input langsung di body
+        handler tanpa skema terpusat; exception generik menangkap semua
+        ValueError dan meneruskan str(e) mentah ke client.
+      solution: >
+        server/handlers/ws_schemas.py baru (dataclass + WsValidationError),
+        migrasi 4 command paling rawan di ws_playback.py, except clause
+        terpisah di websocket.py untuk WsValidationError. Command lain
+        (19+6 lainnya) sengaja belum dimigrasi — lihat 08_backlog_deferred.yaml.
+      files: "server/handlers/ws_schemas.py, server/handlers/ws_playback.py, server/handlers/websocket.py, tests/unit/server/handlers/test_ws_schemas.py"
+      notes: >
+        Menyentuh file locked server/handlers/websocket.py — otorisasi
+        tercatat di 00_index_and_decisions.yaml meta.authorization.
+        Perubahan di file ini murni penambahan 1 except clause, bukan
+        pemecahan struktur file.
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/generate_file_index.py"
+  - "python automation/generate_report.py"

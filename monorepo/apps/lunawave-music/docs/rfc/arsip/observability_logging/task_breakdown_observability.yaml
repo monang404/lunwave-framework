@@ -1,0 +1,283 @@
+# task_breakdown_observability.yaml
+# v1 — 2026-07-22
+# Fitur: observability_log_baseline (LunaWave — Termux/Android + Windows)
+# Sumber: docs/rfc/observability_logging/observability_logging.md + ADR-0010
+#
+# STATUS: draft rencana, BELUM dieksekusi.
+#
+# ATURAN EKSEKUSI UNTUK AGENT:
+# 1. Ikuti `execution_order` secara sekuensial per sesi. Task dalam satu
+#    `session` dengan `parallel_ok: true` boleh dikerjakan tidak berurutan
+#    relatif satu sama lain (asal depends_on terpenuhi) — tapi tidak boleh
+#    melompati sesi.
+# 2. Prinsip fail-safe WAJIB dipatuhi di semua task yang baca API/OS
+#    spesifik platform (mem_stats, isatty/TERM check): cek dulu, best-effort,
+#    JANGAN pernah crash proses kalau environment tidak mendukung.
+# 3. DILARANG menambah env var baru atau dependency pip baru sebagai bagian
+#    dari task manapun di file ini — ini keputusan eksplisit ADR-0010.
+# 4. Setelah tiap task: jalankan `post_commands`, cek `dod` semua true, lalu
+#    prepend entry ke `docs/PATCHLOG.md` (ID: PATCH-YYYY-MM-DD-NNN, cek
+#    frontmatter `latest_patch_id` untuk nomor urut terbaru SEBELUM menulis)
+#    kecuali task punya `patchlog: skip`.
+# 5. Task bertanda `patchlog_group` ditulis SATU entry gabungan untuk
+#    seluruh anggota grup tsb.
+# 6. Sesi dengan `parallel_ok: false` wajib dikerjakan sendirian tanpa task
+#    lain disisipkan di sesi yang sama.
+
+meta:
+  source_features: ["observability_log_baseline"]
+  source_rfc: "observability_logging.md"
+  locked_files_global:
+    - web/static/index.html          # tidak relevan ke fitur ini
+    - engine/playback/controller.py  # tidak relevan ke fitur ini
+    - server/handlers/websocket.py   # HANYA dibaca (connected_at), tidak direfactor
+  conventions:
+    patchlog_id_format: "PATCH-YYYY-MM-DD-NNN"
+    ai_agent_flag_required_on: [doctor.py, verify_docs.py, architecture_lint.py, verify_structure.py, find_owner.py, patchlog.py]
+    ai_agent_flag: "--json"
+
+decisions:
+  OD-1:
+    question: "Warna log: toggle manual atau auto-detect?"
+    chosen: "auto_detect_isatty_tanpa_env_var"
+    rationale: >
+      Sesuai instruksi eksplisit user: tidak boleh pakai environment
+      variable. Deteksi murni dari sys.stdout.isatty() + TERM tidak
+      kosong/dumb. Default aman (tanpa warna) kalau ragu.
+    status: resolved
+
+  OD-2:
+    question: "RAM: psutil atau baca manual per-platform?"
+    chosen: "baca_manual_proc_dan_ctypes_psapi"
+    rationale: >
+      psutil pernah gagal install di Termux (butuh compile native).
+      /proc/self/status (Linux/Termux) dan ctypes+psapi (Windows) sama-sama
+      stdlib/OS-native, tidak butuh instalasi apa pun, dan konsisten dengan
+      pola shutil.which()/sys.platform yang sudah dipakai repo ini.
+    status: resolved
+
+  OD-3:
+    question: "Traffic metrics dipasang di tiap handler atau satu titik?"
+    chosen: "satu_middleware_aiohttp_terpusat"
+    rationale: >
+      Menghindari duplikasi logika di banyak handler dan mengurangi resiko
+      lupa instrumentasi di handler baru di masa depan. Middleware juga jadi
+      titik alami untuk assign correlation id per request.
+    status: resolved
+
+execution_order:
+  - session: 0
+    title: "Governance & orientasi"
+    parallel_ok: false
+
+  - session: 1
+    title: "Modul baru dependency-free"
+    parallel_ok: true
+
+  - session: 2
+    title: "Metric Prometheus baru"
+    parallel_ok: false
+
+  - session: 3
+    title: "Wiring server: middleware, app.py, connection_manager"
+    parallel_ok: false
+
+  - session: 4
+    title: "Health endpoint + status log periodik"
+    parallel_ok: false
+
+  - session: 5
+    title: "Finalisasi dokumen & verifikasi lintas platform"
+    parallel_ok: false
+
+tasks:
+  - id: O0.1
+    session: 0
+    parallel_ok: false
+    title: "Baca AI_CONTEXT.md, STATUS.md, PATCHLOG.md; konfirmasi locked files & nomor patch berikutnya"
+    depends_on: []
+    files: []
+    post_commands:
+      - "python automation/find_owner.py core/log_config.py"
+      - "python automation/find_owner.py core/observability.py"
+      - "python automation/find_owner.py server/connection_manager.py"
+    dod: ["nomor PATCH- berikutnya diketahui", "locked_files_global terverifikasi akurat"]
+    patchlog: skip
+
+  - id: O1.1
+    session: 1
+    parallel_ok: true
+    title: "core/mem_stats.py — baca RSS proses cross-platform tanpa dependency baru"
+    depends_on: [O0.1]
+    files: ["core/mem_stats.py"]
+    action: >
+      Fungsi tunggal get_rss_mb() -> float | None. Linux/Termux: parse
+      VmRSS dari /proc/self/status. Windows (os.name == 'nt'): ctypes +
+      psapi.GetProcessMemoryInfo. Selain itu / gagal parse: return None.
+      Tidak pernah raise ke pemanggil (try/except menyeluruh).
+    post_commands:
+      - "python -c \"from core.mem_stats import get_rss_mb; print(get_rss_mb())\""
+    dod:
+      - "get_rss_mb() tidak pernah melempar exception di platform manapun"
+      - "test unit mirror-path tests/core/test_mem_stats.py ditambahkan"
+    patchlog_group: "OG-1"
+
+  - id: O1.2
+    session: 1
+    parallel_ok: true
+    title: "core/server_clock.py — uptime server"
+    depends_on: [O0.1]
+    files: ["core/server_clock.py"]
+    action: >
+      Kelas/objek kecil menyimpan start_time (set sekali saat modul
+      di-import atau lewat init() eksplisit dipanggil dari main.py) dan
+      properti uptime_seconds. Dependency-free, tanpa import dari layer lain.
+    post_commands: []
+    dod:
+      - "uptime_seconds naik monoton antar pemanggilan"
+      - "test unit mirror-path tests/core/test_server_clock.py ditambahkan"
+    patchlog_group: "OG-1"
+
+  - id: O2.1
+    session: 2
+    parallel_ok: false
+    title: "core/observability.py — tambah metric traffic/RAM/uptime sesi"
+    depends_on: [O1.1, O1.2]
+    files: ["core/observability.py"]
+    action: >
+      Tambah: HTTP_REQUESTS_TOTAL (Counter, label method/path/status),
+      HTTP_BYTES_TOTAL (Counter, label direction=in|out),
+      WS_MESSAGES_TOTAL (Counter, label direction),
+      PROCESS_RSS_MB (Gauge),
+      ACTIVE_USER_SESSION_SECONDS (Histogram).
+      Tidak menghapus/mengubah metric lama yang sudah ada.
+    post_commands:
+      - "python automation/doctor.py --json"
+    dod: ["metric lama tetap tidak berubah", "metric baru muncul di output get_metrics_content()"]
+    patchlog: "own"
+
+  - id: O2.2
+    session: 2
+    parallel_ok: false
+    title: "core/log_config.py — split renderer console(auto-color)/file(plain) + correlation id + session banner"
+    depends_on: [O1.2]
+    files: ["core/log_config.py"]
+    action: >
+      simple_renderer dipecah jadi dua: file_renderer (plain, tanpa ANSI,
+      tidak berubah dari sekarang) dan console_renderer (warna HANYA kalau
+      sys.stdout.isatty() True dan os.environ.get('TERM') not in ('', 'dumb')
+      -- deteksi langsung di kode, BUKAN lewat env var baru buatan sendiri).
+      Tambah dua fungsi log_session_start()/log_session_end() yang menulis
+      baris pemisah "==== SESSION START/END ... ====" ke kedua handler.
+      Tambah dukungan structlog.contextvars supaya req_id ikut ke tiap baris
+      dalam scope request/sesi WS yang sama.
+    post_commands:
+      - "python -c \"import core.log_config\""
+    dod:
+      - "file lunawave.log tidak pernah mengandung byte escape ANSI walau console berwarna"
+      - "test unit mirror-path tests/core/test_log_config.py diupdate"
+    patchlog: "own"
+
+  - id: O3.1
+    session: 3
+    parallel_ok: false
+    title: "server/middleware/traffic.py — middleware aiohttp terpusat untuk traffic + correlation id"
+    depends_on: [O2.1, O2.2]
+    files: ["server/middleware/traffic.py"]
+    action: >
+      Middleware baru: assign req_id pendek per request (contextvars),
+      hitung HTTP_REQUESTS_TOTAL/HTTP_BYTES_TOTAL, log satu baris ringkas
+      per request selesai (method, path, status, durasi). Tidak menyentuh
+      routing yang sudah ada di server/app.py selain daftar middleware.
+    post_commands: []
+    dod: ["semua request lewat /health tetap dapat status 200 seperti sebelumnya"]
+    patchlog_group: "OG-2"
+
+  - id: O3.2
+    session: 3
+    parallel_ok: false
+    title: "server/app.py — register middleware traffic + AppKey untuk ServerClock"
+    depends_on: [O3.1]
+    files: ["server/app.py"]
+    action: >
+      Tambah middleware ke daftar middleware aiohttp existing (bukan ganti
+      urutan yang sudah ada tanpa alasan). Tambah web.AppKey baru untuk
+      instance ServerClock, ikuti pola AppKey lain di file ini
+      (PLAYBACK_CONTROLLER, STATE, dst).
+    post_commands:
+      - "python automation/architecture_lint.py --json"
+    dod: ["tidak ada NotAppKeyWarning baru"]
+    patchlog_group: "OG-2"
+
+  - id: O3.3
+    session: 3
+    parallel_ok: false
+    title: "server/connection_manager.py — catat connected_at, log durasi sesi saat disconnect"
+    depends_on: [O3.1]
+    files: ["server/connection_manager.py"]
+    action: >
+      connect() simpan timestamp per ws (dict ws->connected_at). disconnect()
+      hitung durasi, log "WebSocket disconnected duration=... total_clients=...",
+      dan observe() durasi ke ACTIVE_USER_SESSION_SECONDS. Tidak mengubah
+      struktur active_connections/authenticated_connections yang sudah ada.
+    post_commands:
+      - "pytest tests/server/test_connection_manager.py -q"
+    dod: ["test existing connection_manager tetap lulus", "test baru untuk durasi sesi ditambahkan"]
+    patchlog_group: "OG-2"
+
+  - id: O4.1
+    session: 4
+    parallel_ok: false
+    title: "server/handlers/http.py — /health tambah uptime_seconds, memory_mb, active_connections"
+    depends_on: [O3.2, O3.3]
+    files: ["server/handlers/http.py"]
+    action: >
+      health_check() ditambah field baru dari ServerClock (AppKey) dan
+      core.mem_stats.get_rss_mb() (fallback null kalau None). Tidak
+      mengubah field status/db/mpv yang sudah ada.
+    post_commands:
+      - "pytest tests/server/handlers/test_http.py -q"
+    dod: ["/health tetap 200 dan backward-compatible dengan field lama"]
+    patchlog_group: "OG-3"
+
+  - id: O4.2
+    session: 4
+    parallel_ok: false
+    title: "Task periodik [STATUS] ke log (uptime, request count, aktif, RAM)"
+    depends_on: [O4.1]
+    files: ["bootstrap/maintenance.py"]
+    action: >
+      Tambah satu background task (pola sama dengan schedule_db_maintenance/
+      start_mpv_watchdog yang sudah ada) yang tiap N menit (misal 15) menulis
+      satu baris ringkasan ke log via structlog, lalu update PROCESS_RSS_MB
+      gauge. Task WAJIB berhenti bersih saat shutdown, ikuti pola cancel
+      task lain di modul ini.
+    post_commands:
+      - "pytest tests/bootstrap/test_maintenance.py -q"
+    dod: ["task tidak jadi zombie thread/task saat shutdown", "interval bisa diverifikasi lewat test dengan waktu dipercepat (mock)"]
+    patchlog_group: "OG-3"
+
+  - id: O5.1
+    session: 5
+    parallel_ok: false
+    title: "Finalisasi: ADR-0010 -> Accepted, update STATUS.md, doctor.py bersih, verifikasi lintas platform"
+    depends_on: [O4.2]
+    files: ["docs/adr/0010-observability-log-baseline.md", "docs/STATUS.md"]
+    action: >
+      Ubah status ADR-0010 dari Proposed ke Accepted. Tambah baris ringkas
+      di STATUS.md. Jalankan checklist verifikasi manual di
+      observability_logging.md §Verifikasi Wajib (start.sh di Termux,
+      start.bat di Windows, grep ANSI di lunawave.log).
+    post_commands:
+      - "python automation/doctor.py --json"
+      - "python automation/generate_file_index.py"
+      - "python automation/generate_report.py"
+    dod: ["doctor.py tanpa FAIL baru", "verifikasi manual lintas platform tercatat di Notes patchlog"]
+    patchlog: "own"
+
+future_work:
+  # Tidak termasuk execution_order di atas -- perlu sign-off terpisah kalau
+  # nanti mau dikerjakan.
+  - id: OF1.1
+    title: "Dashboard visual (Grafana/embedded HTML) di atas /metrics"
+    reason_deferred: "Di luar scope 'log rapi + monitoring dasar' yang diminta; /metrics Prometheus sudah cukup untuk konsumsi tool eksternal."

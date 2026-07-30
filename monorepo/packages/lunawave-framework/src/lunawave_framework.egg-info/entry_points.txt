@@ -1,0 +1,2 @@
+[console_scripts]
+lunawave-doctor = lunawave_framework.automation.doctor:main

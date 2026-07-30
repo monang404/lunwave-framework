@@ -1,0 +1,120 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 04 — store.js jadi Proxy-based reactive store (Temuan E / §4.E, Fase 5)
+# Depends on: TIDAK ADA
+# Risiko: RENDAH | Effort: SEDANG
+# Batasan: TIDAK menambah framework JS (React/Vue/dll) — murni ES modules
+# + Proxy native, sesuai §6 non-negotiable proposal & ADR-0006.
+# Backward-compat WAJIB: `store.field = value` di kode existing manapun
+# harus tetap jalan tanpa perubahan satu baris pun.
+# =============================================================================
+
+phase:
+  id: P04
+  title: "store.js -> Proxy-based reactive store dengan onStoreChange"
+  proposal_ref: "§4.E"
+  closes_temuan: [E]
+  depends_on: []
+
+tasks:
+  - task_id: P04-T1
+    title: "Tambah reactive layer (Proxy + notify + onStoreChange) tanpa ubah shape data"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - web/static/shared/js/store.js
+    steps:
+      - >
+        JANGAN ubah fungsi `createStore()` sama sekali (shape/nama field
+        harus identik 100% dengan yang ada sekarang) — hanya tambah
+        lapisan reactive DI ATASNYA.
+      - >
+        Tambah `const listeners = new Map()` (key: nama field, value:
+        Set of callback) dan `const wildcardListeners = new Set()`
+        (dipanggil untuk SEMUA perubahan field).
+      - >
+        Tambah fungsi internal `notify(key, value, oldValue)` yang
+        memanggil semua listener di `listeners.get(key)` lalu semua
+        `wildcardListeners`.
+      - >
+        Tambah `function createReactiveStore(initial)` yang mengembalikan
+        `new Proxy(initial, { set(target, key, value) {...} })`. Di
+        handler `set`: simpan `oldValue = target[key]`; kalau
+        `oldValue === value` return true TANPA notify (no-op check —
+        WAJIB, ini yang membedakan dari assignment biasa dan mencegah
+        notify berulang untuk nilai yang sama); kalau berbeda, set
+        `target[key] = value`, panggil `notify(key, value, oldValue)`,
+        return true.
+      - "Ganti `export const store = createStore();` menjadi `export const store = createReactiveStore(createStore());`."
+      - >
+        Tambah `export function onStoreChange(key, callback)` — daftarkan
+        callback ke `listeners.get(key)` (buat Set baru kalau belum ada),
+        return unsubscribe function `() => listeners.get(key).delete(callback)`.
+      - >
+        Tambah `export function onAnyStoreChange(callback)` (wildcard
+        subscribe) dengan pola unsubscribe yang sama, untuk kasus modul
+        yang butuh tahu SEMUA perubahan (analog `bus("player:btn-changed")`
+        generik yang ada sekarang, supaya migrasi bisa bertahap).
+      - "Update blok `module.exports` di akhir file untuk include onStoreChange dan onAnyStoreChange (untuk kompatibilitas test yang jalan lewat CommonJS, cek tests/frontend/store.test.js untuk pola import yang dipakai)."
+    acceptance_criteria:
+      - "createStore() tidak berubah satu karakter pun (diff kosong pada fungsi ini)."
+      - "`store.status = 'PLAYING'` di kode existing manapun (grep semua consumer di web/static/shared/js/render/*, events/*, audio/*) tetap berfungsi tanpa modifikasi caller."
+      - "onStoreChange('status', fn) terpanggil saat store.status berubah, TIDAK terpanggil saat di-assign nilai yang SAMA (no-op check)."
+    tests:
+      add:
+        - tests/frontend/store-reactive.test.js
+      run:
+        - "npx vitest run tests/frontend/store-reactive.test.js"
+        - "npx vitest run tests/frontend/store.test.js"
+
+  - task_id: P04-T2
+    title: "Test regresi penuh + verifikasi tidak ada consumer yang patah"
+    depends_on: [P04-T1]
+    touches_locked_files: false
+    files:
+      create:
+        - tests/frontend/store-reactive.test.js
+    steps:
+      - >
+        Buat tests/frontend/store-reactive.test.js dengan kasus: (1)
+        subscribe ke field spesifik lalu ubah nilainya -> callback
+        terpanggil dengan (newValue, oldValue) yang benar; (2) assign
+        nilai identik -> callback TIDAK terpanggil; (3) unsubscribe
+        (panggil fungsi return dari onStoreChange) -> callback tidak
+        lagi terpanggil setelah itu; (4) onAnyStoreChange terpanggil
+        untuk perubahan field APAPUN; (5) field yang tidak pernah
+        di-assign ulang (mis. hanya dibaca) tidak memicu notify palsu.
+      - "Jalankan seluruh suite tests/frontend/*.test.js (bukan cuma file baru) untuk memastikan store.js versi Proxy tidak meregresi ws-routing.test.js, ws-connect.test.js, pause-race.test.js yang sudah ada."
+    acceptance_criteria:
+      - "Seluruh suite `npx vitest run` di tests/frontend hijau, termasuk file yang sudah ada sebelumnya (pause-race.test.js, ws-routing.test.js, ws-connect.test.js)."
+    tests:
+      run:
+        - "npx vitest run"
+    patchlog:
+      type: refactor
+      area: "web/static/shared/js"
+      title: "store.js jadi Proxy-based reactive store (backward-compatible)"
+      reason: >
+        FIX-PAUSE-RACE-01 membuktikan bahwa tanpa satu sumber kebenaran
+        reactive, modul konsumen (ws.js, playback-sync.js) terpaksa
+        menyimpan salinan/derivasi state manual dengan nilai berbeda
+        (grace-window 1200ms vs 1500ms) untuk konsep yang sama.
+      root_cause: >
+        store.js adalah plain mutable object tanpa mekanisme notifikasi
+        perubahan -- konsumen tidak bisa subscribe ke field tertentu,
+        hanya bisa polling atau pakai event bus generik terpisah.
+      solution: >
+        Proxy-based reactive layer di atas createStore() yang sudah ada,
+        tanpa mengubah shape data. onStoreChange(key, cb) untuk
+        subscribe granular, onAnyStoreChange(cb) untuk wildcard. Migrasi
+        consumer existing ke API baru ini TIDAK dilakukan di fase ini --
+        itu scope file 05 (untuk pendingToggleTarget/toggleSentAt) dan
+        pekerjaan lanjutan di luar plan ini untuk consumer lain.
+      files: "web/static/shared/js/store.js, tests/frontend/store-reactive.test.js"
+
+post_phase_commands:
+  - "npx vitest run"
+  - "python automation/doctor.py"
+  - "python automation/generate_file_index.py"

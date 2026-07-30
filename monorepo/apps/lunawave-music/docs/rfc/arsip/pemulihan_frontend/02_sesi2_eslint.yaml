@@ -1,0 +1,394 @@
+# 02_sesi2_eslint.yaml
+# Sesi 2 — Bereskan 70 eslint warning (0 error tetap 0). Boleh paralel
+# dengan sesi 1 dan 3. TIDAK BOLEH paralel dengan sesi 4 (circular-deps)
+# karena sama-sama menyentuh web/static/shared/js/services/auth.js.
+#
+# Data di file ini diambil LANGSUNG dari `npx eslint . -f json` sungguhan,
+# bukan estimasi dari dokumen rencana. Breakdown 54 no-unused-vars berbeda
+# dari klaim dokumen asli (lihat 00_INDEX.yaml > koreksi_terhadap_rencana_asli).
+#
+# PERINGATAN KHUSUS str_replace: beberapa baris target di cover-art.js
+# PERSIS IDENTIK satu sama lain (baris 35 dan 66 sama-sama
+# `        } catch(e) {}`). old_str berbasis teks akan GAGAL karena tidak
+# unik. Gunakan editor berbasis NOMOR BARIS untuk kasus ini (mis. sed -i
+# dengan address baris, atau view+ganti manual per baris, bukan str_replace
+# global). Sudah ditandai eksplisit di task 2.3 di bawah.
+
+session: 2
+parallel_ok: true
+risk: low
+depends_on: []
+tidak_boleh_paralel_dengan_sesi: [4]
+
+tasks:
+  # ============================================================
+  - id: S2.1
+    title: "no-unused-vars — hapus/perbaiki 37 import specifier tidak terpakai"
+    rule: no-unused-vars
+    jumlah_diselesaikan: 37
+    edits:
+      - file: "tests/frontend/pause-race.test.js"
+        line: 4
+        cari_persis: 'import { dom } from "../../web/static/shared/js/dom.js";'
+        aksi: "hapus seluruh baris"
+      - file: "tests/frontend/pause-race.test.js"
+        line: 5
+        cari_persis: 'import * as toast from "../../web/static/shared/js/render/toast.js";'
+        aksi: "hapus seluruh baris"
+      - file: "tests/frontend/ws-routing.test.js"
+        line: 6
+        cari_persis: 'import * as auth from "../../web/static/shared/js/services/auth.js";'
+        aksi: "hapus seluruh baris"
+      - file: "tests/frontend/ws-routing.test.js"
+        line: 7
+        cari_persis: 'import * as fullState from "../../web/static/shared/js/render/full-state.js";'
+        aksi: "hapus seluruh baris"
+      - file: "tests/frontend/ws-routing.test.js"
+        line: 10
+        cari_persis: 'import * as nowPlaying from "../../web/static/shared/js/render/now-playing.js";'
+        aksi: "hapus seluruh baris"
+      - file: "tests/frontend/ws-routing.test.js"
+        line: 11
+        cari_persis: 'import * as player from "../../web/static/shared/js/render/player.js";'
+        aksi: "hapus seluruh baris"
+      - file: "tests/frontend/ws-routing.test.js"
+        line: 12
+        cari_persis: 'import * as queue from "../../web/static/shared/js/render/queue.js";'
+        aksi: "hapus seluruh baris"
+      - file: "tests/frontend/ws-routing.test.js"
+        line: 13
+        cari_persis: 'import * as radioTab from "../../web/static/shared/js/render/radio-tab.js";'
+        aksi: "hapus seluruh baris"
+        catatan: "Setelah 6 penghapusan di file ini, cek tidak ada baris kosong berlebih tersisa (rapikan spasi antar import yang masih dipakai)."
+      - file: "web/static/pages/app/main.js"
+        line: 4
+        cari_persis: 'import { initPortal, initSetupCheck } from "../../shared/js/portal.js";'
+        ganti_dengan: 'import { initSetupCheck } from "../../shared/js/portal.js";'
+        aksi: "edit sebagian — hapus specifier initPortal saja, initSetupCheck tetap dipakai"
+      - file: "web/static/pages/client/chat.js"
+        line: 1
+        cari_persis: 'import { login } from "../../shared/js/services/auth.js";'
+        aksi: "hapus seluruh baris"
+      - file: "web/static/pages/client/chat.js"
+        line: 3
+        cari_persis: 'import { escapeHtml, formatTime } from "../../shared/js/utils/format.js";'
+        aksi: "hapus seluruh baris (kedua specifier sama-sama tidak dipakai)"
+      - file: "web/static/pages/client/chat.js"
+        line: 4
+        cari_persis: 'import { ws, wsSend } from "../../shared/js/ws.js";'
+        ganti_dengan: 'import { wsSend } from "../../shared/js/ws.js";'
+        aksi: "edit sebagian — hapus specifier ws saja, wsSend tetap dipakai"
+      - file: "web/static/pages/client/client.js"
+        line: 2
+        cari_persis: 'import { dom, initDOM } from "../../shared/js/dom.js";'
+        ganti_dengan: 'import { initDOM } from "../../shared/js/dom.js";'
+        aksi: "edit sebagian — hapus specifier dom saja, initDOM tetap dipakai"
+      - file: "web/static/pages/client/client.js"
+        line: 5
+        cari_persis: 'import { logout } from "../../shared/js/services/auth.js";'
+        aksi: "hapus seluruh baris"
+      - file: "web/static/pages/client/client.js"
+        line: 8
+        cari_persis: 'import { cleanTrackTitle, getCoverArt } from "../../shared/js/utils/cover-art.js";'
+        aksi: "hapus seluruh baris (kedua specifier sama-sama tidak dipakai)"
+      - file: "web/static/shared/js/dom.js"
+        line: 1
+        cari_persis: 'import { login, logout } from "./services/auth.js";'
+        aksi: "hapus seluruh baris (kedua specifier sama-sama tidak dipakai)"
+        dampak_tambahan: >
+          Ini menghapus SATU-SATUNYA edge dom.js->services/auth.js di
+          dependency graph, yang jadi pusat dari sebagian besar
+          circular-dependencies (lihat 04_sesi4_circular_deps.yaml). Efek
+          samping baik, tidak perlu tindakan tambahan di sini.
+      - file: "web/static/shared/js/events/discover-search-events.js"
+        line: 2
+        cari_persis: 'import { buildDecadeChips, getDecade } from "../render/discover-personalize.js";'
+        aksi: "hapus seluruh baris (kedua specifier sama-sama tidak dipakai)"
+      - file: "web/static/shared/js/render/discover-personalize.js"
+        line: 6
+        cari_persis: 'import { loadLazyCovers } from "../utils/cover-art.js";'
+        aksi: "hapus seluruh baris"
+      - file: "web/static/shared/js/render/discover-search.js"
+        line: 4
+        cari_persis: 'import { cleanTrackTitle, loadLazyCovers } from "../utils/cover-art.js";'
+        ganti_dengan: 'import { cleanTrackTitle } from "../utils/cover-art.js";'
+        aksi: "edit sebagian — hapus specifier loadLazyCovers saja, cleanTrackTitle tetap dipakai"
+      - file: "web/static/shared/js/render/discover-search.js"
+        line: 5
+        cari_persis: 'import { ws, wsSend } from "../ws.js";'
+        aksi: "hapus seluruh baris (kedua specifier sama-sama tidak dipakai)"
+      - file: "web/static/shared/js/render/discover-tab.js"
+        line: 6
+        cari_persis: 'import { cleanTrackTitle, loadLazyCovers } from "../utils/cover-art.js";'
+        ganti_dengan: 'import { cleanTrackTitle } from "../utils/cover-art.js";'
+        aksi: "edit sebagian — hapus specifier loadLazyCovers saja, cleanTrackTitle tetap dipakai (BEDA dengan discover-search.js di atas, di file ini cleanTrackTitle memang dipakai)"
+      - file: "web/static/shared/js/render/now-playing.js"
+        line: 4
+        cari_persis: 'import { cleanTrackTitle, extractDominantColor, getCoverArt } from "../utils/cover-art.js";'
+        ganti_dengan: 'import { cleanTrackTitle } from "../utils/cover-art.js";'
+        aksi: "edit sebagian — hapus extractDominantColor dan getCoverArt, cleanTrackTitle tetap dipakai"
+      - file: "web/static/shared/js/render/now-playing.js"
+        line: 5
+        cari_persis: 'import { ws } from "../ws.js";'
+        aksi: "hapus seluruh baris"
+      - file: "web/static/shared/js/render/queue.js"
+        line: 2
+        cari_persis: 'import { isDraggingQueue } from "../events/queue-events.js";'
+        aksi: "hapus seluruh baris"
+      - file: "web/static/shared/js/render/queue.js"
+        line: 5
+        cari_persis: 'import { cleanTrackTitle, loadLazyCovers } from "../utils/cover-art.js";'
+        ganti_dengan: 'import { cleanTrackTitle } from "../utils/cover-art.js";'
+        aksi: "edit sebagian — hapus loadLazyCovers saja, cleanTrackTitle tetap dipakai"
+      - file: "web/static/shared/js/render/search.js"
+        line: 4
+        cari_persis: 'import { cleanTrackTitle, loadLazyCovers } from "../utils/cover-art.js";'
+        ganti_dengan: 'import { cleanTrackTitle } from "../utils/cover-art.js";'
+        aksi: "edit sebagian — hapus loadLazyCovers saja, cleanTrackTitle tetap dipakai"
+      - file: "web/static/shared/js/store.js"
+        line: 1
+        cari_persis: 'import { ws } from "./ws.js";'
+        aksi: "hapus seluruh baris"
+        dampak_tambahan: "Menghapus edge store.js->ws.js dari dependency graph, mengurangi circular-dependencies (lihat 04_sesi4_circular_deps.yaml)."
+      - file: "web/static/shared/js/ws.js"
+        line: 14
+        cari_persis: 'import { applyRoleUI, login, logout } from "./services/auth.js";'
+        ganti_dengan: 'import { applyRoleUI, logout } from "./services/auth.js";'
+        aksi: "edit sebagian — hapus login saja, applyRoleUI dan logout tetap dipakai"
+      - file: "web/static/shared/js/portal.js"
+        line: 2
+        cari_persis: 'import { applyRoleUI, login } from "./services/auth.js";'
+        ganti_dengan: 'import { applyRoleUI } from "./services/auth.js";'
+        aksi: "edit sebagian — hapus login saja, applyRoleUI tetap dipakai"
+      - file: "web/static/shared/js/services/auth.js"
+        line: 3
+        cari_persis: 'import { switchTab, updateSetupSubmitState } from "../events/index.js";'
+        ganti_dengan: 'import { switchTab } from "../events/index.js";'
+        aksi: "edit sebagian — hapus updateSetupSubmitState saja, switchTab tetap dipakai"
+      - file: "web/static/shared/js/services/auth.js"
+        line: 6
+        cari_persis: 'import { renderHeader, ws, wsSend } from "../ws.js";'
+        ganti_dengan: 'import { renderHeader, wsSend } from "../ws.js";'
+        aksi: "edit sebagian — hapus ws saja, renderHeader dan wsSend tetap dipakai"
+    verifikasi: "npx eslint . -f json | python3 -c \"import json,sys; d=json.load(sys.stdin); print(sum(len(f['messages']) for f in d))\" -> harus 33 (70 dikurangi 37 yang diselesaikan task ini)"
+    patchlog_group: session_2
+
+  # ============================================================
+  - id: S2.2
+    title: "no-unused-vars — 5 dead/false-positive local declaration (butuh keputusan, bukan mekanis murni)"
+    rule: no-unused-vars
+    jumlah_diselesaikan: 5
+    edits:
+      - file: "web/static/pages/admin-logs/admin-logs.js"
+        line: 40
+        isu: "FALSE POSITIVE — function navigateToLiveTail didefinisikan dan DIPAKAI, tapi hanya lewat string HTML `onclick=\"navigateToLiveTail('${cat}', '${lvl}')\"` di baris 337 (template literal), yang tidak dilihat eslint sebagai referensi nyata."
+        keputusan: "JANGAN hapus fungsi ini — akan merusak fitur klik sel tabel log. Tambah komentar eslint-disable tepat di atas definisi fungsi."
+        cari_persis: "function navigateToLiveTail(cat, level) {"
+        ganti_dengan: |
+          // eslint-disable-next-line no-unused-vars -- dipanggil lewat inline onclick di template literal baris ~337, bukan referensi langsung
+          function navigateToLiveTail(cat, level) {
+      - file: "web/static/pages/admin-logs/admin-logs.js"
+        line: 49
+        isu: "Dead code — reconnectTimer dideklarasikan dan diberi null, tidak pernah dibaca/direassign di tempat lain di file ini."
+        keputusan: "Hapus deklarasi, benar-benar mati."
+        cari_persis: "let reconnectTimer = null;"
+        aksi: "hapus seluruh baris"
+      - file: "web/static/shared/js/render/radio-hero-moon.js"
+        line: 32
+        isu: "Dead code — moonHeroEl diambil dari DOM tapi tidak pernah dipakai setelahnya di file ini."
+        keputusan: "Hapus deklarasi, benar-benar mati."
+        cari_persis: 'const moonHeroEl = document.getElementById("radio-toggle-btn");'
+        aksi: "hapus seluruh baris"
+      - file: "web/static/shared/js/render/discover-search.js"
+        line: 21
+        isu: "Dead state — _discoverSearchLastQuery di-assign di 2 tempat (baris 63 dan 81) tapi tidak pernah DIBACA (tidak pernah dipakai di kondisi/perbandingan manapun di file ini)."
+        keputusan: "Hapus deklarasi DAN kedua assignment-nya (bukan cuma deklarasi), karena assignment yang value-nya tak pernah dibaca juga dead code."
+        cari_persis: 'let _discoverSearchLastQuery = "";'
+        aksi: "hapus baris deklarasi (baris 21) DAN hapus baris `_discoverSearchLastQuery = query;` (baris 63) DAN baris `_discoverSearchLastQuery = \"\";` (baris 81) — total 3 baris dihapus dari file ini"
+      - file: "web/static/pages/client/client.js"
+        line: 75
+        isu: >
+          KOMPLEKS — function showLogToast didefinisikan lokal untuk
+          menimpa showLogToast global (readonly di eslint.config.js), sesuai
+          komentar di baris 72-74: aslinya (di render/toast.js) menyentuh
+          dom.logToast yang tidak ada di client.html, dan override ini
+          dimaksudkan supaya playback-sync.js tidak throw saat memanggil
+          showLogToast. TAPI: fungsi lokal ini TIDAK PERNAH DIPANGGIL dan
+          TIDAK PERNAH di-assign ke `window.showLogToast` di file ini —
+          override yang dimaksud komentar itu SEBENARNYA TIDAK PERNAH
+          TERPASANG. Ini kemungkinan bug laten di luar scope eslint-cleanup
+          (mengubah agar benar-benar ter-wire akan mengubah behavior
+          runtime, bukan sekadar silence warning).
+        keputusan: >
+          Scope task ini HANYA membereskan eslint warning tanpa mengubah
+          behavior. JANGAN menambahkan `window.showLogToast = showLogToast;`
+          (itu perubahan behavior, di luar scope mekanis sesi ini). Cukup
+          tambah eslint-disable comment, DAN catat temuan ini di Notes
+          PATCHLOG task ini supaya tidak hilang sebagai tindak lanjut
+          terpisah nanti.
+        cari_persis: "function showLogToast(msg) {"
+        ganti_dengan: |
+          // eslint-disable-next-line no-unused-vars -- dimaksudkan sebagai override shadow untuk global showLogToast (lihat komentar di atas), TAPI belum pernah benar-benar di-assign ke window.showLogToast di file ini. Dibiarkan sesuai scope mekanis eslint-cleanup; TIDAK diperbaiki wiring-nya di sini karena itu perubahan behavior. Lihat Notes PATCHLOG task S2.2.
+          function showLogToast(msg) {
+    verifikasi: "npx eslint . -f json | python3 -c \"import json,sys; d=json.load(sys.stdin); print(sum(len(f['messages']) for f in d))\" -> harus 28 (33 dikurangi 5)"
+    patchlog_group: session_2
+
+  # ============================================================
+  - id: S2.3
+    title: "no-unused-vars (catch/arrow param) + no-empty — 12 titik gabungan"
+    rule: "no-unused-vars + no-empty"
+    jumlah_diselesaikan: "12 no-unused-vars + 9 no-empty (beririsan di titik yang sama)"
+    peringatan: >
+      2 baris di cover-art.js (baris 35 dan 66) PERSIS IDENTIK teksnya
+      (`        } catch(e) {}`). JANGAN pakai pencarian teks global untuk
+      keduanya — edit berdasarkan NOMOR BARIS (mis. baca file, hitung baris,
+      atau pakai `sed -n '35p;66p'` untuk konfirmasi sebelum edit per-baris
+      dengan `sed -i '35s/.../.../'` dan `sed -i '66s/.../.../'` terpisah).
+    edits:
+      - file: "web/static/shared/js/utils/cover-art.js"
+        line: 24
+        empty: false
+        isi_lama: "        } catch(e) { return null; }"
+        isi_baru: "        } catch { return null; }"
+      - file: "web/static/shared/js/utils/cover-art.js"
+        line: 27
+        empty: true
+        isi_lama: '        try { localStorage.setItem(key, value); } catch(e) {}'
+        isi_baru: '        try { localStorage.setItem(key, value); } catch { /* best-effort, aman diabaikan */ }'
+      - file: "web/static/shared/js/utils/cover-art.js"
+        line: 35
+        empty: true
+        isi_lama: "        } catch(e) {}"
+        isi_baru: "        } catch { /* best-effort, aman diabaikan */ }"
+        catatan_duplikat: "TEKS INI SAMA PERSIS DENGAN BARIS 66 DI FILE YANG SAMA — edit pakai nomor baris 35, jangan pakai pencarian teks."
+      - file: "web/static/shared/js/utils/cover-art.js"
+        line: 66
+        empty: true
+        isi_lama: "        } catch(e) {}"
+        isi_baru: "        } catch { /* best-effort, aman diabaikan */ }"
+        catatan_duplikat: "TEKS INI SAMA PERSIS DENGAN BARIS 35 DI FILE YANG SAMA — edit pakai nomor baris 66, jangan pakai pencarian teks."
+      - file: "web/static/shared/js/utils/cover-art.js"
+        line: 158
+        empty: true
+        isi_lama: "            } catch (e) {}"
+        isi_baru: "            } catch { /* best-effort, aman diabaikan */ }"
+      - file: "web/static/shared/js/services/auth.js"
+        line: 158
+        empty: true
+        isi_lama: "                } catch (e) {}"
+        isi_baru: "                } catch { /* best-effort, aman diabaikan */ }"
+      - file: "web/static/shared/js/services/auth.js"
+        line: 167
+        empty: true
+        isi_lama: "            } catch (e) {}"
+        isi_baru: "            } catch { /* best-effort, aman diabaikan */ }"
+      - file: "web/static/shared/js/audio/playback-sync.js"
+        line: 65
+        empty: false
+        catatan: "Bukan catch — ini arrow function param `audio.onerror = (e) => { ... }`. Body pakai audio.error, bukan param e, jadi param aman dihapus total."
+        isi_lama: "        audio.onerror = (e) => {"
+        isi_baru: "        audio.onerror = () => {"
+      - file: "web/static/shared/js/audio/playback-sync.js"
+        line: 403
+        empty: true
+        isi_lama: "    } catch (e) { }"
+        isi_baru: "    } catch { /* best-effort, aman diabaikan */ }"
+      - file: "web/static/shared/js/events/progress-events.js"
+        line: 62
+        empty: true
+        isi_lama: '            try { dom.pbProgressTrack.releasePointerCapture(e.pointerId); } catch (err) {}'
+        isi_baru: '            try { dom.pbProgressTrack.releasePointerCapture(e.pointerId); } catch { /* best-effort, aman diabaikan */ }'
+      - file: "web/static/shared/js/render/discover-tab.js"
+        line: 275
+        empty: true
+        isi_lama: "            } catch(_) {}"
+        isi_baru: "            } catch { /* best-effort, aman diabaikan */ }"
+      - file: "web/static/pages/admin-logs/admin-logs.js"
+        line: 810
+        empty: false
+        isi_lama: "    } catch(e) {"
+        isi_baru: "    } catch {"
+        catatan: "Baris ini bagian dari block multi-baris (catch { return ''; }), cukup ganti baris pembuka catch-nya saja, baris `return '';` dan `}` penutup di bawahnya TIDAK berubah."
+    verifikasi: "npx eslint . -f json | python3 -c \"import json,sys; d=json.load(sys.stdin); print(sum(len(f['messages']) for f in d))\" -> harus 15 (28 dikurangi 12 no-unused-vars, no-empty otomatis ikut 0 di titik yang sama)"
+    patchlog_group: session_2
+
+  # ============================================================
+  - id: S2.4
+    title: "no-case-declarations — 7 titik (ws.js x6, keyboard-shortcut-events.js x1)"
+    rule: no-case-declarations
+    jumlah_diselesaikan: 7
+    edits:
+      - file: "web/static/shared/js/ws.js"
+        deskripsi: "Seluruh case \"progress\": (baris 197 s/d break; di baris 353) berisi 3 deklarasi const/let (baris 222, 225, 226, 232) yang kena no-case-declarations, plus 2 lagi (baris 268, 269). Bungkus SELURUH isi case ini dengan blok { }. Dilakukan lewat 2 edit terpisah di bawah, dalam urutan ini."
+        edit_1_buka_kurung:
+          lokasi_baris: 197
+          cari_persis: 'case "progress":'
+          ganti_dengan: 'case "progress": {'
+        edit_2_tutup_kurung:
+          lokasi_baris: "351-354"
+          catatan: "Cari 4 baris berurutan persis berikut ini (unik, hanya muncul sekali di file), lalu sisipkan satu baris `}` tepat SEBELUM baris `case \"lyrics\":` — JANGAN menutup lebih awal dari ini (akan memotong statement if/const di tengah case)."
+          cari_4_baris_berurutan:
+            - "                    syncBrowserAudio();"
+            - "                    if (typeof syncLocalLyrics === \"function\") syncLocalLyrics();"
+            - "                    break;"
+            - "                case \"lyrics\":"
+          ganti_dengan_5_baris:
+            - "                    syncBrowserAudio();"
+            - "                    if (typeof syncLocalLyrics === \"function\") syncLocalLyrics();"
+            - "                    break;"
+            - "                }"
+            - "                case \"lyrics\":"
+      - file: "web/static/shared/js/events/keyboard-shortcut-events.js"
+        deskripsi: >
+          case "r": / case "R": (fallthrough) berisi `const newMode = ...`
+          di baris 73 yang kena no-case-declarations. Bungkus case block ini
+          dengan { }.
+        cari_persis: |
+                  case "r":
+                  case "R":
+                      if (store.userRole !== "admin") return;
+                      if (store.status === "LOADING") break;
+                      const newMode = store.playback_mode === "RADIO" ? "QUEUE" : "RADIO";
+                      wsSend("set_mode", { mode: newMode });
+                      break;
+        ganti_dengan: |
+                  case "r":
+                  case "R": {
+                      if (store.userRole !== "admin") return;
+                      if (store.status === "LOADING") break;
+                      const newMode = store.playback_mode === "RADIO" ? "QUEUE" : "RADIO";
+                      wsSend("set_mode", { mode: newMode });
+                      break;
+                  }
+        lokasi_baris: "69-75"
+    verifikasi: "npx eslint . -f json | python3 -c \"import json,sys; d=json.load(sys.stdin); print(sum(len(f['messages']) for f in d))\" -> harus 0"
+    patchlog_group: session_2
+
+patchlog_cmd_gabungan: |
+  # Ditulis SATU KALI setelah S2.1-S2.4 semua selesai dan eslint 0 warning,
+  # sesuai patchlog_group: session_2 di atas.
+  python automation/patchlog.py add \
+    --type Cleanup --area Frontend --priority Low \
+    --title "Bereskan seluruh 70 eslint warning (no-unused-vars, no-empty, no-case-declarations)" \
+    --reason "eslint 0 error tapi 70 warning tersisa pasca PATCH-223, perlu 0 warning sesuai definisi selesai RFC" \
+    --files "tests/frontend/pause-race.test.js,tests/frontend/ws-routing.test.js,web/static/pages/app/main.js,web/static/pages/client/chat.js,web/static/pages/client/client.js,web/static/pages/admin-logs/admin-logs.js,web/static/shared/js/dom.js,web/static/shared/js/store.js,web/static/shared/js/ws.js,web/static/shared/js/portal.js,web/static/shared/js/services/auth.js,web/static/shared/js/audio/playback-sync.js,web/static/shared/js/events/progress-events.js,web/static/shared/js/events/discover-search-events.js,web/static/shared/js/events/keyboard-shortcut-events.js,web/static/shared/js/render/discover-personalize.js,web/static/shared/js/render/discover-search.js,web/static/shared/js/render/discover-tab.js,web/static/shared/js/render/now-playing.js,web/static/shared/js/render/queue.js,web/static/shared/js/render/search.js,web/static/shared/js/render/radio-hero-moon.js,web/static/shared/js/utils/cover-art.js" \
+    --root-cause "Import specifier tak terpakai (mayoritas), 2 dead local variable, 1 false-positive (dipakai lewat inline onclick), 1 override yang belum ter-wire ke window, 11 catch/arrow param tak terpakai, 7 deklarasi const/let langsung di case block tanpa {}" \
+    --solution "Hapus/kecilkan import yang tak dipakai per specifier (bukan hapus file), hapus 2 dead var, tambah eslint-disable-next-line untuk 2 kasus false-positive/butuh keputusan manusia (dicatat di Notes), ganti catch(e){} jadi catch{} dengan komentar best-effort, bungkus 2 case block dengan {}" \
+    --tests "npx eslint . -> 0 error 0 warning; npx vitest run -> semua pass" \
+    --breaking No --risk Low --status Merged \
+    --related PATCH-2026-07-24-223 \
+    --notes "Temuan di luar scope task ini, TIDAK diperbaiki (butuh keputusan produk terpisah): web/static/pages/client/client.js showLogToast() dimaksudkan override global showLogToast tapi tidak pernah di-assign ke window.showLogToast, jadi override-nya tidak pernah benar-benar aktif — lihat komentar baris 72-74 di file tsb."
+
+checkpoint_cmd: >
+  zip -rq checkpoints/lunawave-S2-eslint.zip . -x ".git/*" -x "*__pycache__*"
+  -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+  -x "*.DS_Store" -x "checkpoints/*"
+catatan_checkpoint: >
+  Karena 4 task (S2.1-S2.4) berbagi satu patchlog_group, buat SATU checkpoint
+  zip di akhir sesi (setelah S2.4 dan setelah patchlog_cmd_gabungan
+  dijalankan), bukan 4 zip terpisah.
+
+verifikasi_sesi_selesai:
+  - "npx eslint . -> 0 error, 0 warning"
+  - "npx vitest run -> semua test tetap pass (tidak ada regresi behavior)"
+  - "1 entry baru di docs/PATCHLOG.md dengan area Frontend, title menyebut eslint warning"

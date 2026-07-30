@@ -1,0 +1,233 @@
+%YAML 1.1
+---
+# =============================================================================
+# LunaWave — Rencana Implementasi Perbaikan Arsitektur
+# File index & keputusan. BACA FILE INI PERTAMA.
+#
+# Sumber: proposal_perbaikan_arsitektur.md (RFC v1.0, 2026-07-26)
+# Status keputusan: SEMUA pertanyaan terbuka di §8 proposal sudah DIPUTUSKAN
+# di bawah ini (lihat `decisions`). Tidak ada open question tersisa untuk
+# file 01-08. Setiap file task siap dieksekusi tanpa perlu bertanya balik
+# ke user, kecuali eksekutor menemukan fakta kode yang KONTRADIKTIF dengan
+# asumsi di sini (lihat `deviation_protocol`).
+# =============================================================================
+
+meta:
+  project: LunaWave
+  rfc_source: proposal_perbaikan_arsitektur.md
+  generated: "2026-07-26"
+  authorization: >
+    Pemilik project memberi izin eksplisit dan menyeluruh untuk AI mengedit
+    file apapun (termasuk file yang berstatus "locked"/butuh persetujuan
+    eksplisit di AI_CONTEXT.md) demi mencapai tujuan RFC ini, disampaikan
+    langsung dalam sesi permintaan pembuatan rencana ini. Ini dicatat sebagai
+    bentuk persetujuan eksplisit yang disyaratkan AI_CONTEXT.md untuk
+    menyentuh `server/handlers/websocket.py` dan `engine/playback/controller.py`.
+    WAJIB dicatat ulang di PATCHLOG.md entry masing-masing task yang
+    menyentuh file locked (lihat field `patchlog.notes` di tiap task terkait)
+    supaya jejak persetujuan tetap auditable, bukan cuma tersirat.
+  principle: >
+    Setiap fase independen dan boleh dihentikan tanpa meninggalkan kode
+    dalam keadaan rusak (non-breaking per task). Urutan eksekusi di bawah
+    berdasarkan DEPENDENCY GRAFIK, bukan urutan Temuan A-H atau Fase 1-7 di
+    laporan naratif.
+
+# -----------------------------------------------------------------------------
+# Pemetaan nomor file (urutan eksekusi) -> Fase/Temuan asli di proposal,
+# supaya tetap bisa ditelusuri balik ke narasi §3/§4/§5.
+# -----------------------------------------------------------------------------
+file_map:
+  - file: 01_circuit_breaker_state_machine.yaml
+    proposal_fase: 1
+    proposal_temuan: D
+    area: engine/playback
+  - file: 02_ws_command_schema_validation.yaml
+    proposal_fase: 3
+    proposal_temuan: C
+    area: server/handlers
+  - file: 03_handlers_context_import_cleanup.yaml
+    proposal_fase: 2
+    proposal_temuan: B
+    area: server/handlers
+  - file: 04_frontend_reactive_store.yaml
+    proposal_fase: 5
+    proposal_temuan: E
+    area: web/static/shared/js
+  - file: 05_frontend_globalthis_migration.yaml
+    proposal_fase: 6
+    proposal_temuan: F
+    area: web/static/shared/js
+  - file: 06_ws_module_split.yaml
+    proposal_fase: 7
+    proposal_temuan: G
+    area: web/static/shared/js
+  - file: 07_command_bus_dependency_injection.yaml
+    proposal_fase: 4
+    proposal_temuan: A
+    area: core, server/handlers, engine, plugins
+  - file: 08_backlog_deferred.yaml
+    proposal_fase: null
+    proposal_temuan: H
+    area: web/static/pages
+    note: "Deferred, TIDAK dieksekusi dalam plan ini. Lihat decisions.d5."
+
+# -----------------------------------------------------------------------------
+# Dependency graph antar file (bukan antar task individual — lihat tiap file
+# untuk dependency task-level internal).
+# -----------------------------------------------------------------------------
+dependency_graph:
+  01_circuit_breaker_state_machine.yaml: []
+  02_ws_command_schema_validation.yaml: []
+  03_handlers_context_import_cleanup.yaml: []
+  04_frontend_reactive_store.yaml: []
+  05_frontend_globalthis_migration.yaml:
+    - 04_frontend_reactive_store.yaml   # butuh store.js versi Proxy + onStoreChange sudah ada
+  06_ws_module_split.yaml: []
+  07_command_bus_dependency_injection.yaml:
+    - 03_handlers_context_import_cleanup.yaml  # accessor get_command_bus butuh context.py sudah rapi
+  08_backlog_deferred.yaml: []   # tidak dieksekusi; berdiri sendiri sebagai catatan
+
+# -----------------------------------------------------------------------------
+# Urutan eksekusi final, hasil topological sort dari dependency_graph di atas.
+# Identik dengan rekomendasi §5 proposal (1→3→2→5→6→7→4) karena urutan itu
+# sudah dependency-safe dari awal — tidak ada perubahan urutan.
+# -----------------------------------------------------------------------------
+execution_order:
+  - 01_circuit_breaker_state_machine.yaml
+  - 02_ws_command_schema_validation.yaml
+  - 03_handlers_context_import_cleanup.yaml
+  - 04_frontend_reactive_store.yaml
+  - 05_frontend_globalthis_migration.yaml
+  - 06_ws_module_split.yaml
+  - 07_command_bus_dependency_injection.yaml
+  # 08 sengaja tidak masuk urutan eksekusi (deferred / backlog only)
+
+# -----------------------------------------------------------------------------
+# Keputusan yang menutup SEMUA "Keputusan yang Perlu Persetujuan User" (§8
+# proposal). Setiap task file mengasumsikan keputusan ini sudah final.
+# -----------------------------------------------------------------------------
+decisions:
+  d1_urutan_fase:
+    pertanyaan_asli: "Apakah urutan 1→3→2→5→6→7→4 disetujui?"
+    keputusan: "YA, dipakai apa adanya — lihat execution_order di atas."
+    rasional: >
+      Task paling additive & berisiko rendah (circuit breaker, schema
+      validation) dieksekusi lebih dulu untuk memvalidasi proses RFC ini
+      dengan risiko terkecil. Command-bus DI (dampak terluas) diletakkan
+      terakhir dan dibuat bergantung (depends_on) pada beres-nya cleanup
+      accessor di file 03, bukan cuma direkomendasikan.
+
+  d2_threshold_circuit_breaker:
+    pertanyaan_asli: "Threshold tetap 3 (hardcoded) atau configurable via config.py?"
+    keputusan: >
+      TETAP hardcoded sebagai default constructor (threshold: int = 3),
+      TIDAK diekspos ke config.py pada task ini.
+    rasional: >
+      YAGNI — proposal sendiri tidak punya kebutuhan konkret untuk
+      mengubah nilai ini per-environment. Karena constructor sudah
+      menerima threshold sebagai parameter eksplisit, membuatnya
+      configurable nanti (kalau memang dibutuhkan) adalah perubahan
+      1-baris di pemanggilan constructor, bukan perubahan struktural —
+      jadi tidak menutup opsi itu, hanya tidak dikerjakan sekarang supaya
+      scope task 01 tetap kecil dan murni additive.
+
+  d3_cakupan_command_validation:
+    pertanyaan_asli: >
+      Fase 3: cukup 4 command paling rawan, atau langsung seluruh
+      PLAYBACK_CMDS/QUEUE_CMDS (25 command)?
+    keputusan: >
+      Mulai dari 4 command yang disebut proposal (volume_set, set_speed,
+      lyrics_offset, set_sleep_timer) di task 02. Command lain TIDAK
+      divalidasi dalam plan ini.
+    rasional: >
+      Mengurangi blast radius per task dan memvalidasi pola
+      ws_schemas.py dulu di command yang paling sering menerima input
+      numerik user (paling rawan ValueError bocor ke client). Command
+      lain jadi backlog eksplisit — dicatat di file 08 (bagian
+      `additional_backlog`) supaya tidak hilang begitu saja, tapi TIDAK
+      bagian dari eksekusi plan ini.
+
+  d4_persetujuan_fase4:
+    pertanyaan_asli: >
+      Fase 4 menyentuh server/handlers/websocket.py (file locked) — kapan
+      boleh dieksekusi, perlu sesi khusus?
+    keputusan: >
+      SUDAH DISETUJUI — lihat meta.authorization di atas. Task file 07
+      boleh dieksekusi sebagai sesi tersendiri (terpisah dari task 01-06),
+      TIDAK digabung ke commit/PATCHLOG entry lain, sesuai governance
+      "1 fase = 1 PATCHLOG entry".
+    rasional: >
+      User memberi otorisasi menyeluruh untuk sesi pembuatan plan ini.
+      Governance tetap dihormati dalam bentuk lain: task 07 tetap sesi
+      terpisah, tetap depends_on beres-nya task 03, dan tetap wajib
+      PATCHLOG entry sendiri — otorisasi ini menghapus kebutuhan
+      "tanya user dulu sebelum eksekusi", bukan kebutuhan disiplin
+      governance (1 fase = 1 patch, test hijau, dsb.).
+
+  d5_temuan_h_index_html:
+    pertanyaan_asli: >
+      Temuan H (index.html 48K, admin-logs.* 36K+36K) — dibuka RFC
+      terpisah sekarang, atau ditunda?
+    keputusan: >
+      DITUNDA. TIDAK dieksekusi dalam plan ini sama sekali, termasuk
+      langkah "audit ukuran" yang disebut proposal §4.H. Dicatat sebagai
+      backlog murni di file 08_backlog_deferred.yaml.
+    rasional: >
+      Proposal sendiri eksplisit menyatakan Temuan H butuh RFC terpisah
+      dan tidak boleh berjalan bersamaan dengan refactor besar lain
+      (aturan "jangan 2 refactor besar sekaligus"). File 07 (command-bus
+      DI) sudah merupakan refactor berdampak luas untuk siklus ini —
+      menambah Temuan H akan melanggar aturan itu. Keputusan: tunda
+      sampai file 01-07 selesai dan PATCHLOG-nya tercatat.
+
+  d6_scope_audit_globalthis:
+    pertanyaan_baru_ditemukan_saat_audit_kode: >
+      Audit langsung ke kode (bukan cuma proposal) menemukan penggunaan
+      `globalThis.*` jauh lebih luas dari yang disebut proposal §4.F
+      (proposal hanya menyebut pendingToggleTarget/toggleSentAt,
+      ChatModule, safeStorage, ws — kode sebenarnya juga punya
+      isDraggingVol, isDraggingPb, isDraggingQueue, audioBlocked,
+      audioUnlocked, pendingTrack, pendingArtistDetail,
+      isScrollingLyrics, loadLazyCovers, getCoverArt, dan lainnya
+      tersebar di render/*.js, events/*.js, audio/playback-sync.js,
+      utils/cover-art.js — total lebih dari 15 modul).
+    keputusan: >
+      Scope task migrasi (file 05) TETAP DIBATASI hanya
+      pendingToggleTarget + toggleSentAt (persis seperti proposal),
+      karena itu satu-satunya yang punya bukti konkret race condition
+      (FIX-PAUSE-RACE-01/FIX-RADIO-08). SEMUA penggunaan globalThis lain
+      yang ditemukan saat audit dicatat sebagai inventory di file 08,
+      diberi label KEEP (memang layak jadi global — safeStorage, lokasi
+      browser, ChatModule sebagai module singleton yang disengaja) atau
+      MIGRATE-CANDIDATE (kandidat migrasi masa depan tanpa bukti bug
+      konkret saat ini — isDraggingVol/Pb/Queue dkk), TIDAK dieksekusi
+      migrasinya sekarang.
+    rasional: >
+      Mengikuti prinsip proposal sendiri: migrasi state berbasis bukti
+      bug konkret, bukan "bersih-bersih" preventif tanpa root cause yang
+      termanifestasi. Memperluas scope Fase 6 tanpa bukti bug akan
+      menambah risiko regresi tanpa manfaat yang jelas.
+
+deviation_protocol:
+  kapan_boleh_menyimpang: >
+    Eksekutor (AI atau manusia) boleh menyimpang dari langkah literal di
+    task manapun HANYA kalau kondisi kode saat eksekusi TERBUKTI berbeda
+    dari asumsi yang dicatat di task (mis. nomor baris bergeser, fungsi
+    sudah direfactor pihak lain, nama variabel berubah). Ini BUKAN alasan
+    untuk membuka ulang keputusan di atas (d1-d6) — hanya penyesuaian
+    teknis mekanis.
+  wajib_dicatat: >
+    Setiap penyimpangan wajib dicatat di field `notes` PATCHLOG entry
+    task terkait dengan awalan "DEVIASI DARI PLAN:" supaya bisa diaudit.
+
+governance_checklist_per_task:
+  # Berlaku untuk SEMUA task di file 01-07, tidak diulang di tiap file.
+  - "Baca AI_CONTEXT.md + docs/STATUS.md + 2-3 entri terakhir docs/PATCHLOG.md sebelum mulai."
+  - "Jalankan `python automation/find_owner.py <file>` untuk orientasi cepat sebelum edit file yang belum pernah disentuh sesi ini."
+  - "Setelah task selesai: `python automation/doctor.py` wajib PASS sebelum lanjut ke task berikutnya."
+  - "Jalankan test yang tercantum di field `tests.run` task tsb — wajib hijau sebelum PATCHLOG entry ditulis."
+  - "1 task boleh 1 PATCHLOG entry sendiri ATAU digabung per-file (per-fase) — TIDAK boleh digabung LINTAS FILE (lintas fase)."
+  - "`python automation/patchlog.py verify --json` setelah menambah entry."
+  - "`python automation/generate_file_index.py` dan `python automation/generate_report.py` setelah PATCHLOG entry ditambah."
+  - "Update docs/STATUS.md manual jika status file berubah."
+  - "CHANGELOG.md HANYA diupdate jika task ini adalah fitur baru/bugfix user-facing/breaking change — task 01-07 semuanya tech-debt internal non-breaking, jadi default: TIDAK update CHANGELOG.md kecuali task menyatakan lain secara eksplisit."

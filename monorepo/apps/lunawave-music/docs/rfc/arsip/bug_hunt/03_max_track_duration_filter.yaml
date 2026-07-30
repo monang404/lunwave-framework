@@ -1,0 +1,103 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 03 — MAX_TRACK_DURATION disambungkan sebagai filter radio
+# (temuan audit-lunawave-temuan.md #3)
+# Depends on: TIDAK ADA (independen)
+# Risiko: RENDAH-SEDANG | Effort: KECIL
+# Bagian dari seri: docs/rfc/temuan_audit_2026_07_27/ — BACA 00_index_and_decisions.yaml
+# LEBIH DULU (berisi decisions/keputusan desain & deviation_protocol yang
+# berlaku untuk SEMUA file di seri ini, termasuk file ini).
+# =============================================================================
+
+phase:
+  id: T03
+  title: "MAX_TRACK_DURATION disambungkan sebagai filter radio"
+  temuan_ref: 3
+  closes_temuan: [3]
+  depends_on: []
+
+tasks:
+  - task_id: P1-T3
+    title: "MAX_TRACK_DURATION disambungkan sebagai filter durasi di TrackFilter"
+    temuan_ref: 3
+    severity_audit: "Sedang-Tinggi"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - engine/radio/track_filter.py
+      modify_tests:
+        - tests/unit/engine/radio/test_track_filter.py
+    steps:
+      - >
+        `view` engine/radio/track_filter.py method `filter_tracks`
+        (baris ~34-113 saat audit) dan engine/radio/radio_config.py
+        baris ~28 untuk konfirmasi `MAX_TRACK_DURATION = 600`.
+        VERIFIKASI ULANG bahwa TrackInfo (core/state.py) punya field
+        `duration: int` yang selalu terisi untuk track hasil DB/search
+        (bukan opsional None di jalur radio).
+      - >
+        Tambah import `from engine.radio.radio_config import
+        MAX_TRACK_DURATION` di bagian atas track_filter.py.
+      - >
+        Tambah satu langkah filter BARU di dalam loop `for track in
+        candidates:` (setelah filter #1b duplicate-title, SEBELUM
+        filter #2 duplicate-in-batch -- urutan filter murah/cepat dulu
+        tetap dipertahankan):
+        ```python
+        # 1c. Filter out tracks longer than the radio cap (Bug #3 fix --
+        # MAX_TRACK_DURATION dideklarasikan tapi sebelumnya tidak pernah
+        # dipakai). duration <= 0 dianggap "belum diketahui", TIDAK
+        # dibuang oleh filter ini.
+        if track.duration and track.duration > MAX_TRACK_DURATION:
+            continue
+        ```
+        Perbarui juga nomor komentar filter #2/#3 di bawahnya kalau
+        gaya penomoran existing eksplisit berurutan (VERIFIKASI ULANG
+        apakah worth renumbering atau biarkan sebagai 1c berdiri
+        sendiri -- pilih yang paling minim-diff).
+      - >
+        Test baru di test_track_filter.py: candidates berisi campuran
+        track dengan duration di bawah, tepat sama dengan, dan di atas
+        600 -- assert track dengan duration > 600 TIDAK muncul di hasil
+        filter_tracks(), track dengan duration == 600 (batas inklusif)
+        TETAP muncul, track dengan duration == 0 atau None (kalau tipe
+        mengizinkan) JUGA TETAP muncul (tidak dianggap "terlalu
+        panjang").
+      - >
+        Test regresi: seluruh test existing di test_track_filter.py
+        (dedup by video_id, dedup by normalized title, artist quota)
+        tetap hijau tanpa perubahan assert.
+    acceptance_criteria:
+      - "Track dengan durasi di atas 10 menit tidak lagi lolos ke radio queue."
+      - "Track dengan duration belum diketahui (0/None) tidak ikut terbuang oleh filter durasi ini."
+      - "Semua filter existing (history, queue, dedup title, artist quota) tidak berubah perilaku."
+    tests:
+      run:
+        - "pytest tests/unit/engine/radio/test_track_filter.py -q"
+        - "pytest tests/unit/engine/radio -q"
+    patchlog:
+      type: bug_fix
+      area: "engine/radio"
+      title: "MAX_TRACK_DURATION disambungkan sebagai filter durasi radio"
+      reason: >
+        Konstanta MAX_TRACK_DURATION (cap 10 menit untuk track radio)
+        dideklarasikan di radio_config.py tapi tidak pernah dipakai di
+        filter manapun -- track sangat panjang (mis. mix/live set
+        berjam-jam) bisa lolos masuk radio queue tanpa batas.
+      root_cause: >
+        Konstanta ditambahkan (kemungkinan bersamaan dengan patch lain
+        terkait radio) tapi langkah menyambungkannya ke TrackFilter
+        tidak pernah dieksekusi -- dead protective code.
+      solution: >
+        TrackFilter.filter_tracks() sekarang membuang candidate dengan
+        duration > MAX_TRACK_DURATION (600 detik), kecuali duration
+        belum diketahui (<=0).
+      files: "engine/radio/track_filter.py, tests/unit/engine/radio/test_track_filter.py"
+      notes: "Tidak menyentuh file locked."
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/patchlog.py verify"
+  - "ruff check ."

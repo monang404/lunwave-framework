@@ -1,0 +1,146 @@
+/* ═══════════════════════════════════════════
+   LunaWave — Design System v2
+   Midnight Audio Experience
+   ═══════════════════════════════════════════ */
+
+:root {
+   /* ── Backgrounds ── */
+   --bg-primary: #0E0E12;
+   --bg-primary-rgb: 14, 14, 18;
+   --bg-surface: #151518;
+   --bg-surface-rgb: 21, 21, 24;
+   --bg-elevated: #1C1C22;
+   --bg-elevated-rgb: 28, 28, 34;
+
+   /* ── Accent: Amber Gold ── */
+   --accent: #F2B544;
+   --accent-rgb: 242, 181, 68;
+   --accent-hover: #FFC857;
+   --accent-dark: #3B2B10;
+   --accent-alpha: rgba(var(--accent-rgb), 0.12);
+
+   /* ── Text ── */
+   --text-1: #FFFFFF;
+   --text-1-rgb: 255, 255, 255;
+   --text-2: #9AA0AA;
+   --text-2-rgb: 154, 160, 170;
+   --text-3: #8B92A5;
+   --text-3-rgb: 139, 146, 165;
+
+   /* ── Border ── */
+   --border-1: rgba(255, 255, 255, 0.04);
+   --border-2: rgba(255, 255, 255, 0.08);
+   --border-3: rgba(255, 255, 255, 0.14);
+
+   /* ── Typography ── */
+   --font: 'Inter', 'SF Pro Display', system-ui, sans-serif;
+
+   /* ── Type Scale ── */
+   --t-xs: 11px;
+   --t-sm: 12px;
+   --t-md: 14px;
+   --t-lg: 16px;
+   --t-xl: 18px;
+   --t-2xl: 24px;
+
+   /* ── Weights ── */
+   --w-regular: 400;
+   --w-medium: 500;
+   --w-semibold: 600;
+   --w-bold: 700;
+
+   /* ── Spacing (8pt grid) ── */
+   --s1: 4px;
+   --s2: 8px;
+   --s3: 12px;
+   --s4: 16px;
+   --s5: 20px;
+   --s6: 24px;
+   --s8: 32px;
+   --s10: 40px;
+   --s12: 48px;
+
+   /* ── Radius ── */
+   --r-sm: 12px;
+   --r-md: 16px;
+   --r-lg: 20px;
+   --r-full: 999px;
+
+   /* ── Shadow ── */
+   --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.30);
+   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
+   --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.50);
+
+   /* ── Motion ── */
+   --dur-fast: 120ms;
+   --dur-normal: 180ms;
+   --ease: cubic-bezier(0.0, 0.0, 0.2, 1);
+
+   /* ── Status ── */
+   --green: #22C55E;
+   --red: #EF4444;
+
+   /* ════════════════════════════════════════
+     ALIASES — Kompatibilitas dengan kode lama
+     Jangan hapus — dipakai render functions
+     ════════════════════════════════════════ */
+   --fm-bg-deep: var(--bg-primary);
+   --fm-bg-card: var(--bg-surface);
+   --fm-bg-elevated: var(--bg-elevated);
+   --fm-bg-overlay: rgba(9, 10, 13, 0.85);
+   --fm-accent: var(--accent);
+   --fm-accent-dim: var(--accent-hover);
+   --fm-accent-bg: var(--accent-dark);
+   --fm-cyan: var(--accent-hover);
+   --fm-teal: var(--accent-hover);
+   --fm-green: var(--green);
+   --fm-warn: #F59E0B;
+   --fm-err: var(--red);
+   --fm-blue: #60a5fa;
+   --fm-text-1: var(--text-1);
+   --fm-text-2: #e8e8f5;
+   --fm-text-3: var(--text-2);
+   --fm-text-4: var(--text-3);
+   --fm-text-5: #6b7280;
+   --fm-border: var(--border-1);
+   --fm-border-2: var(--border-2);
+   --fm-font: var(--font);
+
+   --fm-shadow-sm: var(--shadow-sm);
+   --fm-shadow-md: var(--shadow-md);
+   --fm-transition-fast: var(--dur-fast) var(--ease);
+   --fm-transition-normal: var(--dur-normal) var(--ease);
+   --fm-primary: var(--accent);
+   --fm-color-hover: rgba(255, 255, 255, 0.05);
+   --fm-color-active: rgba(255, 255, 255, 0.09);
+   --fm-color-disabled: rgba(255, 255, 255, 0.30);
+   --fm-color-success: var(--green);
+   --fm-color-warning: #F59E0B;
+   --fm-color-error: var(--red);
+   /* spacing aliases lama */
+   --space-1: var(--s1);
+   --space-2: var(--s2);
+   --space-3: var(--s3);
+   --space-4: var(--s4);
+   --space-5: var(--s5);
+   --space-6: var(--s6);
+   --space-8: var(--s8);
+   --space-10: var(--s10);
+   /* type aliases lama */
+
+   --text-sm: 12px;
+   --text-md: 14px;
+   --text-lg: 16px;
+
+   --text-2xl: 24px;
+   --weight-regular: 400;
+   --weight-medium: 500;
+   --weight-semibold: 600;
+   --weight-bold: 700;
+   /* motion aliases lama */
+
+   --duration-slow: 350ms;
+   --ease-out: cubic-bezier(0.0, 0.0, 0.2, 1);
+   --ease-in: cubic-bezier(0.4, 0.0, 1, 1);
+   --ease-both: cubic-bezier(0.4, 0.0, 0.2, 1);
+}

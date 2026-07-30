@@ -1,0 +1,89 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.0
+    hooks:
+      - id: ruff
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+
+  - repo: local
+    hooks:
+      # ---------------------------------------------------------------------------
+      # 1. Architecture boundary validation
+      #    Blok commit jika ada import yang melanggar dependency rules.
+      #    Known violations (F-06: config.py -> core) di-suppress otomatis.
+      #    Untuk skip sementara: git commit --no-verify
+      # ---------------------------------------------------------------------------
+      - id: architecture-lint
+        name: "LunaWave — Architecture Boundary Check"
+        entry: python automation/architecture_lint.py
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-commit]
+
+      # ---------------------------------------------------------------------------
+      # 2. Documentation health check
+      #    Cek PATCHLOG ID unik, frontmatter segar, referensi path valid.
+      #    Exit 1 hanya jika ada ❌ error (bukan ⚠️ warning).
+      # ---------------------------------------------------------------------------
+      - id: verify-docs
+        name: "LunaWave — Docs Health Check"
+        entry: python automation/verify_docs.py
+        language: system
+        types: [markdown]
+        pass_filenames: false
+        stages: [pre-commit]
+
+      # ---------------------------------------------------------------------------
+      # 3. Import Linter
+      # ---------------------------------------------------------------------------
+      - id: import-linter
+        name: import-linter
+        entry: lint-imports
+        language: python
+        pass_filenames: false
+
+      # ---------------------------------------------------------------------------
+      # 4. Struktur Project (file besar, item pending)
+      #    Sebelumnya tidak dipasang di pre-commit maupun CI sama sekali —
+      #    hanya jalan kalau ada yang ingat menjalankan manual.
+      # ---------------------------------------------------------------------------
+      - id: verify-structure
+        name: "LunaWave — Project Structure Check"
+        entry: python automation/verify_structure.py
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-commit]
+
+      # ---------------------------------------------------------------------------
+      # 5. Keamanan (.gitignore, credential/DB exposure)
+      #    Sama seperti #4, sebelumnya tidak ter-enforce di manapun.
+      # ---------------------------------------------------------------------------
+      - id: verify-security
+        name: "LunaWave — Security Check"
+        entry: python automation/verify_security.py
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
+      # ---------------------------------------------------------------------------
+      # 6. PATCHLOG parseability
+      #    Cegah entry manual berformat rusak masuk ke docs/PATCHLOG.md tanpa
+      #    ketahuan — lihat PATCH-2026-07-17-074/075/076.
+      # ---------------------------------------------------------------------------
+      - id: patchlog-verify
+        name: "LunaWave — PATCHLOG Parseability Check"
+        entry: python automation/patchlog.py verify
+        language: system
+        files: ^docs/PATCHLOG\.md$
+        pass_filenames: false
+        stages: [pre-commit]

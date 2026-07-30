@@ -1,0 +1,120 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 01 — Circuit Breaker eksplisit (Temuan D / proposal §3.D, Fase 1)
+# Depends on: TIDAK ADA (murni additive, file baru + swap internal)
+# Risiko: RENDAH | Effort: RENDAH
+# Menyentuh file locked? Ya — engine/playback/controller.py, tapi izin
+# eksplisit sudah tercatat di komentar controller.py:96-100 untuk task
+# serupa, DAN otorisasi menyeluruh di 00_index_and_decisions.yaml.
+# =============================================================================
+
+phase:
+  id: P01
+  title: "Circuit breaker eksplisit untuk PlaybackController"
+  proposal_ref: "§3.D"
+  closes_temuan: [D]
+  depends_on: []
+
+tasks:
+  - task_id: P01-T1
+    title: "Buat class PlaybackCircuitBreaker + unit test"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      create:
+        - engine/playback/circuit_breaker.py
+        - tests/unit/engine/playback/test_circuit_breaker.py
+      modify: []
+    steps:
+      - >
+        Buat `engine/playback/circuit_breaker.py` berisi enum
+        `BreakerState(CLOSED, OPEN)` dan class `PlaybackCircuitBreaker`
+        dengan constructor `__init__(self, threshold: int = 3)`, method
+        `record_success()` (reset counter & state ke CLOSED),
+        `record_failure() -> bool` (increment counter, set OPEN kalau
+        >= threshold, return True kalau baru saja OPEN akibat panggilan
+        ini), dan `can_advance() -> bool` (True kalau state CLOSED).
+        Implementasi PERSIS seperti sketsa di proposal §3.D — tidak ada
+        deviasi behavior dari `_retry_count` yang lama, hanya named
+        eksplisit.
+      - "Tambahkan module docstring bergaya sama dengan file lain di engine/playback/ (Module/Purpose/Responsibilities/Depends on/Subscribes to/Publishes/Thread Safety) sesuai konvensi repo (lihat header controller.py)."
+      - >
+        Buat `tests/unit/engine/playback/test_circuit_breaker.py` — unit
+        test MURNI, tanpa mock mpv/event bus/asyncio. Kasus wajib:
+        (1) state awal CLOSED, can_advance() True;
+        (2) record_failure() < threshold tetap CLOSED;
+        (3) record_failure() ke-N (N=threshold) mengembalikan True dan
+            state jadi OPEN, can_advance() False;
+        (4) record_failure() setelah OPEN tetap OPEN, return False
+            (tidak "baru saja" open lagi);
+        (5) record_success() dari state OPEN reset ke CLOSED dan counter
+            ke 0;
+        (6) threshold custom (mis. 1) — OPEN setelah 1 kegagalan.
+    acceptance_criteria:
+      - "File baru tidak mengubah baris apapun di controller.py atau failure_ops.py (task ini murni penambahan file)."
+      - "pytest tests/unit/engine/playback/test_circuit_breaker.py -q lulus 100%, tanpa warning import mpv/aiohttp."
+    tests:
+      run:
+        - "pytest tests/unit/engine/playback/test_circuit_breaker.py -q"
+    patchlog:
+      execute_after: [P01-T2]   # 1 PATCHLOG entry untuk seluruh fase P01, ditulis setelah T2
+
+  - task_id: P01-T2
+    title: "Ganti _retry_count di PlaybackController dengan PlaybackCircuitBreaker"
+    depends_on: [P01-T1]
+    touches_locked_files: true
+    locked_file_justification: >
+      engine/playback/controller.py — izin eksplisit sudah tercatat di
+      komentar controller.py:96-100 ("controller.py ini adalah izin
+      eksplisit untuk menyentuh file Frozen ini" — konteks T2.3.1/T2.3.2)
+      DAN otorisasi menyeluruh sesi ini (lihat 00_index_and_decisions.yaml
+      meta.authorization).
+    files:
+      modify:
+        - engine/playback/controller.py
+        - engine/playback/failure_ops.py
+    steps:
+      - "Import `PlaybackCircuitBreaker` di controller.py."
+      - "Di `PlaybackController.__init__`, ganti baris `self._retry_count = 0` dengan `self._breaker = PlaybackCircuitBreaker(threshold=3)`. JANGAN ubah urutan/isi field lain di __init__."
+      - "Update komentar di atas baris tsb: hapus penjelasan panjang soal '_retry_count sebagai circuit breaker lintas-track' (sudah tidak relevan karena semantiknya sekarang eksplisit di nama class), ganti dengan 1 baris singkat yang merujuk ke docstring PlaybackCircuitBreaker."
+      - "Di failure_ops.py, cari semua baca/tulis ke `self.controller._retry_count` (increment manual, reset manual, perbandingan `>= 3`)."
+      - "Ganti increment manual menjadi `self.controller._breaker.record_failure()`; ganti reset manual menjadi `self.controller._breaker.record_success()`; ganti kondisi `_retry_count >= 3` (atau sejenisnya) menjadi `not self.controller._breaker.can_advance()` ATAU langsung pakai return value `record_failure()` kalau titik itu memang persis 'baru saja melewati threshold' (baca konteks percabangan except yang ada sebelum memutuskan mana yang lebih tepat — behavior akhir harus identik dengan sebelumnya)."
+      - "Grep ulang seluruh repo untuk `_retry_count` (termasuk tests/) untuk memastikan tidak ada sisa referensi yang terlewat."
+    acceptance_criteria:
+      - "grep -rn '_retry_count' engine/ tests/ mengembalikan 0 hasil setelah task ini (kecuali di CHANGELOG/PATCHLOG historis yang tidak disentuh)."
+      - "Behavior functional IDENTIK: test existing yang menguji circuit-breaker-lintas-track (test_controller.py, test_track_ended_ops.py) tetap hijau tanpa perubahan assertion."
+      - "Seluruh suite pytest existing tetap hijau (regression check, bukan hanya file yang diubah)."
+    tests:
+      run:
+        - "pytest tests/unit/engine/playback -q"
+        - "pytest -q"
+    patchlog:
+      type: refactor
+      area: "engine/playback"
+      title: "Circuit breaker eksplisit (PlaybackCircuitBreaker) menggantikan _retry_count implisit"
+      reason: >
+        Semantik penting (kapan berhenti total, kapan reset) sebelumnya
+        hanya hidup di komentar controller.py:103-109, bukan di kode —
+        risiko berubah diam-diam kalau failure_ops.py diedit tanpa baca
+        komentar di file lain.
+      root_cause: >
+        Circuit breaker lintas-track diimplementasikan sebagai integer
+        counter tanpa state machine eksplisit; invariant tidak
+        ter-enforce oleh tipe/nama, hanya oleh disiplin baca komentar.
+      solution: >
+        Tambah engine/playback/circuit_breaker.py (BreakerState enum +
+        PlaybackCircuitBreaker), ganti _retry_count di controller.py dan
+        seluruh increment/reset di failure_ops.py. Behavior tidak
+        berubah, threshold tetap 3 (hardcoded, lihat keputusan d2 di
+        00_index_and_decisions.yaml).
+      files: "engine/playback/controller.py, engine/playback/failure_ops.py, engine/playback/circuit_breaker.py, tests/unit/engine/playback/test_circuit_breaker.py"
+      notes: >
+        Menyentuh file locked engine/playback/controller.py — otorisasi
+        tercatat di 00_index_and_decisions.yaml meta.authorization dan
+        komentar controller.py:96-100.
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/generate_file_index.py"
+  - "python automation/generate_report.py"

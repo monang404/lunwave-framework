@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: lunawave-framework
+Version: 0.1.0
+Summary: Reusable application-framework pieces extracted from LunaWave Music (Phase 1: automation/dev-tooling; Phase 2: generic core kernel -- logging, security, observability, task utils; Phase 4: generic SQLite storage layer -- connection lifecycle, session/admin-account repositories).
+License: MIT
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: structlog==26.1.0
+Requires-Dist: prometheus_client>=0.26.0
+Requires-Dist: aiosqlite>=0.20.0

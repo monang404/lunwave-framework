@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <link rel="manifest" href="/static/manifest.json">
+    <meta charset="UTF-8">
+    <!-- C-14: non-blocking font load -->
+    <!-- Google Fonts dihapus untuk offline compatibility -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="LunaWave — YouTube music player for Termux with search, radio, queue, and lyrics">
+    <meta name="theme-color" content="#090A0D">
+
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>LunaWave — Midnight Audio Experience</title>
+    <link rel="icon" type="image/png" href="/static/icons/icon-192.png">
+    <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+
+    <link rel="stylesheet" href="/static/shared/css/vendor/tabler-icons.min.css">
+    <link rel="stylesheet" href="/static/shared/css/tokens.css">
+    <link rel="stylesheet" href="/static/shared/css/base/reset.css">
+    <link rel="stylesheet" href="/static/shared/css/base/typography.css">
+    <link rel="stylesheet" href="/static/shared/css/base/animations.css">
+    <link rel="stylesheet" href="/static/shared/css/base/utilities.css">
+    <link rel="stylesheet" href="/static/shared/css/layout/app-shell.css">
+    <link rel="stylesheet" href="/static/shared/css/layout/nav.css">
+    <link rel="stylesheet" href="/static/shared/css/layout/grid.css">
+    <link rel="stylesheet" href="/static/shared/css/components/player-bar.css">
+    <link rel="stylesheet" href="/static/shared/css/components/player-controls.css">
+    <link rel="stylesheet" href="/static/shared/css/components/queue.css">
+    <link rel="stylesheet" href="/static/shared/css/components/search.css">
+    <link rel="stylesheet" href="/static/shared/css/components/settings-sheet.css">
+    <link rel="stylesheet" href="/static/shared/css/components/lyrics.css">
+    <link rel="stylesheet" href="/static/shared/css/components/cards.css">
+    <link rel="stylesheet" href="/static/shared/css/components/radio-hero.css">
+    <link rel="stylesheet" href="/static/shared/css/components/discover-cards.css">
+    <link rel="stylesheet" href="/static/shared/css/components/discover-search.css">
+    <link rel="stylesheet" href="/static/shared/css/components/toasts.css">
+    <link rel="stylesheet" href="/static/shared/css/portal.css">
+
+    <!-- Platform Overrides -->
+    <link rel="stylesheet" href="/static/shared/css/platform/mobile.css">
+    <link rel="stylesheet" href="/static/shared/css/platform/tablet.css">
+    <link rel="stylesheet" href="/static/shared/css/platform/desktop.css">
+    <link rel="stylesheet" href="/static/shared/css/platform/landscape.css">
+    <link rel="stylesheet" href="/static/shared/css/platform/safe-area.css">
+</head>
+
+<body>
+
+    <!-- ═══ Portal Screen ═══ -->
+    <div id="portal-screen" class="portal-active">
+        <div class="portal-card">
+            <h1 class="portal-title">lunawave</h1>
+            <p class="portal-subtitle">Silakan masuk untuk mengakses kontrol musik</p>
+
+            <div class="portal-options">
+                <div class="portal-admin-wrapper u-w-full">
+                    <div id="portal-login-form" class="portal-login-form">
+                        <div class="login-input-group">
+                            <input type="text" id="admin-username" placeholder="Username" autocomplete="off">
+                        </div>
+                        <div class="login-input-group">
+                            <input type="password" id="admin-password" placeholder="Password">
+                        </div>
+                        <button id="admin-submit-btn">Login Admin</button>
+                        <div id="login-error-msg" class="login-error"></div>
+                    </div>
+                </div>
+
+                <div class="u-text-center u-mt-10">
+                    <a href="/" class="portal-btn client u-no-decoration">
+                        <div class="portal-icon"><i class="ti ti-headphones"></i></div>
+                        <div class="portal-btn-content">
+                            <span class="portal-btn-title">Mode Klien</span>
+                            <span class="portal-btn-desc">Masuk sebagai Pendengar</span>
+                        </div>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ Setup Screen (Initial Setup — hanya muncul saat admin_account belum ada) ═══ -->
+    <div id="setup-screen">
+        <div class="portal-card">
+            <h1 class="portal-title">lunawave</h1>
+            <p class="portal-subtitle">Initial Setup — buat akun admin untuk mengakses kontrol musik</p>
+
+            <div class="portal-options">
+                <div class="portal-admin-wrapper u-w-full">
+                    <div id="setup-form" class="portal-login-form">
+                        <div class="login-input-group">
+                            <input type="text" id="setup-username" placeholder="Username" autocomplete="off">
+                        </div>
+                        <div class="login-input-group">
+                            <input type="password" id="setup-password" placeholder="Password">
+                        </div>
+                        <div class="login-input-group">
+                            <input type="password" id="setup-confirm-password" placeholder="Confirm Password">
+                        </div>
+                        <div id="setup-confirm-error-msg" class="login-error"></div>
+                        <button id="setup-submit-btn">Buat Akun Admin</button>
+                        <div id="setup-error-msg" class="login-error"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="app" class="fm portal-active">
+
+        <!-- ═══ Header (Hidden) ═══ -->
+        <header id="app-header" style="display: none !important;">
+            <button id="output-toggle-btn"></button>
+            <div id="status-dot"></div>
+            <span id="status-text"></span>
+        </header>
+
+        <!-- ═══ Content Area ═══ -->
+        <main class="content" id="content-area">
+
+            <!-- Tab: Now Playing -->
+            <section id="tab-home" class="tab-panel full-player-view">
+
+
+
+                <!-- ══ Hidden DOM — JANGAN HAPUS, dipakai renderNowPlaying() ══ -->
+                <div id="np-thumbnail" style="display:none;">
+                    <i id="np-thumb-icon"></i>
+                    <div id="np-eq-anim"><span></span><span></span><span></span></div>
+                </div>
+                <div id="np-dur-meta" style="display:none;"></div>
+
+                <!-- ══ Header: Good Evening / LunaWave ══ -->
+                <header class="home-header" id="home-header-inner">
+                    <div></div>
+                    <div class="u-flex-center-8">
+                    </div>
+                </header>
+
+                <div class="home-left-col">
+                    <!-- ══ Idle View (Shows only when no music) ══ -->
+                    <div class="home-idle-view" id="home-idle-view">
+                        <div class="idle-text-slider">
+                            <span class="idle-text-slide">Belum ada lagu, silakan aktifkan Radio...</span>
+                            <span class="idle-text-slide">Atau temukan musik baru di tab Discover...</span>
+                            <span class="idle-text-slide">Atau cari lagu favoritmu lewat tab Search...</span>
+                        </div>
+                    </div>
+
+                    <!-- ══ Album Art Hero ══ -->
+                    <div class="home-art-section" id="vinyl-wrap">
+                        <div class="home-art-frame" id="vinyl-record">
+                            <img id="vinyl-cover" src="" crossorigin="anonymous" alt="Album Art"
+                                style="display:none; width:100%; height:100%; object-fit:cover; border-radius:inherit;">
+                            <i id="vinyl-icon" class="ti ti-music-note home-art-placeholder"></i>
+                        </div>
+                    </div>
+
+                    <!-- ══ Track Info ══ -->
+                    <div class="home-track-row">
+                        <div class="home-track-info main-track-info">
+                            <div class="mti-title" id="np-title">Belum ada lagu</div>
+                            <div class="mti-artist" id="np-artist">Putar lagu untuk memulai</div>
+                            <div class="mti-stats" id="np-stats" style="display:none;"></div>
+                        </div>
+                    </div>
+
+                    <!-- ══ Lyrics inline / Equalizer ══ -->
+                    <div class="lyrics-wrap" id="lyrics-wrap">
+                        <div class="lyric-sync-ctrls" id="lyric-sync-ctrls">
+                            <button id="btn-sync-minus" class="lyric-sync-btn" title="Mundurkan Lirik (0.5s)"><i class="ti ti-minus"></i></button>
+                            <span id="sync-val">0.0s</span>
+                            <button id="btn-sync-plus" class="lyric-sync-btn" title="Majukan Lirik (0.5s)"><i class="ti ti-plus"></i></button>
+                        </div>
+                        <div id="lyrics-text-container">
+                            <div class="lyrics-line prev" id="lyrics-prev"></div>
+                            <div class="lyrics-line current" id="lyrics-current"></div>
+                            <div class="lyrics-line next" id="lyrics-next"></div>
+                        </div>
+                        <div class="home-equalizer cinematic-text" id="home-equalizer" style="display:none;">
+                            <div class="eq-visualizer" id="eq-visualizer">
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                                <span class="eq-bar"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ═══ Player Bar ═══ -->
+                <div class="pbar" id="player-bar">
+                    <div class="pb-row1">
+                        <div class="pb-title" id="pb-track-info" style="flex:1;"></div>
+                        <div class="u-flex-center-8">
+                            <span class="pb-badge queue" id="pb-mode-badge" style="margin:0;">≡ queue</span>
+                        </div>
+                    </div>
+                    <div class="pb-seek">
+                        <span class="pb-time" id="pb-time-pos">0:00</span>
+                        <div class="pb-track" id="pb-progress-track">
+                            <div class="pb-fill" id="pb-progress-fill" style="width: 0%"></div>
+                            <div class="pb-thumb" id="seek-thumb" style="left: 0%"></div>
+                        </div>
+                        <span class="pb-time" style="text-align:right" id="pb-time-dur">0:00</span>
+                        <button id="btn-settings" title="Pengaturan" aria-label="Pengaturan"
+                            style="background:none; border:none; color:#b0b0c8; font-size:22px; cursor:pointer;"><i
+                                class="ti ti-dots-vertical" aria-hidden="true"></i></button>
+                    </div>
+
+                    <div class="pb-ctrl">
+                        <div class="vol-grp">
+                            <i class="ti ti-volume" aria-hidden="true"></i>
+                            <input type="range" min="0" max="100" value="80" class="vol-slider" id="vol-slider">
+                            <span class="vol-label" id="pb-vol-label">80%</span>
+                        </div>
+
+                        <div class="pb-badges">
+                            <span class="pb-badge-sm cached" id="pb-cache-badge" style="display:none">✓ tersimpan</span>
+                            <span class="pb-badge-sm sb" id="pb-sb-badge" style="display:none">SB aktif</span>
+                            <span class="pb-badge-sm dl" id="pb-dl-badge" style="display:none"></span>
+                        </div>
+
+                        <div class="main-ctrl">
+                            <button class="btn-shuffle" aria-label="Shuffle" id="btn-shuffle"><i
+                                    class="ti ti-arrows-shuffle" aria-hidden="true"></i></button>
+                            <button class="btn-prev" aria-label="Previous" id="btn-prev"><i class="ti ti-player-track-prev" aria-hidden="true"></i></button>
+                            <button class="btn-play" aria-label="Play/Pause" id="btn-play"><i class="ti ti-player-play"
+                                    style="font-size:15px;color:#fff" aria-hidden="true"></i></button>
+                            <button class="btn-next" aria-label="Next" id="btn-next"><i class="ti ti-player-track-next" aria-hidden="true"></i></button>
+                            <button class="btn-repeat" aria-label="Repeat" id="btn-repeat"><i class="ti ti-repeat"
+                                    aria-hidden="true"></i></button>
+                        </div>
+                    </div>
+                </div>
+
+
+                <div class="home-right-col">
+
+
+                    <!-- ══ Antrean Putar ══ -->
+                    <div class="home-queue-section" id="home-queue-section" style="padding: var(--s4) var(--s5) var(--s12);">
+                        <div class="section-label-row">
+                            <span class="label-text">Antrean Putar</span>
+                            <div id="queue-footer" style="font-size: var(--t-xs); color: var(--text-3); font-weight: var(--w-medium);">Mode: QUEUE</div>
+                        </div>
+                        <div id="queue-list" style="display:flex; flex-direction:column;"></div>
+                    </div>
+                </div>
+
+            </section>
+
+
+
+            <!-- Tab: Search -->
+            <section id="tab-search" class="tab-panel">
+                <div class="search-header" id="search-header">
+                    <h1 class="search-title">Search</h1>
+                </div>
+
+                <div class="search-wrap" id="search-input-wrap" style="position:relative;">
+                    <i class="ti ti-search search-icon" aria-hidden="true"></i>
+                    <input type="text" id="search-input" placeholder="Search songs, artists, albums..."
+                        autocomplete="off">
+                    <button id="search-clear-btn" aria-label="Clear Search"
+                        style="display:none; position:absolute; right:14px; background:none; border:none; color:var(--text-3); font-size:16px; cursor:pointer;">
+                        <i class="ti ti-x"></i>
+                    </button>
+                </div>
+
+                <div id="search-msg" style="padding:4px 20px 8px; font-size:12px; color:var(--text-3);">Search songs, artists, albums...</div>
+
+                <div id="search-history-container" style="display: none; padding: 0 20px 16px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <span style="font-size: 13px; color: var(--text-2); font-weight: 500;">Pencarian Terakhir</span>
+                        <button id="search-history-clear" style="background: none; border: none; color: var(--text-3); font-size: 12px; cursor: pointer; padding: 4px;">Hapus</button>
+                    </div>
+                    <div id="search-history-list" style="display: flex; flex-direction: column; gap: 4px;"></div>
+                </div>
+
+                <div id="search-results"></div>
+            </section>
+
+
+            <!-- Tab: Radio -->
+            <section id="tab-radio" class="tab-panel">
+
+
+                <!-- Featured Station Hero (Clickable to Toggle Radio Mode) -->
+                <!-- "Night Dial" — radio_toggle_redesign, docs/rfc/radio_toggle.md.
+                     id/data-on/id="rt-sub" DIPERTAHANKAN apa adanya (dipakai oleh
+                     touch.js swipe-guard, dom.js, transport-events.js, radio-tab.js). -->
+                <div class="radio-hero off" id="radio-toggle-btn" data-on="false" role="button" tabindex="0" aria-pressed="false">
+
+                    <div class="radio-status-badge">
+                        <span class="badge-dot"></span>
+                        <span class="badge-text-off">Radio Off</span>
+                        <span class="badge-text-on">Radio On</span>
+                    </div>
+
+                    <!-- starfield, fixed positions, mixed sizes/brightness -->
+                    <div class="star" style="top:24px; left:30px; width:1.5px; height:1.5px; opacity:0.3;"></div>
+                    <div class="star" style="top:48px; left:56px; width:1px; height:1px; opacity:0.22;"></div>
+                    <div class="star" style="top:18px; left:96px; width:1px; height:1px; opacity:0.4;"></div>
+                    <div class="star" style="top:66px; left:22px; width:1px; height:1px; opacity:0.28;"></div>
+                    <div class="star" style="top:38px; left:130px; width:1.5px; height:1.5px; opacity:0.18;"></div>
+                    <div class="star" style="top:14px; left:230px; width:1px; height:1px; opacity:0.3;"></div>
+                    <div class="star" style="top:34px; left:290px; width:2px; height:2px; opacity:0.45;"></div>
+                    <div class="star" style="top:66px; left:326px; width:1px; height:1px; opacity:0.25;"></div>
+                    <div class="star" style="top:22px; left:360px; width:1.5px; height:1.5px; opacity:0.35;"></div>
+                    <div class="star" style="top:88px; left:350px; width:1px; height:1px; opacity:0.2;"></div>
+                    <div class="star" style="top:92px; left:44px; width:1px; height:1px; opacity:0.32;"></div>
+                    <div class="star" style="top:12px; left:160px; width:1px; height:1px; opacity:0.2;"></div>
+                    <div class="star" style="top:108px; left:16px; width:1px; height:1px; opacity:0.24;"></div>
+                    <div class="star" style="top:100px; left:390px; width:1.5px; height:1.5px; opacity:0.3;"></div>
+
+                    <svg class="dial-svg" viewBox="0 0 172 172" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <radialGradient id="litGradCool" cx="36%" cy="32%" r="72%">
+                                <stop offset="0%" stop-color="#FDFBF6"/>
+                                <stop offset="55%" stop-color="var(--moon-light)"/>
+                                <stop offset="100%" stop-color="#C9C4BA"/>
+                            </radialGradient>
+                            <radialGradient id="litGradWarm" cx="36%" cy="32%" r="72%">
+                                <stop offset="0%" stop-color="#FFE3A8"/>
+                                <stop offset="55%" stop-color="var(--accent)"/>
+                                <stop offset="100%" stop-color="#C77E1E"/>
+                            </radialGradient>
+                            <filter id="softEdge" x="-30%" y="-30%" width="160%" height="160%">
+                                <feGaussianBlur stdDeviation="0.85"/>
+                            </filter>
+                        </defs>
+
+                        <g id="moonGroup" class="moon-group">
+                            <g class="moon-glow-wrap">
+                                <path id="moonLitCool" class="moon-lit-cool" filter="url(#softEdge)"/>
+                                <path id="moonLitWarm" class="moon-lit-warm" filter="url(#softEdge)"/>
+                            </g>
+                        </g>
+
+                        <g transform="translate(86,150)">
+                            <line class="tick"        x1="-64" y1="0" x2="-64" y2="-10" transform="rotate(-40)"/>
+                            <line class="tick"        x1="-48" y1="0" x2="-48" y2="-10" transform="rotate(-28)"/>
+                            <line class="tick"        x1="-32" y1="0" x2="-32" y2="-10" transform="rotate(-16)"/>
+                            <line class="tick"        x1="-16" y1="0" x2="-16" y2="-10" transform="rotate(-4)"/>
+                            <line class="tick tuned"  x1="0"   y1="0" x2="0"   y2="-15" transform="rotate(0)"/>
+                            <line class="tick"        x1="16"  y1="0" x2="16"  y2="-10" transform="rotate(4)"/>
+                            <line class="tick"        x1="32"  y1="0" x2="32"  y2="-10" transform="rotate(16)"/>
+                            <line class="tick"        x1="48"  y1="0" x2="48"  y2="-10" transform="rotate(28)"/>
+                            <line class="tick"        x1="64"  y1="0" x2="64"  y2="-10" transform="rotate(40)"/>
+                        </g>
+
+                        <text class="freq-label" x="30" y="168" text-anchor="middle">88</text>
+                        <text class="freq-label tuned" x="86" y="170" text-anchor="middle" font-size="10">96.4</text>
+                        <text class="freq-label" x="142" y="168" text-anchor="middle">104</text>
+                    </svg>
+
+                    <div class="hero-name">Radio Mode</div>
+                    <div class="hero-sub" id="rt-sub">24/7 Nonstop Music</div>
+                </div>
+
+                <!-- Hidden compatibility elements -->
+                <div style="display: none;" id="radio-toggle-wrap"></div>
+
+                <!-- Section Label Row with Action Button -->
+                <div class="section-label-row" style="padding-top: var(--s4);">
+                    <span class="label-text">All Stations</span>
+                    <button id="radio-randomize-btn" class="label-link" style="background:none; border:none; display:flex; align-items:center; gap:6px; font-family:inherit; min-height: 44px; min-width: 44px; padding: 10px; margin: -10px;">
+                        <i class="ti ti-dice" style="font-size:14px;"></i> Acak Artis
+                    </button>
+                </div>
+
+                <!-- Station List (rendered from radio_queue) -->
+                <div id="radio-queue-list" style="display:flex; flex-direction:column; padding-bottom:80px;"></div>
+            </section>
+
+
+
+
+            <!-- Tab: Discover -->
+            <section id="tab-discover" class="tab-panel">
+                <!-- Header -->
+                <div class="discover-header">
+                    <h1 class="discover-title">Discover</h1>
+                    <p class="discover-sub">Find your next favorite song</p>
+                </div>
+
+
+                <!-- Quick Search Discover (T-A5): terisolasi, tidak mengubah section Discover existing di bawahnya -->
+                <div class="discover-search-wrap" id="discover-search-wrap">
+                    <div class="discover-search-input-row" style="position:relative;">
+                        <i class="ti ti-search" aria-hidden="true"></i>
+                        <input type="text" id="discover-search-input" placeholder="Cari judul atau artis..."
+                            autocomplete="off">
+                        <button id="discover-search-clear-btn" aria-label="Clear Search"
+                            style="display:none; position:absolute; right:14px; background:none; border:none; color:var(--text-3); font-size:16px; cursor:pointer;">
+                            <i class="ti ti-x"></i>
+                        </button>
+                    </div>
+                    <!-- Progressive disclosure: hanya muncul saat query aktif (T-A7/T-A8) -->
+                    <div class="filter-bar discover-search-filter-row" id="discover-search-filter-row" style="display:none;">
+                        <div class="segmented" id="discover-search-kategori-toggle">
+                            <button class="active" data-kategori="all" type="button">Semua</button>
+                            <button data-kategori="individu" type="button">Solo</button>
+                            <button data-kategori="band" type="button">Band</button>
+                        </div>
+                        <div class="custom-dropdown" id="discover-search-decade-dropdown-container">
+                            <button class="custom-dropdown-btn" id="discover-search-decade-dropdown-btn">Semua Era <i class="ti ti-chevron-down"></i></button>
+                            <div class="custom-dropdown-menu" id="discover-search-decade-chips"></div>
+                        </div>
+                    </div>
+
+                    <!-- Quick Search Discover: status & hasil (T-A8) -->
+                    <div class="discover-search-status" id="discover-search-status" style="display:none; padding:4px 4px 8px; font-size:12px; color:var(--text-3);"></div>
+                    <div id="discover-search-results" style="display:none; flex-direction:column;"></div>
+                </div>
+
+                <!-- Selera Kamu (Taste Spectrum) -->
+                <div class="taste-block" id="taste-block">
+                    <div class="taste-eyebrow-row">
+                        <div>
+                            <div class="taste-eyebrow">Selera Kamu</div>
+                            <div class="taste-caption" id="taste-caption">Dari riwayat putar kamu</div>
+                        </div>
+                    </div>
+                    <div class="taste-bar-wrap">
+                        <div class="taste-bar" id="taste-bar"></div>
+                        <div class="taste-legend" id="taste-legend"></div>
+                    </div>
+                </div>
+
+                <!-- Sticky filter bar (kategori + dekade, client-side) -->
+                <div class="filter-bar" id="discover-filter-bar">
+                    <div class="segmented" id="kategori-toggle">
+                        <button class="active" data-kategori="all" type="button">Semua</button>
+                        <button data-kategori="individu" type="button">Solo</button>
+                        <button data-kategori="band" type="button">Band</button>
+                    </div>
+                    <div class="custom-dropdown" id="decade-dropdown-container">
+                        <button class="custom-dropdown-btn" id="decade-dropdown-btn">Semua Era <i class="ti ti-chevron-down"></i></button>
+                        <div class="custom-dropdown-menu" id="decade-chips"></div>
+                    </div>
+                </div>
+                <div class="filter-scope-hint">Filter berlaku untuk rekomendasi di bawah ini</div>
+
+                <!-- Untuk Kamu (bandit-ranked) -->
+                <div class="section-label-row" id="row-for-you-label-row">
+                    <div class="section-title-group">
+                        <span class="label-text">Untuk Kamu</span>
+                        <span class="label-sub">Yang paling sering kamu dengarkan sampai habis</span>
+                    </div>
+                </div>
+                <div class="card-row" id="row-for-you"></div>
+
+                <!-- Karena Kamu Suka [Genre] -->
+                <div class="section-label-row" id="row-genre-affinity-label">
+                    <div class="section-title-group">
+                        <span class="label-text" id="row-genre-affinity-sub">Karena Kamu Suka</span>
+                        <span class="label-sub">Genre yang paling sering kamu putar</span>
+                    </div>
+                </div>
+                <div class="card-row" id="row-genre-affinity"></div>
+
+                <!-- Belum Pernah Kamu Dengar -->
+                <div class="section-label-row">
+                    <div class="section-title-group">
+                        <span class="label-text">Belum Pernah Kamu Dengar</span>
+                        <span class="label-sub">Keluar dari kebiasaan, coba sesuatu yang baru</span>
+                    </div>
+                </div>
+                <div class="card-row" id="row-unheard"></div>
+
+                <!-- Artis Indonesia (Featured Artists) -->
+                <div class="section-label-row">
+                    <span class="label-text">Jelajahi Artis</span>
+                </div>
+                <div id="discover-artists" class="hashtag-cloud-container">
+                    <div class="hashtag-pill skeleton-box" style="width:60px; height:24px; border-radius:12px;"></div>
+                    <div class="hashtag-pill skeleton-box" style="width:100px; height:24px; border-radius:12px;"></div>
+                    <div class="hashtag-pill skeleton-box" style="width:80px; height:24px; border-radius:12px;"></div>
+                </div>
+
+                <!-- Genre (Featured Genres) -->
+                <div class="section-label-row">
+                    <span class="label-text">Jelajahi Genre</span>
+                </div>
+                <div id="discover-genres" class="hashtag-cloud-container">
+                    <div class="hashtag-pill skeleton-box" style="width:70px; height:24px; border-radius:12px;"></div>
+                    <div class="hashtag-pill skeleton-box" style="width:50px; height:24px; border-radius:12px;"></div>
+                    <div class="hashtag-pill skeleton-box" style="width:90px; height:24px; border-radius:12px;"></div>
+                </div>
+
+
+
+                <!-- Cache -->
+                <div class="section-label-row">
+                    <span class="label-text">Tersimpan Lokal</span>
+                    <span class="label-sub">Musik yang siap didengarkan offline</span>
+                </div>
+                <div id="discover-cached" style="display:flex; flex-direction:column; padding-bottom:80px;">
+                    <div class="sr-item">
+                        <div class="sr-thumb skeleton-box" style="border-radius:6px;"></div>
+                        <div class="sr-info">
+                            <div class="sr-title skeleton-box" style="width:60%; height:14px; margin-bottom:6px;"></div>
+                            <div class="sr-meta skeleton-box" style="width:40%; height:12px;"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+
+        </main>
+
+        <!-- ═══ Navigation Bar ═══ -->
+        <nav class="navrow" id="nav-bar" role="tablist">
+            <button class="nav-btn" data-tab="home" id="nav-home" role="tab" aria-selected="false">
+                <i class="ti ti-home" aria-hidden="true"></i>
+                <span>Home</span>
+            </button>
+            <button class="nav-btn" data-tab="search" id="nav-search" role="tab" aria-selected="false">
+                <i class="ti ti-search" aria-hidden="true"></i><span>Search</span>
+            </button>
+            <button class="nav-btn" data-tab="radio" id="nav-radio" role="tab" aria-selected="false">
+                <i class="ti ti-radio" aria-hidden="true"></i>
+                <span>Radio</span>
+            </button>
+
+            <button class="nav-btn" data-tab="discover" id="nav-discover" role="tab" aria-selected="false">
+                <i class="ti ti-compass" aria-hidden="true"></i>
+                <span>Discover</span>
+            </button>
+        </nav>
+
+
+        <!-- ═══ Settings Sheet ═══ -->
+        <div class="settings-sheet" id="settings-sheet" role="dialog" aria-modal="true" aria-label="Settings">
+            <div class="ss-handle"></div>
+            <div class="ss-title">Pengaturan & Menu</div>
+
+            <div class="ss-row" id="btn-lyrics" style="cursor:pointer">
+                <div class="ss-label">
+                    <i class="ti ti-microphone-2" aria-hidden="true"></i>
+                    <div>
+                        <div class="ss-label-text">Lirik Lagu</div>
+                        <div class="ss-label-sub">Tampilkan lirik tersinkronisasi</div>
+                    </div>
+                </div>
+                <i class="ti ti-chevron-right" style="color:#6a6a8c"></i>
+            </div>
+
+            <div class="ss-row" id="btn-download" style="cursor:pointer">
+                <div class="ss-label">
+                    <i class="ti ti-download" aria-hidden="true"></i>
+                    <div>
+                        <div class="ss-label-text">Unduh Lagu</div>
+                        <div class="ss-label-sub">Simpan ke penyimpanan lokal</div>
+                    </div>
+                </div>
+                <i class="ti ti-chevron-right" style="color:#6a6a8c"></i>
+            </div>
+
+            <div class="ss-row" id="btn-help" style="cursor:pointer">
+                <div class="ss-label">
+                    <i class="ti ti-help" aria-hidden="true"></i>
+                    <div>
+                        <div class="ss-label-text">Bantuan & Panduan</div>
+                        <div class="ss-label-sub">Panduan penggunaan aplikasi</div>
+                    </div>
+                </div>
+                <i class="ti ti-chevron-right" style="color:#6a6a8c"></i>
+            </div>
+
+            <div class="ss-row">
+                <div class="ss-label">
+                    <i class="ti ti-shield-check" aria-hidden="true"></i>
+                    <div>
+                        <div class="ss-label-text">SponsorBlock</div>
+                        <div class="ss-label-sub">Lewati sponsor, intro, outro</div>
+                    </div>
+                </div>
+                <button class="ss-toggle" id="sb-toggle" data-on="false" aria-label="Toggle SponsorBlock">
+                    <div class="toggle-dot"></div>
+                </button>
+            </div>
+
+            <div class="ss-row">
+                <div class="ss-label">
+                    <i class="ti ti-headphones" aria-hidden="true"></i>
+                    <div>
+                        <div class="ss-label-text">Crossfade (Eksperimental)</div>
+                        <div class="ss-label-sub">Transisi halus antar lagu</div>
+                    </div>
+                </div>
+                <button class="ss-toggle" id="crossfade-toggle" data-on="false" aria-label="Toggle Crossfade">
+                    <div class="toggle-dot"></div>
+                </button>
+            </div>
+
+            <div class="ss-row">
+                <div class="ss-label">
+                    <i class="ti ti-wave-sine" aria-hidden="true"></i>
+                    <div>
+                        <div class="ss-label-text">Loudness Normalization</div>
+                        <div class="ss-label-sub">Samakan volume antar lagu</div>
+                    </div>
+                </div>
+                <button class="ss-toggle" id="loudness-toggle" data-on="false" aria-label="Toggle Loudness Normalization">
+                    <div class="toggle-dot"></div>
+                </button>
+            </div>
+
+            <div class="ss-row">
+                <div class="ss-label">
+                    <i class="ti ti-device-speaker" aria-hidden="true"></i>
+                    <div>
+                        <div class="ss-label-text">Output Audio</div>
+                        <div class="ss-label-sub" id="ss-out-sub">Keluar via perangkat (mpv)</div>
+                    </div>
+                </div>
+                <button class="out-btn" id="ss-out-btn">
+                    <i class="ti ti-device-mobile" style="font-size:11px" aria-hidden="true"></i> Device
+                </button>
+            </div>
+
+            <div class="ss-row">
+                <div class="ss-label">
+                    <i class="ti ti-player-stop" aria-hidden="true"></i>
+                    <div>
+                        <div class="ss-label-text">Stop Pemutaran</div>
+                        <div class="ss-label-sub">Hentikan lagu sepenuhnya</div>
+                    </div>
+                </div>
+                <button id="ss-stop-btn"
+                    style="background:var(--bg-elevated);border:1px solid var(--border-2);border-radius:8px;padding:4px 10px;color:var(--red);font-size:11px;cursor:pointer">⏹
+                    Stop</button>
+            </div>
+
+            <div class="ss-row" id="ss-dl-row" style="display:none">
+                <div style="width:100%">
+                    <div class="ss-label" style="margin-bottom:6px">
+                        <i class="ti ti-download" aria-hidden="true"></i>
+                        <div>
+                            <div class="ss-label-text">Mengunduh...</div>
+                            <div class="ss-label-sub" id="ss-dl-track">-</div>
+                        </div>
+                    </div>
+                    <div class="dl-bar-wrap">
+                        <div class="dl-label"><span>Progress</span><span id="ss-dl-pct">0%</span></div>
+                        <div class="dl-bar">
+                            <div class="dl-fill shimmer" id="ss-dl-fill" style="width:0%"></div>
+                        </div>
+                    </div>
+                    <button id="ss-dl-cancel-btn"
+                        style="margin-top:8px;background:var(--bg-elevated);border:1px solid var(--border-2);border-radius:8px;padding:4px 10px;color:var(--red);font-size:11px;cursor:pointer">✕
+                        Batalkan</button>
+                </div>
+            </div>
+
+            <div class="ss-row">
+                <div class="ss-label">
+                    <i class="ti ti-history" aria-hidden="true"></i>
+                    <div>
+                        <div class="ss-label-text">Riwayat Putar</div>
+                        <div class="ss-label-sub" id="ss-history-sub">0 lagu diputar</div>
+                    </div>
+                </div>
+                <button id="ss-history-btn" class="ss-action-btn">Lihat</button>
+            </div>
+
+            <div class="ss-row">
+                <div class="ss-label">
+                    <i class="ti ti-server" aria-hidden="true"></i>
+                    <div>
+                        <div class="ss-label-text">Ukuran Cache</div>
+                        <div class="ss-label-sub" id="ss-cache-sub">Memuat...</div>
+                    </div>
+                </div>
+                <button id="ss-cache-clear-btn" class="ss-action-btn">Bersihkan</button>
+            </div>
+
+            <div class="ss-row">
+                <div class="ss-label">
+                    <i class="ti ti-refresh-alert" aria-hidden="true"></i>
+                    <div>
+                        <div class="ss-label-text">Reset Tampilan Offline</div>
+                        <div class="ss-label-sub">Kalau tampilan aneh/nyangkut, ini akan reset ke versi terbaru</div>
+                    </div>
+                </div>
+                <button id="ss-sw-reset-btn" class="ss-action-btn">Reset</button>
+            </div>
+
+            <div class="ss-row">
+                <div class="ss-label">
+                    <i class="ti ti-clock" aria-hidden="true"></i>
+                    <div>
+                        <div class="ss-label-text">Sleep Timer</div>
+                        <div class="ss-label-sub" id="ss-sleep-sub">Mati</div>
+                    </div>
+                </div>
+                <select id="ss-sleep-select" style="background:var(--bg-elevated);border:1px solid var(--border-2);border-radius:8px;padding:4px 10px;color:var(--text-1);font-size:11px;cursor:pointer">
+                    <option value="0">Off</option>
+                    <option value="15">15 Menit</option>
+                    <option value="30">30 Menit</option>
+                    <option value="60">60 Menit</option>
+                </select>
+            </div>
+
+            <div class="ss-row">
+                <div class="ss-label">
+                    <i class="ti ti-brand-speedtest" aria-hidden="true"></i>
+                    <div>
+                        <div class="ss-label-text">Kecepatan Pemutaran</div>
+                        <div class="ss-label-sub" id="ss-speed-sub">1.0x</div>
+                    </div>
+                </div>
+                <select id="ss-speed-select" style="background:var(--bg-elevated);border:1px solid var(--border-2);border-radius:8px;padding:4px 10px;color:var(--text-1);font-size:11px;cursor:pointer">
+                    <option value="0.75">0.75x</option>
+                    <option value="1.0" selected>1.0x</option>
+                    <option value="1.25">1.25x</option>
+                    <option value="1.5">1.5x</option>
+                    <option value="2.0">2.0x</option>
+                </select>
+            </div>
+
+            <div class="ss-row" id="logout-btn" style="cursor:pointer">
+                <div class="ss-label">
+                    <i class="ti ti-logout" aria-hidden="true" style="color:var(--red, #ff4a5a)"></i>
+                    <div>
+                        <div class="ss-label-text" style="color:var(--red, #ff4a5a)">Keluar</div>
+                        <div class="ss-label-sub">Keluar dari sesi / Ganti Mode</div>
+                    </div>
+                </div>
+                <i class="ti ti-chevron-right" style="color:#6a6a8c"></i>
+            </div>
+        </div>
+
+        <!-- ═══ Lyrics Sheet ═══ -->
+        <div class="settings-sheet" id="lyrics-sheet" role="dialog" aria-modal="true" aria-label="Lyrics">
+            <div class="ss-handle"></div>
+            <div class="ss-title">
+                <div style="display:flex; justify-content:space-between; align-items:center; width:100%">
+                    <span><i class="ti ti-microphone-2" aria-hidden="true"></i> Lirik Tersinkron</span>
+                    <div class="lyric-offset" id="lyric-offset-ctrl">
+                        <span>Offset</span>
+                        <button id="lyric-offset-minus" aria-label="Offset lirik mundur 0.5 detik">−</button>
+                        <span id="lyric-offset-display">+0.0s</span>
+                        <button id="lyric-offset-plus" aria-label="Offset lirik maju 0.5 detik">+</button>
+                    </div>
+                </div>
+            </div>
+            <div class="lyrics-panel" id="lyrics-panel" style="border:none; padding: 0;">
+                <div class="lyric-body" id="lyrics-content" style="height: 60dvh; overflow-y: auto;">
+                    <div class="lyric-line near" style="text-align:center; padding:20px; color:#6a6a8c;">Tidak ada lirik
+                    </div>
+                </div>
+            </div>
+            <button id="lyrics-close-btn" class="ss-out-btn"
+                style="width: 100%; padding: 12px; font-size: 14px; margin-top: 10px;">Tutup</button>
+        </div>
+
+        <!-- ═══ Action Sheet ═══ -->
+        <div class="settings-sheet" id="action-sheet" role="dialog" aria-modal="true" aria-label="Track Actions">
+            <div class="ss-handle"></div>
+            <div class="ss-title" id="action-sheet-title">Title</div>
+            <div class="ss-row" style="flex-direction: column; gap: 10px; border-bottom: none;">
+                <button class="ss-action-btn" id="action-play-now"
+                    style="width: 100%; padding: 12px; font-size: 14px;"><i class="ti ti-player-play"></i>
+                    Putar</button>
+                <button class="ss-action-btn" id="action-enqueue"
+                    style="width: 100%; padding: 12px; font-size: 14px;"><i class="ti ti-playlist-add"></i>
+                    Antrean</button>
+                <button class="ss-action-btn" id="action-delete"
+                    style="width: 100%; padding: 12px; font-size: 14px; color: #ff5555; display: none;"><i class="ti ti-trash"></i>
+                    Hapus Unduhan</button>
+                <button class="ss-out-btn" id="action-cancel" style="width: 100%; padding: 12px; font-size: 14px;"><i
+                        class="ti ti-x"></i> Batal</button>
+            </div>
+        </div>
+
+        <!-- ═══ Help Sheet ═══ -->
+        <div class="settings-sheet" id="help-sheet" role="dialog" aria-modal="true" aria-label="Help">
+            <div class="ss-handle"></div>
+            <div class="ss-title">Panduan Shortcut</div>
+            <div style="max-height: 300px; overflow-y: auto; margin-bottom: 16px;">
+                <div class="ss-row">
+                    <div class="ss-label-text"><kbd>Space</kbd></div>
+                    <div class="ss-label-sub">Pause / Resume</div>
+                </div>
+                <div class="ss-row">
+                    <div class="ss-label-text"><kbd>N</kbd></div>
+                    <div class="ss-label-sub">Lagu selanjutnya</div>
+                </div>
+                <div class="ss-row">
+                    <div class="ss-label-text"><kbd>B</kbd></div>
+                    <div class="ss-label-sub">Lagu sebelumnya</div>
+                </div>
+                <div class="ss-row">
+                    <div class="ss-label-text"><kbd>S</kbd></div>
+                    <div class="ss-label-sub">Stop</div>
+                </div>
+                <div class="ss-row">
+                    <div class="ss-label-text"><kbd>↑</kbd></div>
+                    <div class="ss-label-sub">Volume naik</div>
+                </div>
+                <div class="ss-row">
+                    <div class="ss-label-text"><kbd>↓</kbd></div>
+                    <div class="ss-label-sub">Volume turun</div>
+                </div>
+                <div class="ss-row">
+                    <div class="ss-label-text"><kbd>M</kbd></div>
+                    <div class="ss-label-sub">Unduh lagu ini</div>
+                </div>
+                <div class="ss-row">
+                    <div class="ss-label-text"><kbd>R</kbd></div>
+                    <div class="ss-label-sub">Toggle Radio</div>
+                </div>
+                <div class="ss-row">
+                    <div class="ss-label-text"><kbd>L</kbd></div>
+                    <div class="ss-label-sub">Toggle Lirik</div>
+                </div>
+                <div class="ss-row">
+                    <div class="ss-label-text"><kbd>/</kbd></div>
+                    <div class="ss-label-sub">Fokus pencarian</div>
+                </div>
+                <div class="ss-row">
+                    <div class="ss-label-text"><kbd>?</kbd></div>
+                    <div class="ss-label-sub">Panduan ini</div>
+                </div>
+            </div>
+            <button id="help-close-btn" class="ss-out-btn"
+                style="width: 100%; padding: 12px; font-size: 14px;">Tutup</button>
+        </div>
+
+        <!-- ═══ Artist Detail Sheet ═══ -->
+        <div class="settings-sheet" id="artist-detail-sheet" role="dialog" aria-modal="true" aria-label="Detail Artis">
+            <div class="ss-handle"></div>
+            <div class="ads-cover">
+                <img id="ads-cover-img" src="" alt="">
+                <div class="ads-title-block">
+                    <div class="ads-name" id="ads-name"></div>
+                    <div class="ads-tags" id="ads-tags"></div>
+                </div>
+            </div>
+            <div class="ads-body">
+                <button class="btn-play-all" id="ads-play-all" type="button"><i class="ti ti-player-play-filled"></i> Putar Semua</button>
+                <div class="ads-track-list" id="ads-track-list"></div>
+            </div>
+            <button id="ads-close-btn" class="ss-out-btn"
+                style="width: 100%; padding: 12px; font-size: 14px; margin: 0 16px 16px;">Tutup</button>
+        </div>
+
+        <!-- ═══ Main Overlay ═══ -->
+        <div id="main-overlay" class="overlay"></div>
+    </div>
+
+    <!-- ═══ Connection Toast ═══ -->
+    <div id="connection-toast"></div>
+
+    <!-- ═══ Log Toast ═══ -->
+    <div id="log-toast"></div>
+
+    <script type="module" src="/static/pages/app/main.js"></script>
+</body>
+
+</html>

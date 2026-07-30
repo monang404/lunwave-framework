@@ -1,0 +1,113 @@
+@media (max-width: 1023px) { .desktop-only { display: none !important; } }
+
+@media (max-width: 1023px) {
+  body[data-active-tab="search"] #app-header { display: none !important; }
+
+  body:not([data-active-tab="home"])[data-player-state="IDLE"] #player-bar { display: none !important; }
+
+  body:not([data-active-tab="home"]) #player-bar {
+    position: absolute;
+    bottom: calc(60px + env(safe-area-inset-bottom));
+    left: var(--s3); right: var(--s3);
+    background: var(--bg-elevated);
+    border-radius: var(--r-md);
+    padding: var(--s2) var(--s4);
+    border: 1px solid var(--border-2);
+    box-shadow: var(--shadow-md);
+    display: flex; align-items: center; gap: var(--s3);
+    z-index: 100; min-height: 58px;
+  }
+
+  body:not([data-active-tab="home"]) #player-bar .pb-row1 { display: flex; flex: 1; }
+  body:not([data-active-tab="home"]) #player-bar .pb-seek { display: none; }
+  body:not([data-active-tab="home"]) #player-bar .pb-ctrl { display: none; }
+  body:not([data-active-tab="home"]) #player-bar .pb-badges { display: none; }
+
+  /* Mini play/pause button in mini player */
+  body:not([data-active-tab="home"]) #player-bar .btn-play {
+    width: 36px; height: 36px;
+    font-size: 14px;
+    box-shadow: none;
+    flex-shrink: 0;
+  }
+}
+
+@media (min-width: 601px) {
+  #app {
+    /* C-02: gunakan lebih banyak ruang di tablet, bukan cuma 600px kolom sempit */
+    max-width: 768px;
+    margin: 0 auto;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.6);
+  }
+
+  .nav-btn span {
+    font-size: 11px;
+  }
+}
+
+@media (min-width: 601px) {
+  .lyrics-wrap {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 120px;
+    margin-top: 16px;
+    position: relative;
+  }
+
+  .home-equalizer.cinematic-text {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    width: 100%;
+  }
+}
+
+
+@media (min-width: 601px) {
+  body[data-player-state="IDLE"] #tab-home,
+  body[data-queue-empty="true"] #tab-home {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+  }
+
+  body[data-player-state="IDLE"] #tab-home .home-left-col,
+  body[data-queue-empty="true"] #tab-home .home-left-col {
+    width: 100%;
+  }
+
+  body[data-queue-empty="true"][data-has-lyrics="true"] #tab-home .home-left-col {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "art lyrics"
+      "track lyrics";
+    gap: 0 20px;
+    align-items: center;
+    justify-content: center;
+    max-width: 1000px;
+    margin: 0 auto;
+    padding-top: 0;
+  }
+
+  body[data-queue-empty="true"][data-has-lyrics="true"] #tab-home .home-left-col .home-art-section {
+    grid-area: art;
+    justify-self: center;
+  }
+
+  body[data-queue-empty="true"][data-has-lyrics="true"] #tab-home .home-left-col .home-track-row {
+    grid-area: track;
+    justify-self: center;
+  }
+
+  body[data-queue-empty="true"][data-has-lyrics="true"] #tab-home .home-left-col .lyrics-wrap {
+    grid-area: lyrics;
+    justify-self: center;
+    align-self: center;
+    width: 100%;
+    max-width: 440px;
+  }
+}

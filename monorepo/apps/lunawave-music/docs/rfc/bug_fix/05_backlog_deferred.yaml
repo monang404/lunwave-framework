@@ -1,0 +1,104 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 05 — Backlog / item yang SENGAJA TIDAK dieksekusi dalam plan ini.
+# TIDAK ADA task_id dieksekusi di file ini. Ini murni catatan supaya
+# temuan Prioritas Rendah tidak hilang begitu saja dari radar.
+# =============================================================================
+
+meta:
+  purpose: >
+    Menyimpan semua item Prioritas Rendah dari proposal_perbaikan_keamanan_dan_bug.md
+    §5 (keterbatasan desain) yang sengaja tidak masuk file 01-04 -- lihat
+    keputusan d6 di 00_index_and_decisions.yaml.
+  status: "DEFERRED — bukan bagian eksekusi plan ini"
+
+backlog_items:
+
+  - id: BL-01
+    title: "Multi-admin & role management"
+    proposal_ref: "§5 (Prioritas Rendah), audit temuan #17"
+    reason_deferred: >
+      Single-admin adalah keputusan desain yang sudah dipakai luas di
+      codebase (persistence/admin_account_repo.py mengasumsikan 1 baris,
+      session_repo.delete_all_sessions() di file 01 juga sengaja
+      mengasumsikan ini). Menambah multi-admin butuh desain skema baru
+      (kolom user_id di sessions, role/permission di admin_account),
+      bukan patch kecil -- melanggar prinsip "jangan refactor 2 tahap
+      sekaligus" kalau digabung ke plan bug-fix ini.
+    next_step_if_resumed: >
+      Buat RFC arsitektur terpisah. Perlu didesain dulu: skema DB baru
+      (admin_account jadi tabel multi-row + kolom role), migrasi data
+      existing (baris tunggal saat ini jadi admin pertama), dampak ke
+      SEMUA kode yang mengasumsikan single-admin (grep
+      "admin_account\\.get_admin_account\\|LIMIT 1" untuk titik awal).
+
+  - id: BL-02
+    title: "HTTPS/TLS bawaan"
+    proposal_ref: "§5 (Prioritas Rendah), audit temuan #18"
+    reason_deferred: >
+      LunaWave saat ini didesain dijalankan personal/lokal di belakang
+      reverse proxy opsional (Nginx/Cloudflare Tunnel/ngrok,
+      direkomendasikan README) yang biasanya menangani TLS termination.
+      Menambahkan TLS bawaan di aiohttp sendiri adalah keputusan
+      arsitektur deployment, bukan bug/kerentanan yang berdampak
+      langsung pada instalasi yang mengikuti README.
+    next_step_if_resumed: >
+      RFC terpisah membahas trade-off: TLS bawaan (butuh manajemen
+      sertifikat, mis. Let's Encrypt/self-signed) vs. tetap
+      mendokumentasikan reverse proxy sebagai cara resmi, dengan
+      penguatan dokumentasi bahwa menjalankan tanpa TLS/tanpa reverse
+      proxy di jaringan tidak terpercaya berisiko.
+
+  - id: BL-03
+    title: "SQLite tanpa strategi scaling & tanpa backup otomatis"
+    proposal_ref: "§5 (Prioritas Rendah), audit temuan #19"
+    reason_deferred: >
+      "Tidak boleh ganti SQLite ke DB lain" adalah batasan teknis
+      eksplisit di AI_CONTEXT.md -- scaling SQLite bukan soal patch,
+      tapi soal desain (WAL mode, connection pooling, dsb., sudah
+      relevan hanya kalau load bertambah). Backup otomatis adalah fitur
+      baru (scheduler + rotasi file), bukan bug fix.
+    next_step_if_resumed: >
+      RFC terpisah untuk backup otomatis: desain scheduler (cron-like di
+      dalam aplikasi vs instruksi manual di dokumentasi operator),
+      lokasi & rotasi file backup, dan apakah perlu opsi
+      enkripsi-saat-backup mengingat DB memuat password_hash & sessions.
+
+  - id: BL-04
+    title: "Testing frontend minim"
+    proposal_ref: "§5 (Prioritas Rendah), audit temuan #20 (bagian testing)"
+    reason_deferred: >
+      Peningkatan cakupan test frontend adalah pekerjaan besar lintas
+      banyak file (web/static/), tumpang tindih dengan RFC
+      docs/rfc/arsip/frontend_refactor/ yang sudah punya rencana
+      governance tooling sendiri -- bukan bagian dari scope bug-fix
+      keamanan ini.
+    next_step_if_resumed: >
+      Lihat docs/rfc/arsip/frontend_refactor/ untuk RFC yang relevan;
+      lanjutkan di sana, bukan membuka RFC baru yang tumpang tindih.
+
+  - id: BL-05
+    title: "Dukungan i18n"
+    proposal_ref: "§5 (Prioritas Rendah), audit temuan #20 (bagian i18n)"
+    reason_deferred: >
+      Fitur baru murni (ekstraksi string, mekanisme locale), tidak ada
+      dampak keamanan/bug langsung. Di luar scope proposal keamanan &
+      bug ini sepenuhnya.
+    next_step_if_resumed: >
+      RFC produk terpisah -- perlu keputusan bahasa target, mekanisme
+      ekstraksi string (banyak string Indonesia hardcode tersebar di
+      backend & frontend saat ini, perlu inventarisasi dulu).
+
+  - id: BL-06
+    title: "Aksesibilitas (ARIA) minim"
+    proposal_ref: "§5 (Prioritas Rendah), audit temuan #20 (bagian aksesibilitas)"
+    reason_deferred: >
+      Sama seperti BL-04, ini pekerjaan lintas file frontend yang lebih
+      tepat sebagai bagian dari RFC frontend terpisah, bukan bug-fix
+      keamanan.
+    next_step_if_resumed: >
+      Audit ARIA terpisah dimulai dari halaman utama
+      (web/static/pages/app/index.html) dan komponen player -- cek
+      apakah RFC frontend_refactor sudah mencakup ini atau perlu RFC
+      baru.

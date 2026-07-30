@@ -1,0 +1,169 @@
+# 10_tahap4_event_bus_hub_sekunder.yaml
+# Tahap 4 dari proposal_event_bus_frontend.md — hub sekunder:
+# render/full-state.js dan events/settings-events.js (render/search.js
+# TIDAK masuk sini -- lihat catatan_search_js di bawah). Disusun dari
+# pembacaan langsung per 2026-07-25, SETELAH Tahap 1 selesai
+# (PATCH-2026-07-25-232). Tahap 2 dan 3 BELUM dieksekusi saat file ini
+# ditulis -- lihat depends_on, task di sini SENGAJA reuse nama event yang
+# didefinisikan di Tahap 2 (08_tahap2_event_bus_ws.yaml), bukan bikin baru,
+# supaya katalog event tidak duplikat/tidak konsisten.
+
+tahap: 4
+proposal_acuan: "docs/rfc/pemulihan_frontend/proposal_event_bus_frontend.md"
+depends_on:
+  - "Tahap 2 (ws.js) selesai -- Tahap 4 reuse event 'now-playing:changed', 'player:progress', 'player:bar-changed', 'radio:changed', 'queue:changed', 'lyrics:changed', 'settings:sheet-changed', 'search:playing-state', 'discover:playing-state' yang subscriber-nya (initXBusSubscriptions) dibuat di Tahap 2, T2.5"
+  - "Tahap 3 (events/index.js) selesai -- disarankan tapi tidak hard-block; tidak ada overlap kode langsung dengan Tahap 3"
+parallel_ok: false
+risk: sedang
+butuh_konfirmasi_user_sebelum_mulai: false
+catatan_konfirmasi: >
+  Berbeda dari Tahap 2/3, tahap ini TIDAK punya keputusan arsitektur
+  ambigu -- murni reuse pola & nama event yang sudah difinalisasi di
+  Tahap 1/2. butuh_konfirmasi_user_sebelum_mulai tetap disarankan true
+  secara praktik (semua tahap event bus perlu izin mulai eksplisit per
+  proposal §8.2), field di atas hanya menandai tidak ada keputusan desain
+  baru yang perlu dipilih.
+
+catatan_search_js: >
+  proposal §2 menyebut render/search.js sebagai salah satu hub sekunder,
+  tapi audit langsung 2026-07-25 menemukan SEMUA edge bermasalah yang
+  melibatkan search.js sudah tercakup di tahap LAIN: ws.js -> search.js
+  (renderSearchResults, updateSearchPlayingState) ada di Tahap 2 (T2.5);
+  events/*.js -> search.js (showActionModal, hideActionModal,
+  playSearchTrack) masuk kategori render<->events cross-import murni, ada
+  di Tahap 5. Satu-satunya edge search.js yang genuinely "hub sekunder"
+  murni (dipanggil dari full-state.js) ditangani di T4.1 di bawah sebagai
+  bagian dari full-state.js, bukan tugas terpisah untuk search.js sendiri.
+  search.js sendiri TIDAK PERLU diedit di tahap ini.
+
+task:
+  - id: T4.1
+    title: "render/full-state.js -- ganti 10 titik panggil render langsung di renderFullState()/applyFullState() jadi bus.emit, reuse nama event dari Tahap 2"
+    action: edit
+    file: "web/static/shared/js/render/full-state.js"
+    catatan_stop: >
+      Nomor baris hasil pembacaan langsung 2026-07-25 (file 58 baris, belum
+      disentuh Tahap 1/2/3). Kalau sudah berubah sejak breakdown ini
+      ditulis: STOP, laporkan, jangan improvisasi cocokkan sendiri.
+    catatan_gaya_import: >
+      Audit langsung ke audio/playback-sync.js (hasil Tahap 1) menunjukkan
+      gaya import bus.js yang SUDAH dipakai adalah
+      `import { emit } from "../bus.js";` lalu dipanggil bare `emit(...)`
+      -- BUKAN `import { emit as bus } from "./bus.js"` + `bus.emit(...)`
+      seperti yang masih jadi catatan terbuka ("sesuaikan gaya T1") di
+      08_tahap2_event_bus_ws.yaml T2.7. Pakai gaya `emit(...)` di sini,
+      dan kalau Tahap 2 belum dieksekusi saat Tahap 4 dimulai, teruskan
+      temuan ini supaya T2.7 konsisten juga.
+    penggantian_per_baris:
+      - baris: 17
+        lama: "setPositionAnchor(store.position);"
+        baru: 'emit("player:position", store.position);'
+      - baris: 38
+        lama: "if (typeof renderNowPlaying === \"function\") renderNowPlaying();"
+        baru: 'emit("now-playing:changed");'
+      - baris: 39
+        lama: "if (typeof renderProgress === \"function\") renderProgress();"
+        baru: 'emit("player:progress");'
+      - baris: 40
+        lama: "if (typeof renderPlayerBar === \"function\") renderPlayerBar();"
+        baru: 'emit("player:bar-changed");'
+      - baris: 41
+        lama: "if (typeof renderRadio === \"function\") renderRadio();"
+        baru: 'emit("radio:changed");'
+      - baris: 42
+        lama: "if (typeof renderQueue === \"function\") renderQueue();"
+        baru: 'emit("queue:changed");'
+      - baris: 43
+        lama: "if (typeof renderLyrics === \"function\") renderLyrics();"
+        baru: 'emit("lyrics:changed");'
+      - baris: 44
+        lama: "if (typeof renderSettingsSheet === \"function\") renderSettingsSheet();"
+        baru: 'emit("settings:sheet-changed");'
+      - baris: 45
+        lama: "if (typeof updateSearchPlayingState === \"function\") updateSearchPlayingState();"
+        baru: 'emit("search:playing-state");'
+      - baris: 46
+        lama: "if (typeof updateDiscoverPlayingState === \"function\") updateDiscoverPlayingState();"
+        baru: 'emit("discover:playing-state");'
+    catatan_typeof_guard: >
+      Sama seperti T2.7 (baris 403/407 ws.js): guard `typeof X === "function"`
+      jadi tidak relevan lagi setelah ganti ke emit(...) (bus.emit aman
+      kalau tidak ada listener) -- HAPUS guard-nya sekalian, jangan
+      dibiarkan membungkus emit() tanpa alasan.
+    tetap_import_tidak_berubah:
+      - "getOrInitAudio, syncBrowserAudio, updateMediaSession dari audio/playback-sync.js -- arah MEMERINTAH, legitimate"
+      - "dom dari dom.js"
+      - "store dari store.js"
+      - "renderHeader dari ws.js -- arah kontrol balik analog wsSend, sudah ditetapkan legitimate di 08_tahap2 (tetap_direct_import_legitimate)"
+    hapus_import:
+      - "renderSettingsSheet dari events/settings-events.js"
+      - "updateDiscoverPlayingState dari render/discover-tab.js"
+      - "renderLyrics dari render/lyrics.js"
+      - "renderNowPlaying dari render/now-playing.js"
+      - "renderPlayerBar, renderProgress, setPositionAnchor dari render/player.js"
+      - "renderQueue dari render/queue.js"
+      - "renderRadio dari render/radio-tab.js"
+      - "updateSearchPlayingState dari render/search.js"
+    tambah_import:
+      - 'import { emit } from "../bus.js";'
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/render/full-state.js"
+      - "npx eslint web/static/shared/js/render/full-state.js"
+
+  - id: T4.2
+    title: "services/auth.js -- ganti closeSettings() jadi bus.emit('overlay:main-close'), definisikan event baru + subscriber di settings-events.js"
+    action: edit
+    detail: >
+      services/auth.js mengimpor closeSettings dari events/settings-events.js
+      (bukan render->events, jadi di luar rule no-render-imports-events,
+      tapi tetap edge circular-dependency di 04_sesi4 dan bagian dari
+      "hub sekunder settings-events.js"). closeSettings() isinya cuma
+      toggle 1 class lalu panggil closeMainOverlay() -- render/DOM action,
+      layak masuk bus sama seperti target lain di tahap ini. Event baru ini
+      ("overlay:main-close") SENGAJA didefinisikan generik (bukan
+      "auth:close-settings") supaya bisa dipakai ulang di Tahap 5 untuk
+      kasus render/discover-personalize.js -> closeMainOverlay yang polanya
+      identik -- lihat 11_tahap5_render_events_cross_import.yaml.
+    file_edit_1:
+      path: "web/static/shared/js/services/auth.js"
+      catatan_stop: "Baris hasil audit 2026-07-25, file belum disentuh tahap lain."
+      hapus_import:
+        - "baris 4: import { closeSettings } from \"../events/settings-events.js\";"
+      tambah_import:
+        - 'import { emit } from "../bus.js";  // taruh dekat import lain di bagian atas file'
+      penggantian:
+        catatan: "Cari SEMUA titik panggil closeSettings() di auth.js (audit 2026-07-25 tidak menemukan pemanggilan eksplisit di badan fungsi manapun -- closeSettings tampaknya diimpor tapi TIDAK DIPAKAI saat ini. STOP dan laporkan ke user kalau ternyata ada pemanggilan yang terlewat saat eksekusi nyata, jangan hapus import diam-diam tanpa konfirmasi kalau ternyata masih dipakai.)"
+    file_edit_2:
+      path: "web/static/shared/js/events/settings-events.js"
+      detail: "Extend initSettingsBusSubscriptions() (dibuat Tahap 2, T2.5) -- TAMBAH 1 subscription, JANGAN buat fungsi init kedua."
+      tambah_baris: |
+        on("overlay:main-close", closeMainOverlay);
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/services/auth.js"
+      - "node --input-type=module --check < web/static/shared/js/events/settings-events.js"
+
+  - id: T4.3
+    title: "Regenerate depcruise, bandingkan ke baseline Tahap 3"
+    action: verify
+    verifikasi:
+      - "npx depcruise --config .dependency-cruiser.js web/static/shared/js > /tmp/depcruise_t4.txt -- catat angka circular-dependencies, bandingkan ke baseline Tahap 3"
+
+  - id: T4.4
+    title: "Manual test full-state broadcast + overlay close (WAJIB, bukan cuma automated check)"
+    action: manual_test
+    checklist:
+      - "Reconnect WS (cabut/pasang WiFi sebentar) -- setelah reconnect, seluruh UI (player, now playing, queue, radio, lyrics sheet kalau terbuka, settings sheet kalau terbuka, search playing state, discover playing state) ter-render ulang dengan benar dari full state broadcast"
+      - "Login admin -> logout -- posisi player (setPositionAnchor via applyFullState) tetap akurat setelah full state baru diterapkan"
+      - "Buka Settings sheet lalu logout dari admin -- sheet/overlay tertutup dengan benar (jalur closeSettings/overlay:main-close)"
+    laporan: "Laporkan hasil tiap item eksplisit ke user, jangan asumsikan lolos."
+
+  - id: T4.5
+    title: "Patchlog + checkpoint"
+    action: patchlog_cmd
+    detail: "Cek dulu `python automation/patchlog.py latest --n 1 --json` untuk nomor patch berikutnya sebelum menulis entry."
+    checkpoint_cmd: "zip checkpoint ke checkpoints/lunawave-T4-eventbus.zip"
+
+verifikasi_selesai:
+  - "render/full-state.js tidak lagi import langsung 8 modul render/* + events/settings-events.js untuk render call (renderHeader dari ws.js dan 3 import kontrol dari playback-sync.js TETAP ada, itu benar)"
+  - "events/settings-events.js initSettingsBusSubscriptions sekarang subscribe 2 event (settings:sheet-changed dari T2, overlay:main-close dari T4)"
+  - "npx depcruise -- circular-dependencies turun dari baseline T3, TIDAK dipaksa 0 (§3.5 proposal)"

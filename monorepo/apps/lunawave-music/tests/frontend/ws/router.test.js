@@ -1,0 +1,1 @@
+import { describe, it, expect } from "vitest"; import { routeMessage } from "../../../web/static/shared/js/ws/router.js"; describe("router.js", () => { it("routes message without throwing", () => { expect(() => routeMessage({ type: "unknown" })).not.toThrow(); }); });

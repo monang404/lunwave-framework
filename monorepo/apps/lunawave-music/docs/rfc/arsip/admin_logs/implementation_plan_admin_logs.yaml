@@ -1,0 +1,389 @@
+# implementation_plan_admin_logs.yaml
+# v1 — 2026-07-28
+# Fitur: admin_logs_ia_redesign (penataan ulang IA + perbaikan bug taksonomi
+# di halaman /admin/logs, TANPA mengubah arsitektur logging inti maupun
+# kontrak API yang sudah ada)
+#
+# Sumber rencana naratif: RENCANA_REDESIGN_ADMIN_LOGS.md (§1-§6)
+# Sumber DESAIN VISUAL — SOURCE OF TRUTH: mockup_admin_logs.html
+#   (file statis, buka langsung di browser; setiap task frontend WAJIB
+#   mencocokkan hasil akhirnya terhadap mockup ini pixel-intent, bukan
+#   pixel-perfect literal — struktur DOM boleh berbeda asal hasil visual
+#   & breakpoint behavior setara)
+# Baseline yang TIDAK diubah taksonominya: core/log_categories.py,
+# core/log_config.py, core/observability.py, format file_renderer()
+#
+# STATUS: final untuk Fase 1-2 (bug fix + rename, risiko rendah, sudah
+# disepakati). Fase 3-5 butuh SATU konfirmasi produk sebelum eksekusi:
+# lihat blok `decisions.AL-D3` (urutan tab default) — tandai
+# `requires_human_confirmation: true` di task terkait.
+#
+# ATURAN EKSEKUSI UNTUK AGENT:
+# 1. Ikuti `execution_order` di akhir file secara sekuensial per sesi.
+#    Task dalam satu `session` dengan `parallel_ok: true` boleh dikerjakan
+#    tidak berurutan relatif satu sama lain (asal depends_on terpenuhi).
+# 2. Sesi 3 (server/app.py + core/log_categories.py dibaca, TIDAK diubah)
+#    dan sesi 5 (websocket-adjacent files) dedicated — lihat rationale
+#    per sesi di bawah.
+# 3. Jangan eksekusi task berlabel `requires_human_confirmation: true`
+#    tanpa berhenti dan meminta konfirmasi eksplisit user PERSIS sebelum
+#    task itu.
+# 4. Dilarang mengubah isi/urutan/jumlah 15 kategori di
+#    core/log_categories.py sebagai bagian dari fitur ini — fitur ini
+#    HANYA menyinkronkan sisi tampilan ke taksonomi yang sudah ada,
+#    tidak pernah sebaliknya.
+# 5. Setelah tiap task: jalankan `post_commands`, cek `dod` semua true,
+#    lalu prepend entry docs/PATCHLOG.md (ID: PATCH-YYYY-MM-DD-NNN — cek
+#    frontmatter `latest_patch_id` untuk nomor urut terbaru SEBELUM
+#    menulis; saat rencana ini ditulis, latest_patch_id adalah
+#    PATCH-2026-07-28-286 / total_entries 286) kecuali task punya
+#    `patchlog: skip`.
+# 6. Non-breaking per commit: tiap task harus meninggalkan
+#    /admin/logs dalam keadaan bisa dibuka & dipakai normal.
+# 7. Setiap task yang menyentuh admin-logs.html/.js WAJIB screenshot
+#    manual di 3 lebar viewport (375px, 768px, 1440px) sebagai bagian
+#    verifikasi `dod`, dibandingkan terhadap mockup_admin_logs.html pada
+#    lebar yang sama.
+
+meta:
+  source_features: ["admin_logs_ia_redesign"]
+  source_plan: "RENCANA_REDESIGN_ADMIN_LOGS.md"
+  source_design_of_truth: "mockup_admin_logs.html"
+  source_taxonomy_baseline: "core/log_categories.py"
+  locked_files_global: []
+  caution_files_global:
+    - server/handlers/log_dashboard.py   # dibaca sesi 3 untuk opsi A (available_categories), perubahan HANYA additive pada response JSON, tidak mengubah field yang sudah ada
+  conventions:
+    patchlog_id_format: "PATCH-YYYY-MM-DD-NNN"
+    latest_patch_id_at_plan_time: "PATCH-2026-07-28-286"
+    viewport_check_widths: [375, 768, 1440]
+
+decisions:
+  AL-D1:
+    question: "Sinkronisasi dropdown kategori (§1.1 rencana): generate dinamis dari backend (opsi A), atau hardcode ulang statis di HTML (opsi B)?"
+    chosen: "opsi_A_dynamic_dari_backend"
+    rationale: >
+      Opsi B memperbaiki bug hari ini tapi berisiko basi lagi persis
+      dengan cara yang sama begitu core/log_categories.py berubah di masa
+      depan. Opsi A menjadikan core/log_categories.ALL_CATEGORIES satu
+      sumber kebenaran yang dipakai backend DAN frontend, konsisten
+      dengan pola R-D1 pada RFC redesign_logging sebelumnya (reuse,
+      jangan duplikasi). Biaya tambahan opsi A kecil: satu field baru
+      di response get_logs_stats(), sudah ada endpoint yang dipanggil
+      tiap 10 detik (fetchStats()) untuk menumpangi field ini.
+    status: resolved
+  AL-D2:
+    question: "Tab switcher mobile: bottom tab bar baru (§4 rencana), atau tetap tabs-header lama tapi ukuran diperkecil?"
+    chosen: "bottom_tab_bar_baru_640px"
+    rationale: >
+      Tabs-header horizontal di layar <640px tetap butuh scroll horizontal
+      untuk 4 tab dengan label penuh, atau label harus dipotong sampai
+      tidak terbaca. Bottom tab bar (pola native app) menyelesaikan
+      keduanya: area jempol, seluruh 4 tab selalu terlihat tanpa scroll.
+      Divalidasi visual di mockup_admin_logs.html (resize browser <640px).
+    status: resolved
+  AL-D3:
+    question: "Urutan tab default berubah jadi Ringkasan-dulu (overview-first, §3 rencana), menggeser Live Tail dari posisi 1 ke posisi 2?"
+    chosen: "TBD — butuh konfirmasi user"
+    rationale: >
+      Ini asumsi desain (pola observability tools pada umumnya), BUKAN
+      temuan bug. Kalau workflow admin selama ini selalu buka Live Tail
+      duluan, urutan lama (Live Tail tab pertama) sama sahnya. Task AL3.1
+      (default active tab + urutan DOM) ditandai
+      requires_human_confirmation: true karena mengubah landing view yang
+      dilihat admin pertama kali membuka /admin/logs.
+    status: pending_human_confirmation
+
+# ---------------------------------------------------------------------------
+# PETA SESI
+# ---------------------------------------------------------------------------
+sessions:
+  - session: 1
+    label: "Fase 1 — Fix taksonomi kategori (bug, risiko rendah)"
+    parallel_ok: false
+    risk: low
+    rationale: >
+      Perbaikan bug murni dan terisolasi. Dedicated (bukan karena
+      berisiko konflik file, tapi supaya diff PATCHLOG-nya bersih sebagai
+      satu perbaikan bug yang bisa dirujuk terpisah dari task IA di
+      sesi lain).
+    tasks: [AL1.1, AL1.2, AL1.3]
+
+  - session: 2
+    label: "Fase 2 — Rename label tab & header (copy-only, risiko rendah)"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Murni ubah teks (tab label, judul header), tidak ada logika yang
+      berubah. Aman paralel dengan sesi 1 kalau agent berbeda mengerjakan
+      keduanya sekaligus — tidak overlap baris kode.
+    tasks: [AL2.1, AL2.2]
+
+  - session: 3
+    label: "Fase 3 — Deep-link hash routing + urutan tab (butuh konfirmasi AL-D3)"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED. AL3.1 mengubah urutan DOM tab & default active tab —
+      gate manusia (AL-D3). AL3.2 (baca/tulis location.hash) sebaiknya
+      satu sesi dengan AL3.1 supaya kombinasi "urutan baru + hash baru"
+      diverifikasi bersamaan, bukan dua kali ubah file JS yang sama di
+      commit terpisah.
+    tasks: [AL3.1, AL3.2]
+
+  - session: 4
+    label: "Fase 4 — Empty state hasil filter kosong"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Perubahan terisolasi di log-tail.js (satu fungsi render tambahan),
+      tidak menyentuh file yang disentuh sesi 1-3. Aman paralel dengan
+      sesi 5.
+    tasks: [AL4.1]
+
+  - session: 5
+    label: "Fase 5 — Bottom tab bar mobile (<640px)"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Perubahan CSS + markup kecil di breakpoint mobile, tidak
+      mempengaruhi desktop/tablet. Wajib verifikasi visual manual (lihat
+      aturan eksekusi #7) karena breakpoint/ergonomi sulit ditangkap unit
+      test otomatis.
+    tasks: [AL5.1]
+
+  - session: 6
+    label: "Verifikasi akhir & regresi visual menyeluruh"
+    parallel_ok: false
+    risk: low
+    rationale: >
+      DEDICATED, penutup fitur. Membandingkan hasil akhir /admin/logs
+      terhadap mockup_admin_logs.html di 3 breakpoint, plus regresi
+      fungsional (live-tail WS, download log, filter kombinasi) supaya
+      tidak ada yang tidak sengaja rusak oleh 5 fase di atas.
+    tasks: [AL6.1]
+
+tasks:
+
+  # ============================================================
+  # SESI 1 — Fix taksonomi kategori
+  # ============================================================
+  - id: AL1.1
+    feature: admin_logs_ia_redesign
+    session: 1
+    parallel_ok: false
+    title: "Tambah available_categories ke response get_logs_stats()"
+    depends_on: []
+    locked: false
+    files: ["server/handlers/log_dashboard.py (CAUTION, additive-only)"]
+    steps:
+      - "import ALL_CATEGORIES dari core.log_categories di server/handlers/log_dashboard.py"
+      - "tambah key baru 'available_categories': list(ALL_CATEGORIES) ke response_data pada get_logs_stats() — field lain di response_data TIDAK berubah nama/struktur"
+      - "tambah/perbarui unit test di tests/unit/server/handlers/test_log_dashboard.py: assert response['available_categories'] == list(core.log_categories.ALL_CATEGORIES)"
+    post_commands: ["python automation/find_owner.py server/handlers/log_dashboard.py --json"]
+    dod:
+      - "GET /api/logs/stats mengembalikan field available_categories berisi persis 15 kategori dari core/log_categories.ALL_CATEGORIES, urutan sama"
+      - "field response lain yang sudah ada (log_stats, system_stats, active_users, metrics) tidak berubah sama sekali"
+      - "unit test baru hijau"
+    patchlog_group: session_1
+
+  - id: AL1.2
+    feature: admin_logs_ia_redesign
+    session: 1
+    parallel_ok: false
+    title: "Render #filterCategory secara dinamis dari available_categories"
+    depends_on: [AL1.1]
+    locked: false
+    files:
+      - "web/static/pages/admin-logs/admin-logs.html"
+      - "web/static/pages/admin-logs/dashboard-stats.js"
+    steps:
+      - "di admin-logs.html: kosongkan <option> hardcode di dalam #filterCategory, sisakan hanya <option value=\"\">Semua Kategori</option>"
+      - "di dashboard-stats.js (fungsi yang sudah memanggil fetchStats()/menerima response /api/logs/stats): tambah langkah render — sekali saat pertama kali available_categories diterima, populate <option> #filterCategory dari array tsb (value = slug kategori, label = Title Case dari slug, mis. 'lifecycle' -> 'Lifecycle')"
+      - "pastikan render populate ini idempotent (tidak menduplikasi <option> kalau fetchStats() dipanggil ulang tiap 10 detik oleh setInterval yang sudah ada) — cek dulu apakah select sudah terisi >1 option sebelum re-render"
+      - "value filter yang sedang dipilih user TIDAK boleh ter-reset ke '' setiap kali fetchStats() polling — simpan currentValue sebelum re-render, restore sesudahnya"
+    post_commands: []
+    dod:
+      - "dropdown kategori di /admin/logs menampilkan persis 15 opsi (+ 'Semua Kategori') sesuai core/log_categories.ALL_CATEGORIES, tidak ada kategori hantu (http/discovery/lyrics/db/metrics/app/unknown) dan tidak ada yang hilang (auth/event/radio/resolve/persistence/external/system semua ada)"
+      - "memilih kategori apapun di dropdown lalu klik Filter menghasilkan log yang benar-benar terfilter (dicoba manual untuk minimal 2 kategori yang sebelumnya hilang, mis. auth dan system)"
+      - "polling fetchStats() 10 detik tidak mereset pilihan filter yang sedang aktif"
+    patchlog_group: session_1
+
+  - id: AL1.3
+    feature: admin_logs_ia_redesign
+    session: 1
+    parallel_ok: false
+    title: "Regression test: cegah taksonomi basi terulang di masa depan"
+    depends_on: [AL1.2]
+    locked: false
+    files: ["tests/frontend/admin/admin-logs.test.js"]
+    steps:
+      - "tambah test: mock response /api/logs/stats dengan available_categories tertentu, assert jumlah <option> di #filterCategory (dikurangi 1 untuk 'Semua Kategori') sama dengan panjang array tsb"
+      - "tambah komentar di test menjelaskan MENGAPA test ini ada (linknya ke bug taksonomi basi ini) supaya niatnya jelas untuk perubahan berikutnya"
+    post_commands: []
+    dod: ["test baru hijau dan gagal dengan jelas bila seseorang mengembalikan hardcode statis di masa depan (divalidasi dengan sengaja merusak lalu mengembalikan)"]
+    patchlog_group: session_1
+
+  # ============================================================
+  # SESI 2 — Rename label & header
+  # ============================================================
+  - id: AL2.1
+    feature: admin_logs_ia_redesign
+    session: 2
+    parallel_ok: true
+    title: "Rename header judul halaman"
+    depends_on: []
+    locked: false
+    files: ["web/static/pages/admin-logs/admin-logs.html"]
+    steps:
+      - "ganti teks <div class=\"header-title\">...LunaWave Logs</div> menjadi 'LunaWave Observability', ikuti markup referensi di mockup_admin_logs.html (tambahan <span class=\"header-sub\">/admin/logs</span> opsional, boleh diambil sesuai mockup)"
+      - "ganti <title>LunaWave - Logging Dashboard</title> menjadi 'LunaWave - Observability Dashboard'"
+    post_commands: []
+    dod: ["judul tab browser dan header halaman konsisten menyebut 'Observability', tidak ada sisa teks 'Logging Dashboard'/'LunaWave Logs' di HTML"]
+    patchlog_group: session_2
+
+  - id: AL2.2
+    feature: admin_logs_ia_redesign
+    session: 2
+    parallel_ok: true
+    title: "Rename label 4 tab ke Bahasa Indonesia (tanpa ubah data-tab id)"
+    depends_on: []
+    locked: false
+    files: ["web/static/pages/admin-logs/admin-logs.html"]
+    steps:
+      - "ganti label tab: 'Live Tail' -> 'Log Langsung', 'Metrics Matrix' -> 'Matriks Log', 'System Dashboard' -> 'Ringkasan', 'User Info' -> 'Sesi Pengguna'"
+      - "JANGAN ubah nilai atribut data-tab (live/matrix/dashboard/users) maupun id elemen tab-content di task ini — itu scope AL3.1 (perlu koordinasi karena AL3.1 juga mengganti id jadi ringkasan/log/matrix/users mengikuti mockup). Kalau AL3.1 belum dieksekusi, cukup ganti innerText tab-btn saja, biarkan data-tab/id lama"
+    post_commands: []
+    dod: ["4 label tab tampil dalam Bahasa Indonesia sesuai tabel §3 rencana, tidak ada regresi fungsi klik tab (masih switch tab-content yang benar)"]
+    patchlog_group: session_2
+
+  # ============================================================
+  # SESI 3 — Deep-link hash + urutan tab (GATE: AL-D3)
+  # ============================================================
+  - id: AL3.1
+    feature: admin_logs_ia_redesign
+    session: 3
+    parallel_ok: false
+    risk: medium
+    requires_human_confirmation: true
+    title: "Ubah urutan tab jadi Ringkasan-dulu + selaraskan data-tab/id dengan mockup"
+    depends_on: [AL2.2]
+    locked: false
+    files: ["web/static/pages/admin-logs/admin-logs.html"]
+    steps:
+      - "STOP: konfirmasi eksplisit ke user dulu sebelum task ini (lihat AL-D3) — pastikan urutan Ringkasan->Log Langsung->Matriks Log->Sesi Pengguna dan Ringkasan sebagai tab aktif default memang disetujui, bukan asumsi"
+      - "urutkan ulang 4 elemen .tab-btn di DOM sesuai urutan yang disetujui"
+      - "samakan data-tab/id tab-content dengan penamaan di mockup_admin_logs.html (ringkasan/log/matrix/users) supaya konsisten dengan AL3.2 dan dokumentasi ke depan — sesuaikan admin-logs.js bila ada referensi ke id lama ('tab-live' dsb.)"
+      - "set class active default ke tab Ringkasan (bukan Live Tail lagi)"
+    post_commands: ["grep -rn \"tab-live\\|'live'\" web/static/pages/admin-logs/ tests/frontend/admin/"]
+    dod:
+      - "urutan visual tab sesuai yang disetujui user, tab Ringkasan aktif saat halaman pertama dibuka"
+      - "tidak ada referensi id/data-tab lama ('live' dsb.) yang tertinggal dan menyebabkan tab tidak berfungsi"
+      - "test tests/frontend/admin/admin-logs.test.js yang mereferensikan id/urutan lama diperbarui"
+    patchlog_group: session_3
+
+  - id: AL3.2
+    feature: admin_logs_ia_redesign
+    session: 3
+    parallel_ok: false
+    title: "Deep-link tab via location.hash"
+    depends_on: [AL3.1]
+    locked: false
+    files: ["web/static/pages/admin-logs/admin-logs.js"]
+    steps:
+      - "saat init: baca location.hash (fallback ke tab default/Ringkasan bila kosong/tidak valid), aktifkan tab-content & tab-btn yang sesuai sebelum data pertama di-fetch"
+      - "di listener klik tab-btn yang sudah ada: tambah history.replaceState(null, '', '#' + tab) setelah pindah tab (jangan pakai pushState, supaya tombol back browser tidak dipenuhi riwayat perpindahan tab)"
+      - "referensi implementasi: fungsi switchTab() di mockup_admin_logs.html (bagian <script> paling bawah) — logikanya identik, tinggal diadaptasi ke struktur admin-logs.js yang sudah ada (tabBtns/tabContents sudah ada sebagai variabel)"
+    post_commands: []
+    dod:
+      - "membuka /admin/logs#matrix langsung menampilkan tab Matriks Log aktif, bukan tab default"
+      - "klik antar tab mengubah hash URL tanpa reload halaman dan tanpa memutus koneksi WebSocket live-tail yang sedang berjalan"
+      - "tombol back/forward browser berpindah antar tab yang pernah dikunjungi tanpa error di console"
+    patchlog_group: session_3
+
+  # ============================================================
+  # SESI 4 — Empty state
+  # ============================================================
+  - id: AL4.1
+    feature: admin_logs_ia_redesign
+    session: 4
+    parallel_ok: true
+    title: "Empty state saat hasil filter log kosong"
+    depends_on: []
+    locked: false
+    files: ["web/static/pages/admin-logs/log-tail.js"]
+    steps:
+      - "tambah fungsi renderEmptyState() yang menyisipkan markup ringkas (ikon + 'Tidak ada log yang cocok' + saran melonggarkan filter) ke #logContainer — referensi markup persis di mockup_admin_logs.html elemen #emptyStateDemo"
+      - "panggil renderEmptyState() dari titik yang sama tempat appendLogBatch()/render tail dipanggil, ketika hasil filter (setelah fetchTail() atau filter WS batch) menghasilkan array kosong DAN ini bukan state awal loading (bedakan 'belum ada log sama sekali karena baru buka halaman' vs 'ada log tapi semuanya kefilter habis' bila keduanya butuh pesan beda; kalau tidak sempat dibedakan di scope task ini, satu pesan generik untuk keduanya sudah cukup — catat sebagai TODO kecil di komentar kode)"
+      - "pastikan empty state otomatis hilang (kembali menampilkan log) begitu ada log baru masuk lagi atau filter diubah menghasilkan hasil non-kosong"
+    post_commands: []
+    dod:
+      - "memilih kombinasi filter yang pasti kosong (mis. kategori valid + kata kunci acak yang tidak mungkin match) menampilkan empty state, bukan area putih kosong tanpa penjelasan"
+      - "empty state hilang otomatis begitu filter diubah ke kombinasi yang menghasilkan log"
+    patchlog_group: session_4
+
+  # ============================================================
+  # SESI 5 — Bottom tab bar mobile
+  # ============================================================
+  - id: AL5.1
+    feature: admin_logs_ia_redesign
+    session: 5
+    parallel_ok: true
+    title: "Bottom tab bar untuk breakpoint <640px"
+    depends_on: [AL3.1]
+    locked: false
+    files:
+      - "web/static/pages/admin-logs/admin-logs.html"
+      - "web/static/pages/admin-logs/admin-logs.js"
+    steps:
+      - "tambah markup <nav class=\"bottom-tabs\">...4 tombol...</nav> sebelum </body>, persis pola di mockup_admin_logs.html (ikon inline SVG kecil + label pendek, data-tab sama dengan tab-btn atas)"
+      - "tambah CSS: nav.bottom-tabs {display:none;} default, lalu di dalam @media (max-width: 640px) yang SUDAH ADA di file ini: sembunyikan nav.tabs-header (display:none), tampilkan nav.bottom-tabs (display:flex, position:fixed, bottom:0), tambah padding-bottom ke <main> secukupnya supaya konten tab terakhir tidak tertutup bar"
+      - "di admin-logs.js: satukan event listener klik supaya .tab-btn DAN .bottom-tab-btn dengan data-tab sama mengontrol state active yang sama (hindari duplikasi logika switch tab — refactor jadi satu fungsi switchTab() dipanggil dari kedua listener, sejalan dengan AL3.2)"
+      - "hormati env(safe-area-inset-bottom) untuk perangkat dengan home-indicator (iPhone notch-less gesture bar), lihat contoh di mockup_admin_logs.html"
+    post_commands: []
+    dod:
+      - "pada viewport 375px: tabs-header atas tidak terlihat, bottom tab bar terlihat dan fixed di bawah, keempat tab bisa diklik tanpa scroll horizontal"
+      - "pada viewport 768px dan 1440px: tabs-header atas seperti semula, bottom tab bar tidak terlihat"
+      - "screenshot 3 breakpoint (§ aturan eksekusi #7) dilampirkan/dicatat sebagai bagian verifikasi task ini"
+    patchlog_group: session_5
+
+  # ============================================================
+  # SESI 6 — Verifikasi akhir
+  # ============================================================
+  - id: AL6.1
+    feature: admin_logs_ia_redesign
+    session: 6
+    parallel_ok: false
+    title: "Verifikasi visual & regresi fungsional menyeluruh"
+    depends_on: [AL1.3, AL2.1, AL3.2, AL4.1, AL5.1]
+    locked: false
+    files: []
+    steps:
+      - "buka /admin/logs asli hasil implementasi berdampingan dengan mockup_admin_logs.html di 375px, 768px, 1440px — bandingkan urutan tab, label, posisi bottom bar, empty state"
+      - "regresi fungsional manual: live-tail WS tetap streaming, tombol Unduh lunawave.log tetap berfungsi, filter level+kategori+search kombinasi tetap benar, panel chat admin (dash-chat-panel) tidak terpengaruh perubahan"
+      - "jalankan seluruh test suite terkait: pytest tests/unit/server/handlers/test_log_dashboard.py, dan test frontend tests/frontend/admin/admin-logs.test.js"
+      - "cek automation/verify_docs.py / architecture_lint.py bila relevan dengan file yang disentuh"
+    post_commands:
+      - "pytest tests/unit/server/handlers/test_log_dashboard.py -v"
+      - "pytest tests/unit/core/test_log_categories.py -v"
+    dod:
+      - "semua test terkait hijau"
+      - "tidak ada regresi fungsional pada fitur yang sudah ada sebelumnya di /admin/logs"
+      - "hasil visual di 3 breakpoint sepadan dengan mockup_admin_logs.html"
+      - "docs/PATCHLOG.md sudah mencatat seluruh entri fase 1-5, satu entry final AL6.1 mencatat penutupan fitur"
+    patchlog: single_final_entry
+
+execution_order:
+  - session: 1
+    tasks: [AL1.1, AL1.2, AL1.3]
+  - session: 2
+    tasks: [AL2.1, AL2.2]
+  - session: 3
+    tasks: [AL3.1, AL3.2]
+    gate: "AL-D3 harus resolved (bukan pending_human_confirmation) sebelum AL3.1 dieksekusi"
+  - session: 4
+    tasks: [AL4.1]
+  - session: 5
+    tasks: [AL5.1]
+  - session: 6
+    tasks: [AL6.1]

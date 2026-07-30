@@ -1,0 +1,101 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 05 — globalThis.pendingToggleTarget/toggleSentAt -> field store (`_`)
+# (Temuan F / §4.F, Fase 6)
+# Depends on: 04_frontend_reactive_store.yaml (butuh onStoreChange/Proxy)
+# Risiko: RENDAH | Effort: RENDAH
+#
+# SCOPE DIBATASI KETAT (keputusan d6, lihat 00_index_and_decisions.yaml):
+# HANYA pendingToggleTarget + toggleSentAt. Puluhan penggunaan globalThis
+# lain yang ditemukan saat audit (isDraggingVol/Pb/Queue, audioBlocked,
+# pendingTrack, pendingArtistDetail, isScrollingLyrics, loadLazyCovers,
+# safeStorage, ChatModule, dll.) SENGAJA TIDAK disentuh di file ini --
+# lihat 08_backlog_deferred.yaml untuk inventory lengkap + alasan per item.
+# =============================================================================
+
+phase:
+  id: P05
+  title: "Migrasi pendingToggleTarget/toggleSentAt dari globalThis ke field store"
+  proposal_ref: "§4.F"
+  closes_temuan: [F]
+  depends_on: [04_frontend_reactive_store.yaml]
+  scope_locked: "HANYA globalThis.pendingToggleTarget dan globalThis.toggleSentAt."
+
+tasks:
+  - task_id: P05-T1
+    title: "Tambah field _pendingToggleTarget/_toggleSentAt ke createStore() + helper baru"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - web/static/shared/js/store.js
+    steps:
+      - "Di createStore(), tambahkan 2 field baru: `_pendingToggleTarget: null` dan `_toggleSentAt: 0` (prefix underscore menandai internal coordination state, bukan domain state untuk di-render -- konsisten dengan konvensi yang diusulkan proposal §4.F)."
+      - >
+        Ubah `markPendingToggle(target)`: dari
+        `globalThis.pendingToggleTarget = target; globalThis.toggleSentAt = Date.now();`
+        menjadi `store._pendingToggleTarget = target; store._toggleSentAt = Date.now();`
+        (assignment ke store field, bukan lagi globalThis -- otomatis
+        lewat Proxy dari file 04, tidak perlu perubahan lain untuk
+        reactivity).
+      - >
+        Ubah `isPendingToggleActive(matchStatus)`: ganti semua baca
+        `globalThis.pendingToggleTarget`/`globalThis.toggleSentAt` dengan
+        `store._pendingToggleTarget`/`store._toggleSentAt`. Logic
+        (timeout check, reset ke null, perbandingan) TIDAK berubah.
+      - "JANGAN ubah signature markPendingToggle() atau isPendingToggleActive() -- caller di ws.js tidak perlu tahu perubahan internal ini."
+    acceptance_criteria:
+      - "grep -n 'globalThis.pendingToggleTarget\\|globalThis.toggleSentAt' di seluruh repo (kecuali komentar historis yang menjelaskan FIX-PAUSE-RACE-01 sebagai narasi masa lalu) mengembalikan 0 hasil di kode aktif setelah task ini."
+      - "Signature publik markPendingToggle/isPendingToggleActive tidak berubah -- ws.js tidak perlu diedit."
+    tests:
+      run:
+        - "npx vitest run tests/frontend/pause-race.test.js"
+
+  - task_id: P05-T2
+    title: "Perluas test pause-race untuk assert globalThis sudah tidak dipakai"
+    depends_on: [P05-T1]
+    touches_locked_files: false
+    files:
+      modify:
+        - tests/frontend/pause-race.test.js
+    steps:
+      - >
+        Tambahkan assertion baru di test yang sudah ada: setelah
+        memanggil markPendingToggle(...), verifikasi
+        `globalThis.pendingToggleTarget` TETAP `undefined` (tidak pernah
+        di-set), dan state yang benar ada di `store._pendingToggleTarget`.
+      - "Pastikan skenario race condition asli (grace-window, penolakan update kontradiktif) yang sudah diuji test lama tetap lulus tanpa perubahan assertion lain -- ini regression check, bukan rewrite test."
+    acceptance_criteria:
+      - "Test lama (grace-window behavior) tetap lulus tanpa modifikasi assertion intinya."
+      - "Assertion baru eksplisit membuktikan globalThis.pendingToggleTarget tidak lagi dipakai sama sekali pasca migrasi."
+    tests:
+      run:
+        - "npx vitest run tests/frontend/pause-race.test.js"
+        - "npx vitest run"
+    patchlog:
+      type: refactor
+      area: "web/static/shared/js"
+      title: "pendingToggleTarget/toggleSentAt: globalThis -> field store internal"
+      reason: >
+        globalThis sebagai kanal koordinasi implisit antar modul membuat
+        state pause/play race-condition sulit ditelusuri -- riwayat
+        FIX-PAUSE-RACE-01 menunjukkan dua modul sempat menyimpan
+        salinan berbeda dari konsep yang sama.
+      root_cause: >
+        Tidak ada satu sumber kebenaran eksplisit untuk state koordinasi
+        toggle pause/play -- globalThis dipakai sebagai pengganti field
+        store yang seharusnya.
+      solution: >
+        _pendingToggleTarget dan _toggleSentAt jadi field store biasa
+        (prefix _ untuk internal coordination state), markPendingToggle/
+        isPendingToggleActive diubah internal tanpa ubah signature
+        publik. Scope SENGAJA dibatasi hanya 2 field ini -- globalThis
+        lain (audioBlocked, isDraggingVol/Pb/Queue, dll.) dicatat sebagai
+        backlog di 08_backlog_deferred.yaml, TIDAK dimigrasi di fase ini
+        karena tidak ada bukti bug konkret seperti FIX-PAUSE-RACE-01.
+      files: "web/static/shared/js/store.js, tests/frontend/pause-race.test.js"
+
+post_phase_commands:
+  - "npx vitest run"
+  - "python automation/doctor.py"

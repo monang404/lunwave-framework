@@ -1,0 +1,93 @@
+# 03_sesi3_visual_regression.yaml
+# Sesi 3 — Visual regression check pasca migrasi pages/. Boleh paralel
+# dengan sesi 1 dan 2. Read-mostly (tidak mengubah kode produksi kecuali
+# temuan mengarahkan sebaliknya, dan itu butuh keputusan terpisah).
+
+session: 3
+parallel_ok: true
+risk: low
+depends_on: []
+
+lokasi_konkret:
+  test_file: "tests/frontend/visual/layout.spec.js"
+  baseline_dir: "tests/frontend/visual/layout.spec.js-snapshots/"
+  baseline_files_ada: [
+    "radio-hero-off-chromium-win32.png",
+    "radio-hero-on-chromium-win32.png",
+    "player-bar-paused-chromium-win32.png",
+    "player-bar-playing-chromium-win32.png",
+    "now-playing-long-chromium-win32.png",
+    "now-playing-short-chromium-win32.png",
+  ]
+
+temuan_konkret_sebelum_eksekusi:
+  - masalah: "MISMATCH NAMA — spec saat ini cuma ambil 3 screenshot (radio-hero-off.png, player-bar-paused.png, now-playing-panel.png), sedangkan baseline punya 6 file dengan nama berbeda (termasuk radio-hero-on, player-bar-playing, now-playing-long, now-playing-short yang TIDAK ADA test-nya lagi, dan now-playing-panel yang TIDAK ADA baseline-nya)."
+    kemungkinan_penyebab: "Spec di-refactor (mis. digabung dari beberapa varian state jadi satu locator #now-playing) tanpa regenerate baseline, ATAU baseline lama dari sebelum migrasi pages/ (sesi 8) tidak pernah di-refresh."
+    dampak: "3 baseline lama (on, playing, long/short) jadi ORPHAN — tidak pernah dibandingkan lagi, membesarkan repo tanpa manfaat. Screenshot now-playing-panel.png TIDAK PUNYA baseline sama sekali, artinya test itu akan dianggap 'baseline baru' (bukan regression check sungguhan) sampai di-generate manual sekali."
+  - masalah: "MISMATCH PLATFORM — nama file baseline berakhiran '-chromium-win32.png'. Playwright secara default menyisipkan nama platform ke snapshot filename kalau config tidak override snapshotPathTemplate."
+    dampak: "Kalau task ini dijalankan di Linux/CI Linux (bukan Windows), Playwright akan mencari file '-chromium-linux.png' yang TIDAK ADA SAMA SEKALI, dan SEMUA 3 test akan dianggap 'missing baseline' (bukan gagal karena beda visual) — bukan sinyal regresi, tapi sinyal environment mismatch."
+    cara_cek: "Jalankan `node -e \"console.log(process.platform)\"` di environment eksekusi SEBELUM menjalankan test, untuk tahu apakah ini kasusnya."
+
+tugas:
+  - id: S3.1
+    title: "Cek platform environment dan siapkan playwright browser"
+    steps:
+      - "node -e \"console.log(process.platform)\" -> catat hasilnya (win32/linux/darwin)"
+      - "npx playwright install chromium --with-deps"
+    verifikasi: "chromium terinstall tanpa error"
+
+  - id: S3.2
+    title: "Jalankan visual regression test, JANGAN auto-update snapshot"
+    command: "npx playwright test tests/frontend/visual/layout.spec.js --update-snapshots=none"
+    analisis_hasil:
+      - kondisi: "Semua 3 test 'missing baseline' DAN platform hasil S3.1 BUKAN win32"
+        kesimpulan: "Ini environment mismatch, BUKAN bug visual. Baseline perlu di-regenerate untuk platform eksekusi saat ini (lihat S3.3), bukan tanda ada regresi dari migrasi sesi 8."
+      - kondisi: "Test radio-hero-off / player-bar-paused FAIL dengan diff visual nyata (bukan missing baseline) walau platform cocok"
+        kesimpulan: "INI baru sinyal bug sungguhan dari migrasi sesi 8 (index.html/pages). LAPORKAN sebagai temuan dengan screenshot diff terlampir, JANGAN auto-fix struktur pages/ di sesi ini — butuh keputusan terpisah karena scope-nya di luar 'visual regression check'."
+      - kondisi: "now-playing-panel.png 'missing baseline' walau platform cocok (win32)"
+        kesimpulan: "Diharapkan (sudah diketahui sejak temuan_konkret_sebelum_eksekusi) — bukan regresi, baseline-nya memang belum pernah dibuat untuk locator #now-playing yang baru. Lanjut ke S3.3."
+    verifikasi: "Laporan hasil test (pass/fail/missing per test case) didokumentasikan sebelum lanjut ke S3.3"
+
+  - id: S3.3
+    title: "Regenerate baseline snapshot yang sudah dikonfirmasi BUKAN karena bug (hasil S3.2), hapus baseline orphan"
+    prasyarat: "S3.2 sudah selesai dan tidak ada 'diff visual nyata' yang belum dilaporkan"
+    steps:
+      - action: delete
+        files: [
+          "tests/frontend/visual/layout.spec.js-snapshots/radio-hero-on-chromium-win32.png",
+          "tests/frontend/visual/layout.spec.js-snapshots/player-bar-playing-chromium-win32.png",
+          "tests/frontend/visual/layout.spec.js-snapshots/now-playing-long-chromium-win32.png",
+          "tests/frontend/visual/layout.spec.js-snapshots/now-playing-short-chromium-win32.png",
+        ]
+        alasan: "Orphan — tidak ada test yang mengacu ke nama-nama ini lagi di layout.spec.js saat ini"
+      - action: run
+        command: "npx playwright test tests/frontend/visual/layout.spec.js --update-snapshots"
+        alasan: "Generate ulang baseline untuk 3 test aktif (radio-hero-off, player-bar-paused, now-playing-panel) sesuai platform eksekusi saat ini"
+      - action: run
+        command: "npx playwright test tests/frontend/visual/layout.spec.js --update-snapshots=none"
+        alasan: "Re-run sekali lagi TANPA update untuk pastikan baseline baru benar-benar match (bukan cuma ditulis lalu diasumsikan benar)"
+    verifikasi:
+      - "npx playwright test tests/frontend/visual/layout.spec.js -> 3/3 pass"
+      - "ls tests/frontend/visual/layout.spec.js-snapshots/ -> cuma 3 file, sesuai 3 test aktif"
+
+patchlog_cmd: |
+  python automation/patchlog.py add \
+    --type Test --area Frontend --priority Medium \
+    --title "Regenerate baseline visual regression, hapus 4 snapshot orphan" \
+    --reason "layout.spec.js-snapshots berisi 6 file baseline tapi spec aktif cuma 3 test — 4 file orphan dari refactor lama, dan now-playing-panel.png belum pernah punya baseline sama sekali. Baseline lama juga berakhiran -win32 sehingga di environment non-Windows selalu terdeteksi 'missing baseline'" \
+    --files "tests/frontend/visual/layout.spec.js-snapshots/radio-hero-off-*.png,tests/frontend/visual/layout.spec.js-snapshots/player-bar-paused-*.png,tests/frontend/visual/layout.spec.js-snapshots/now-playing-panel-*.png" \
+    --root-cause "Baseline snapshot tidak di-regenerate saat spec di-refactor jadi 3 test (dari sebelumnya lebih banyak varian state)" \
+    --solution "Hapus 4 baseline orphan (radio-hero-on, player-bar-playing, now-playing-long, now-playing-short), generate ulang baseline untuk 3 test aktif sesuai environment eksekusi saat ini" \
+    --tests "npx playwright test tests/frontend/visual/layout.spec.js -> 3/3 pass" \
+    --breaking No --risk Low --status Merged \
+    --related PATCH-2026-07-24-223 \
+    --notes "Jika S3.2 menemukan diff visual nyata (bukan cuma missing-baseline), JANGAN pakai patchlog_cmd ini — laporkan temuan itu terpisah ke user sebelum melanjutkan, karena berarti ada bug dari migrasi sesi 8 yang di luar scope sesi 3."
+
+checkpoint_cmd: >
+  zip -rq checkpoints/lunawave-S3-visual.zip . -x ".git/*" -x "*__pycache__*"
+  -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+  -x "*.DS_Store" -x "checkpoints/*"
+
+verifikasi_sesi_selesai:
+  - "npx playwright test tests/frontend/visual/layout.spec.js -> 3/3 pass, tidak ada snapshot orphan"
+  - "1 entry baru di docs/PATCHLOG.md ATAU laporan temuan bug visual terpisah ke user (tergantung hasil S3.2)"

@@ -1,0 +1,1 @@
+import { describe, it, expect } from "vitest"; import { handlePlaybackMessage } from "../../../../web/static/shared/js/ws/message-handlers/playback-messages.js"; describe("playback-messages.js", () => { it("handles state message", () => { expect(() => handlePlaybackMessage({ type: "state", data: {} })).not.toThrow(); }); });

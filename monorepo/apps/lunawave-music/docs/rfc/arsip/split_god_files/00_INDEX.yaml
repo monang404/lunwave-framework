@@ -1,0 +1,164 @@
+# 00_INDEX.yaml
+# Peta implementasi RFC "Pemecahan God File & God Class" (sumber:
+# proposal_god_file_splitting.md, §7). Diverifikasi ULANG langsung terhadap
+# repo (lunawave-develop.zip) sebelum file ini ditulis -- wc -l semua 9 file
+# yang disebut proposal (5 temuan + 2 dikecualikan) COCOK PERSIS dengan angka
+# di dokumen. Beberapa detail TAMBAHAN ditemukan yang tidak ada di proposal
+# asli, dicatat di `koreksi_terhadap_rencana_asli` di bawah -- WAJIB dibaca
+# sebelum eksekusi fase 3 (J).
+#
+# CARA PAKAI 6 FILE INI (dibagi per fase, urutan berdasar §5 proposal:
+# dependency & risiko, BUKAN urutan huruf temuan I-M):
+#   00_INDEX.yaml                          <- kamu di sini
+#   01_fase1_discover_repo_extract.yaml    (Temuan K -- risiko rendah)
+#   02_fase2_admin_logs_split.yaml         (Temuan I -- risiko rendah-sedang)
+#   03_fase3_playback_sync_split.yaml      (Temuan J -- risiko rendah-sedang)
+#   04_fase4_html_audit.yaml               (Temuan M -- murni audit + 1 keputusan kondisional)
+#   05_fase5_controller_play_track.yaml    (Temuan L -- RISIKO TINGGI, terakhir, butuh otorisasi eksplisit)
+#
+# Tiap file fase mandiri: berisi file yang disentuh, isi/boundary konkret
+# (line range hasil pembacaan langsung, bukan perkiraan), command verifikasi,
+# command PATCHLOG, dan command checkpoint zip per task.
+
+meta:
+  sumber_proposal: "proposal_god_file_splitting.md (v1.0, 2026-07-26, status DRAFT)"
+  latest_patch_id_saat_dibuat: "PATCH-2026-07-26-240"
+  total_entries_saat_dibuat: 240
+  catatan: >
+    WAJIB dicek ulang oleh agent sebelum menulis entry pertama (jalankan
+    `python automation/patchlog.py latest --n 1 --json`) -- kalau ada sesi
+    lain yang menambah entry sejak file ini dibuat, nomor NNN lanjut dari
+    situ, BUKAN dari 240 secara membabi buta.
+  verifikasi_ukuran_file_saat_dibuat: >
+    wc -l dijalankan langsung terhadap repo hasil unzip
+    (lunawave-develop.zip): admin-logs.js=878, admin-logs.html=1074,
+    playback-sync.js=499, discover_repo.py=446, controller.py=468,
+    index.html=898, client.html=290, patchlog.py=584, ui_builder.py=353.
+    Semua 9 angka COCOK PERSIS dengan proposal -- tidak ada drift antara
+    dokumen dan kode sejak proposal ditulis.
+
+koreksi_dan_temuan_tambahan_terhadap_proposal_asli:
+  - area: "Temuan J (playback-sync.js)"
+    temuan_tambahan: >
+      Proposal menyebut split jadi 3 modul (playback-sync.js thin,
+      audio-pool.js, media-session.js) dan re-export publik yang perlu
+      dijaga cuma 4 nama (syncBrowserAudio, unlockBrowserAudio,
+      resetLastLoadedVideoId, updateMediaSession). Verifikasi langsung
+      (`grep -rn "from.*playback-sync" web/ tests/`) menemukan external
+      caller mengimpor 11 nama BERBEDA langsung dari playback-sync.js,
+      bukan 4: unlockBrowserAudio, getOrInitAudio, resetLastLoadedVideoId,
+      analyser, dataArray, _resumeAndPlay, syncBrowserAudio,
+      updateMediaSession, _fadeIntervals, activeAudioIndex, initAudio.
+      Detail lengkap re-export ada di 03_fase3_playback_sync_split.yaml.
+      KONSEKUENSI: task re-export di fase 3 WAJIB mencakup semua 11 nama,
+      bukan cuma 4 yang disebut proposal, kalau tidak akan ada import
+      error di web/static/shared/js/platform/touch.js,
+      services/auth.js, audio/visualizer.js, ws.js,
+      render/full-state.js, render/player.js, dan 8 file events/*.
+    temuan_tambahan_2: >
+      `analyser`, `dataArray`, dan fungsi privat `_initAnalyser()` TIDAK
+      disebut sama sekali di desain 3-modul proposal (§4.J), padahal
+      ketiganya ada di playback-sync.js baris 19-49 dan digunakan oleh
+      `web/static/shared/js/audio/visualizer.js` (import langsung
+      `analyser, dataArray`). Secara konsep ketiganya adalah bagian dari
+      concern (1) -- audio-pool + Web Audio API graph -- jadi masuk akal
+      taruh di `audio-pool.js` bersama getOrInitAudio/initAudioPool/dst,
+      BUKAN ditinggal di playback-sync.js atau dipindah ke
+      media-session.js. Ini keputusan desain tambahan yang perlu
+      dikonfirmasi ke pemilik project sebelum eksekusi fase 3 (lihat
+      catatan_penting di file fase 3), karena proposal asli tidak
+      mengantisipasi baris ini sama sekali.
+  - area: "Temuan M (3 halaman HTML)"
+    temuan_tambahan: >
+      Audit awal (line count kasar terhadap tag <script>/<template>)
+      sudah dijalankan sebagai bagian dari penyusunan RFC ini (bukan
+      menunggu eksekusi terpisah, supaya proposal §7 "breakdown siap
+      eksekusi" benar-benar konkret): ketiga halaman HANYA punya 1
+      inline `<script>` kecil (index.html baris 852, ~43 baris;
+      client.html baris 259, ~28 baris) atau TIDAK PUNYA inline script
+      sama sekali (admin-logs.html -- 1 baris <script type="module">
+      external saja). Blok markup berulang manual (mis. kartu track/
+      artist) TIDAK ditemukan -- class berulang terbanyak cuma 3-5x
+      (card-row x3, status-item x5), bukan pola template kartu yang
+      digandakan puluhan kali. INI BUKAN keputusan final -- audit ini
+      dilakukan dengan grep/awk kasar, bukan tool khusus. 04_fase4 tetap
+      mewajibkan audit ulang formal dengan angka ini sebagai baseline
+      sanity-check, bukan pengganti.
+  - area: "Temuan K (discover_repo.py)"
+    temuan_tambahan: >
+      Tidak ada koreksi -- desain proposal (extract _fetch_tracks ->
+      _search_tracks_only, _fetch_songs -> _search_songs_only, _sort_key
+      -> _search_sort_key, static method) cocok 1:1 dengan kode aktual
+      baris 233-384. Caller eksternal `search_tracks()` cuma
+      `server/handlers/ws_discovery.py` -- signature publik tidak
+      berubah sama sekali di desain ini, jadi caller itu tidak perlu
+      disentuh.
+  - area: "Temuan L (controller.py)"
+    temuan_tambahan: >
+      `play_track()` terverifikasi baris 214-286 (bukan 215-300 persis
+      seperti proposal -- proposal menghitung termasuk beberapa baris
+      docstring/whitespace di sekitarnya, selisih wajar). `TrackLoader`
+      dipanggil lewat `self.track_loader.load_track(track)` -- sudah ADA
+      dan sudah dipakai (`loaded = await self.track_loader.load_track(track)`,
+      baris ~229), TAPI sisa method (mpv.play, loudness/af filter,
+      volume/crossfade branch, start_paused/seek, publish TrackStartedEvent,
+      poll_duration) semuanya TETAP di play_track(), belum ada delegasi
+      lanjutan. Ini mengonfirmasi root-cause proposal §4.L: TrackLoader
+      cuma menutup bagian "load+resolve", bukan orkestrasi playback
+      penuh.
+
+aturan_global_semua_fase:
+  - "Setiap task WAJIB diakhiri: (a) jalankan `verifikasi`, (b) jalankan `patchlog_cmd`, (c) jalankan `checkpoint_cmd`. Urutan tidak boleh dibalik -- jangan zip sebelum verifikasi hijau."
+  - "Jangan pernah menebak nomor PATCH-YYYY-MM-DD-NNN -- selalu jalankan `python automation/patchlog.py latest --n 1 --json` tepat sebelum menulis entry."
+  - "Semua signature publik yang disebutkan HARUS tetap sama persis (non-breaking) kecuali fase 5 (L) yang eksplisit butuh otorisasi terpisah -- lihat governance §6 proposal."
+  - "Setiap fase yang memindahkan export dari 1 file JS ke file baru WAJIB verifikasi ulang seluruh external caller dengan `grep -rn \"from.*<nama-file-lama>\" web/ tests/` SEBELUM menulis re-export list final -- jangan percaya daftar caller di file fase ini begitu saja kalau ada perubahan kode sejak file ini ditulis (2026-07-26)."
+  - "Kalau task gagal verifikasi: JANGAN lanjut ke task berikutnya, JANGAN tetap menulis PATCHLOG/zip checkpoint seolah sukses."
+  - "1-fase-1-atau-lebih-PATCHLOG-entry: task yang independen (bisa gagal terpisah tanpa merusak task lain dalam fase yang sama) dapat entry PATCHLOG sendiri-sendiri; task yang cuma valid kalau dieksekusi bersama (mis. split 1 file jadi beberapa modul sekaligus) 1 entry gabungan setelah task terakhir grup itu -- ditandai eksplisit per fase dengan field `patchlog_group`."
+
+zip_exclude_pattern: >
+  -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*"
+  -x "node_modules/*" -x "*.DS_Store" -x "checkpoints/*"
+
+urutan_eksekusi_fase:
+  - fase: 1
+    temuan: K
+    file: "01_fase1_discover_repo_extract.yaml"
+    depends_on: []
+    risiko: "Rendah"
+    catatan: "Independen total, cocok dieksekusi/divalidasi duluan sebelum fase JS yang lebih besar."
+  - fase: 2
+    temuan: I
+    file: "02_fase2_admin_logs_split.yaml"
+    depends_on: []
+    risiko: "Rendah-sedang"
+    catatan: "Independen dari fase 3 (J) -- 4 domain admin-logs.js nyaris tidak saling panggil, diverifikasi saat eksekusi per proposal §4.I."
+  - fase: 3
+    temuan: J
+    file: "03_fase3_playback_sync_split.yaml"
+    depends_on: []
+    risiko: "Rendah-sedang"
+    catatan: "Independen dari fase 2. WAJIB baca koreksi_dan_temuan_tambahan di atas dulu -- re-export list lebih besar dari yang disebut proposal."
+  - fase: 4
+    temuan: M
+    file: "04_fase4_html_audit.yaml"
+    depends_on: [2]
+    risiko: "Rendah (murni audit untuk admin-logs.html; index.html/client.html independen dari fase 2)"
+    catatan: >
+      Sub-task admin-logs.html WAJIB setelah fase 2 selesai (script sudah
+      pindah ke modul, audit markup-vs-script lebih akurat). Sub-task
+      index.html/client.html tidak depends_on apapun, boleh jalan kapan
+      saja. Componentize (langkah 6 proposal) BERSYARAT pada hasil audit
+      -- lihat file fase 4, ditandai BLOCKED/kondisional, bukan task
+      eksekusi pasti.
+  - fase: 5
+    temuan: L
+    file: "05_fase5_controller_play_track.yaml"
+    depends_on: []
+    risiko: "TINGGI -- file locked (AI_CONTEXT.md), closure kompleks"
+    catatan: >
+      SENGAJA diletakkan TERAKHIR dalam urutan eksekusi (walau
+      depends_on kosong secara teknis) sesuai prinsip proposal §5:
+      fase berdampak luas/berisiko tinggi di akhir. WAJIB otorisasi
+      eksplisit pemilik project SEBELUM mulai (governance §6 proposal,
+      pola sama seperti RFC #1 meta.authorization) DAN characterization
+      test sebagai baseline SEBELUM refactor dimulai.

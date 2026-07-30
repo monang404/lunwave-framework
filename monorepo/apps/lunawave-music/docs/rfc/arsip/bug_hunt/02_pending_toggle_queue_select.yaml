@@ -1,0 +1,92 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 02 — wsSend clear _pendingToggleTarget untuk queue_select
+# (temuan audit-lunawave-temuan.md #2)
+# Depends on: TIDAK ADA (independen)
+# Risiko: RENDAH | Effort: KECIL
+# Bagian dari seri: docs/rfc/temuan_audit_2026_07_27/ — BACA 00_index_and_decisions.yaml
+# LEBIH DULU (berisi decisions/keputusan desain & deviation_protocol yang
+# berlaku untuk SEMUA file di seri ini, termasuk file ini).
+# =============================================================================
+
+phase:
+  id: T02
+  title: "wsSend clear _pendingToggleTarget untuk queue_select"
+  temuan_ref: 2
+  closes_temuan: [2]
+  depends_on: []
+
+tasks:
+  - task_id: P1-T2
+    title: "wsSend clear _pendingToggleTarget juga untuk action queue_select"
+    temuan_ref: 2
+    severity_audit: "Sedang"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - web/static/shared/js/ws/transport.js
+      modify_tests:
+        - tests/frontend/ws/transport.test.js
+    steps:
+      - >
+        `view` web/static/shared/js/ws/transport.js fungsi `wsSend`
+        (baris ~107-121 saat audit). Konfirmasi kondisi persis:
+        `if (action === "next" || action === "prev" || action ===
+        "play_track") { store._pendingToggleTarget = null; }`.
+      - >
+        Tambah `"queue_select"` ke daftar action tsb:
+        ```js
+        if (action === "next" || action === "prev" || action === "play_track" || action === "queue_select") {
+            store._pendingToggleTarget = null;
+        }
+        ```
+        JANGAN ubah comment FIX-PAUSE-RACE-01 di atasnya kecuali untuk
+        menambahkan satu kalimat singkat mencatat bahwa queue_select
+        juga termasuk (karena sama-sama mengganti track sepenuhnya,
+        sama seperti next/prev/play_track).
+      - >
+        Test baru di tests/frontend/ws/transport.test.js: kirim
+        `wsSend("queue_select", {index: 2})` setelah men-set
+        `store._pendingToggleTarget` ke nilai bukan-null, assert
+        `store._pendingToggleTarget === null` setelahnya -- pola sama
+        persis dengan test existing untuk action "next"/"prev" kalau
+        sudah ada (cek dulu, ikuti gaya assert-nya).
+      - >
+        Test regresi: action lain yang BUKAN di daftar (mis.
+        "toggle_play", "set_volume") TIDAK meng-clear
+        _pendingToggleTarget -- pastikan test existing untuk ini masih
+        hijau.
+    acceptance_criteria:
+      - "Memilih track dari queue (queue_select) membersihkan _pendingToggleTarget yang basi, sama seperti next/prev/play_track."
+      - "UI tidak lagi berpotensi macet di status LOADING setelah user pause lalu langsung queue_select sebelum konfirmasi server datang."
+    tests:
+      run:
+        - "npx vitest run tests/frontend/ws/transport.test.js"
+    patchlog:
+      type: bug_fix
+      area: "web/static/shared/js/ws"
+      title: "wsSend clear _pendingToggleTarget juga untuk action queue_select"
+      reason: >
+        FIX-PAUSE-RACE-01 sudah meng-clear _pendingToggleTarget untuk
+        next/prev/play_track (semua command yang mengganti track
+        sepenuhnya) tapi lupa memasukkan queue_select -- command yang
+        sama-sama mengganti track lewat jalur berbeda (klik track di
+        UI antrean).
+      root_cause: >
+        Daftar action di kondisi FIX-PAUSE-RACE-01 ditulis berdasarkan
+        caller yang teridentifikasi saat itu (tombol next/prev,
+        keyboard shortcut, klik track di search/Media Session) --
+        klik track di panel Queue memanggil action queue_select yang
+        terlewat dari daftar.
+      solution: >
+        Tambahkan "queue_select" ke kondisi action yang meng-clear
+        _pendingToggleTarget di wsSend().
+      files: "web/static/shared/js/ws/transport.js, tests/frontend/ws/transport.test.js"
+      notes: "Tidak menyentuh file locked."
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/patchlog.py verify"
+  - "npx eslint web/static"

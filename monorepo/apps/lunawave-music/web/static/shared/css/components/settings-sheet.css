@@ -1,0 +1,309 @@
+/* ── Settings Sheet (Bottom Drawer) ── */
+.settings-sheet {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  max-width: 480px;
+  margin: 0 auto;
+  background: var(--bg-surface);
+  border-radius: 20px 20px 0 0;
+  border-top: 1px solid var(--bg-elevated);
+  padding: 16px 20px 24px;
+  transform: translateY(100%);
+  transition: transform var(--fm-transition-normal);
+  z-index: 200;
+  max-height: 78vh;
+  overflow-y: auto;
+}
+
+.settings-sheet.open {
+  transform: translateY(0);
+}
+
+.settings-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 199;
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.settings-overlay.active {
+  display: block;
+}
+
+.ss-handle {
+  width: 36px;
+  height: 3px;
+  background: var(--bg-elevated);
+  border-radius: 2px;
+  margin: 0 auto 16px;
+}
+
+.ss-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--fm-text-1);
+
+}
+
+.ss-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--fm-border);
+}
+
+.ss-row:last-child {
+  border-bottom: none;
+}
+
+.ss-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ss-icon {
+  font-size: 18px;
+}
+
+.ss-label-text {
+  font-size: 13px;
+  color: var(--fm-text-1);
+}
+
+.ss-label-sub {
+  font-size: 11px;
+  color: var(--fm-text-5);
+  margin-top: 1px;
+}
+
+
+
+/* Settings action buttons */
+.ss-out-btn,
+.ss-view-btn {
+  background: var(--bg-elevated);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--r-sm);
+  padding: 5px 12px;
+  color: var(--fm-text-4);
+  font-family: var(--fm-font);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--fm-transition-fast);
+}
+
+.ss-out-btn:hover,
+.ss-view-btn:hover {
+  color: var(--fm-text-1);
+  border-color: var(--accent);
+  background: rgba(233, 69, 96, 0.08);
+}
+
+/* Download bar in settings */
+.ss-dl-bar-wrap {
+  background: var(--bg-primary);
+  border-radius: var(--r-sm);
+  padding: 8px 10px;
+}
+
+.ss-dl-label {
+  font-size: 11px;
+  color: var(--fm-text-4);
+  margin-bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.ss-dl-bar {
+  height: 4px;
+  background: var(--bg-elevated);
+  border-radius: 2px;
+}
+
+.ss-dl-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent), var(--fm-blue));
+  transition: width 0.4s ease;
+}
+
+
+
+/* ══ BOTTOM SHEETS ══ */
+
+.settings-sheet {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--bg-surface);
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  border-top: 1px solid var(--border-2);
+  padding: var(--s3) 0 calc(var(--s8) + env(safe-area-inset-bottom));
+  transform: translateY(100%);
+  transition: transform var(--dur-normal) var(--ease);
+  z-index: 300;
+  max-height: 82vh;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.settings-sheet::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-sheet.open {
+  transform: translateY(0);
+}
+
+.ss-handle {
+  width: 36px;
+  height: 4px;
+  background: var(--border-3);
+  border-radius: var(--r-full);
+  margin: 0 auto var(--s4);
+}
+
+.ss-title {
+  font-size: var(--t-xs);
+  font-weight: var(--w-semibold);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding: 0 var(--s5) var(--s3);
+}
+
+.ss-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s4) var(--s5);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.ss-row:hover {
+  background: var(--fm-color-hover);
+}
+
+.ss-label {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  color: var(--text-2);
+  font-size: 18px;
+}
+
+.ss-label>div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ss-label-text {
+  font-size: var(--t-md);
+  font-weight: var(--w-medium);
+  color: var(--text-1);
+}
+
+.ss-label-sub {
+  font-size: var(--t-xs);
+  color: var(--text-2);
+}
+
+.ss-toggle {
+  width: 44px;
+  height: 26px;
+  border-radius: var(--r-full);
+  border: none;
+  background: var(--border-2);
+  cursor: pointer;
+  position: relative;
+  transition: background var(--dur-normal) var(--ease);
+  flex-shrink: 0;
+}
+
+.ss-toggle[data-on="true"] {
+  background: var(--accent);
+}
+
+.ss-toggle .toggle-dot {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  background: white;
+  border-radius: 50%;
+  top: 3px;
+  left: 3px;
+  transition: transform var(--dur-normal) var(--ease);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.ss-toggle[data-on="true"] .toggle-dot {
+  transform: translateX(18px);
+}
+
+.ss-action-btn {
+  background: var(--accent-dark);
+  border: none;
+  border-radius: var(--r-sm);
+  padding: 8px 14px;
+  color: var(--accent);
+  font-size: var(--t-sm);
+  font-weight: var(--w-medium);
+  font-family: var(--font);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.ss-action-btn:hover {
+  background: rgba(242, 181, 68, 0.2);
+}
+
+/* Download bar */
+.dl-bar-wrap {
+  width: 100%;
+}
+
+.dl-label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+
+.dl-bar {
+  height: 3px;
+  background: var(--border-2);
+  border-radius: var(--r-full);
+  overflow: hidden;
+}
+
+.dl-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--r-full);
+  transition: width 0.3s;
+}
+
+/* Action Sheet */
+#action-sheet-title {
+  font-size: var(--t-sm);
+  color: var(--text-2);
+  padding: 0 var(--s5) var(--s4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

@@ -1,0 +1,867 @@
+# task_breakdown_perf.yaml
+# v1 — 2026-07-21
+# Fitur: perf_background_battery_survival (LunaWave — Termux/Android)
+# Sumber analisa: temuan.md (audit langsung ke source, bukan asumsi — 7 temuan
+# PERF-1..PERF-7, konsolidasi 4 gap lama + 3 temuan baru)
+# Verifikasi tambahan: seluruh klaim di temuan.md sudah di-cross-check ulang ke
+# source code sebelum file ini ditulis (grep + baca langsung tiap file yang
+# disebut) — lihat catatan verifikasi per task di field `evidence`.
+#
+# STATUS: final per temuan — bukan daftar opsi (lihat blok `decisions`).
+# PENGECUALIAN: PERF-5 (§F1 di bawah, blok `future_work`) BUKAN bagian dari
+# batch eksekusi ini. Statusnya deferred di temuan.md sendiri karena menyentuh
+# `server/handlers/websocket.py` (governed). Jangan jalankan F1.1 sebagai
+# bagian dari sesi manapun di bawah tanpa sign-off eksplisit terpisah.
+#
+# ATURAN EKSEKUSI UNTUK AGENT:
+# 1. Ikuti `execution_order` di akhir file secara sekuensial per sesi. Task
+#    dalam satu `session` dengan `parallel_ok: true` boleh dikerjakan tidak
+#    berurutan relatif satu sama lain (asal depends_on terpenuhi) — tapi
+#    tetap tidak boleh melompati sesi.
+# 2. Blok `future_work` (F1.1 / PERF-5) TIDAK termasuk `execution_order` dan
+#    TIDAK BOLEH dieksekusi bersamaan sesi 1-7 di bawah — ini keputusan
+#    eksplisit dari temuan.md sendiri ("bukan untuk dieksekusi bersamaan
+#    patch lain"). Kalau user memerintahkan "kerjakan semua temuan", agent
+#    WAJIB berhenti dan konfirmasi ulang sebelum menyentuh F1.1 karena statusnya
+#    bukan cuma governed-file-gate biasa, tapi memang belum disetujui untuk
+#    dieksekusi sama sekali.
+# 3. Prinsip fail-safe (RFC/temuan §Ringkasan) WAJIB dipatuhi di semua task
+#    yang menyentuh binary/command eksternal Termux (termux-notification,
+#    termux-wake-lock, termux-battery-status, nice, ionice): cek eksistensi
+#    dulu, best-effort, log warning, JANGAN pernah crash proses kalau
+#    environment tidak mendukung (mis. dev machine Linux/Windows biasa).
+# 4. Setelah tiap task: jalankan `post_commands`, cek `dod` semua true, lalu
+#    prepend entry `docs/PATCHLOG.md` (ID: PATCH-YYYY-MM-DD-NNN, lanjutan dari
+#    latest_patch_id — cek `docs/PATCHLOG.md` frontmatter untuk nomor urut
+#    terbaru sebelum menulis, JANGAN asumsikan nomor dari file ini basi kalau
+#    ada commit lain masuk duluan) kecuali task punya `patchlog: skip`. Task
+#    bertanda `patchlog_group` ditulis SATU entry gabungan untuk seluruh
+#    anggota grup tsb.
+# 5. Field `files` dengan prefix `LOCKED:` = governance-locked, tidak boleh
+#    disentuh sebelum syarat konfirmasi eksplisit terpenuhi. Untuk fitur ini,
+#    TIDAK ADA task di sesi 1-7 yang menyentuh file locked — kalau eksekusi
+#    ternyata butuh mengubah salah satu (index.html/websocket.py/controller.py),
+#    STOP, itu tanda scope sudah bergeser dari rencana ini.
+# 6. Sesi dengan `parallel_ok: false` ("dedicated") wajib dikerjakan sendirian
+#    tanpa task lain disisipkan di sesi yang sama.
+# 7. Task yang mengubah file dengan test unit existing (lihat `existing_tests`
+#    di task terkait) WAJIB jalankan test tsb sebagai bagian dari `post_commands`
+#    — jangan cuma andalkan `doctor.py`, karena doctor.py tidak menjalankan
+#    pytest/vitest.
+
+meta:
+  source_features: ["perf_background_battery_survival"]
+  source_temuan: "temuan.md"  # dokumen sumber (diberikan berdiri sendiri, bukan file existing di docs/rfc)
+  locked_files_global:
+    - web/static/index.html          # AI_CONTEXT.md: final, tidak disentuh — TIDAK relevan ke fitur ini
+    - engine/playback/controller.py  # AI_CONTEXT.md: risiko tinggi, closure kompleks — TIDAK relevan ke fitur ini
+    - cache/admin_password.txt       # JANGAN commit — TIDAK relevan ke fitur ini
+    - server/handlers/websocket.py   # governed — HANYA disentuh oleh F1.1 (future_work), TIDAK oleh sesi 1-7
+  conventions:
+    patchlog_id_format: "PATCH-YYYY-MM-DD-NNN"
+    ai_agent_flag_required_on: [doctor.py, verify_docs.py, architecture_lint.py, verify_structure.py, find_owner.py, patchlog.py]
+    ai_agent_flag: "--json"
+    bundle_cmd_template: >
+      zip -rq lunawave-{TASK_ID}.zip . -x ".git/*" -x "*__pycache__*"
+      -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+      -x "*.DS_Store" -x "lunawave-B-*.zip"
+
+decisions:
+  PD-1:
+    question: "PERF-1 — tambah argumen apa ke termux-notification agar persistent?"
+    chosen: "--ongoing (opsional --priority high)"
+    rationale: >
+      Satu argumen di list `args` dalam `_render()` (plugins/notifications.py).
+      Tidak menambah dependency, tidak mengubah alur FIFO/callback existing,
+      tidak mengubah guard shutil.which yang sudah menangani binary hilang.
+    status: resolved
+
+  PD-2:
+    question: "PERF-2 — wake-lock otomatis dari kode cukup, atau perlu langkah manual juga?"
+    chosen: "wake_lock_sekunder_plus_setup_manual_wajib"
+    rationale: >
+      termux-wake-lock PARTIAL ditambahkan sebagai lapisan SEKUNDER saja
+      (fail-safe, cek eksistensi command dulu). Lapisan PRIMER yang wajib
+      tetap konfigurasi manual level-OS HyperOS/MIUI (Autostart diizinkan +
+      battery saver "No restrictions" + app di-lock di recent-apps) karena
+      policy custom HyperOS bisa mengabaikan wake-lock/notification API
+      standar Android. Ini didokumentasikan sebagai langkah setup wajib user
+      di docs/CONSTRAINTS.md, BUKAN sesuatu yang dipaksakan otomatis dari kode.
+    status: resolved
+
+  PD-3:
+    question: "PERF-3 — satu listener konsolidasi vs tiga listener terpisah untuk 3 rAF loop?"
+    chosen: "satu_titik_kontrol_di_playback-sync.js"
+    rationale: >
+      Extend listener `visibilitychange` yang SUDAH ADA di playback-sync.js
+      (satu-satunya di codebase sebelum perubahan ini) supaya jadi titik
+      kontrol tunggal: cabang hidden memanggil stopProgressClock() (player.js,
+      sudah idempotent), cabang visible memanggil startProgressClock() (kalau
+      status PLAYING), resumeVisualizerLoop() (visualizer.js, sudah ada dan
+      idempotent), dan membaca ulang dataset.on dari #radio-toggle-btn untuk
+      memanggil ulang setRadioHeroAnimState() (radio-hero-moon.js) — SEMUA
+      read-only terhadap state yang sudah dimiliki modul lain, tidak menulis
+      store/classList apa pun (konsisten prinsip RFC radio_toggle §6: satu
+      state satu pemilik). visualizer.js dan radio-hero-moon.js sendiri HANYA
+      dapat guard `document.hidden` di titik reschedule rAF masing-masing
+      (self-terminating), TIDAK dapat listener baru — restart tetap dari titik
+      kontrol tunggal ini.
+    status: resolved
+
+  PD-4:
+    question: "PERF-4 — backoff seperti apa, dan apakah reconnect timer juga butuh listener visibility sendiri?"
+    chosen: "exponential_2s_4s_8s_16s_30s_cap_plus_listener_terpisah_khusus_reconnect"
+    rationale: >
+      Backoff: 2s → 4s → 8s → 16s → 30s (cap), reset ke 2s begitu ws.onopen
+      sukses. Listener visibilitychange KEDUA di ws.js (di luar yang di
+      playback-sync.js) SENGAJA dibuat terpisah — ini BUKAN pelanggaran
+      prinsip PD-3, karena scope-nya beda total (reconnect network timer vs
+      pause/resume rAF animasi/audio). Precedent pola sudah ada di
+      playback-sync.js:144 (disebut temuan.md), tapi bukan berarti harus
+      literally satu listener yang sama untuk semua concern di seluruh app.
+    status: resolved
+
+  PD-5:
+    question: "PERF-5 — broadcast progress per-visibility, eksekusi sekarang atau ditunda?"
+    chosen: "ditunda_future_work_perlu_signoff_terpisah"
+    rationale: >
+      Menyentuh server/handlers/websocket.py yang berstatus governed di
+      AI_CONTEXT.md. temuan.md eksplisit menyatakan ini "future work, bukan
+      untuk dieksekusi bersamaan patch lain". Didesain sebagai blok
+      `future_work` terpisah (F1.1) di file ini, TIDAK masuk `execution_order`
+      sesi 1-7. Butuh sign-off eksplisit tersendiri sebelum mulai dikerjakan
+      sama sekali — bukan sekadar gate-per-file seperti file locked biasa.
+    status: resolved  # keputusan yang di-resolve adalah "tunda", bukan "kerjakan"
+
+  PD-6:
+    question: "PERF-6 — nice/ionice untuk kedua subprocess, tapi charging-gate untuk siapa saja?"
+    chosen: "nice_ionice_keduanya_charging_gate_loudness_saja"
+    rationale: >
+      ffmpeg (loudness analyzer) dan yt-dlp (search/resolve/download, lewat
+      ThreadPoolExecutor shared di adapters/ytdlp) sama-sama dibungkus
+      prioritas rendah. requiresCharging-style gating HANYA untuk loudness
+      batch analysis (background, idempotent, fire-and-forget — aman ditunda).
+      TIDAK untuk yt-dlp karena search/download selalu user-triggered dan
+      harus responsif seketika. Guard `os.name` untuk no-op di Windows.
+    status: resolved
+
+  PD-6b:
+    question: >
+      (Tambahan hasil review teknis, di luar temuan.md asli) — pakai os.nice()
+      (relatif) atau os.setpriority() (absolut) untuk yt-dlp worker thread?
+    chosen: "os.setpriority(os.PRIO_PROCESS, 0, N) — absolut, bukan os.nice()"
+    rationale: >
+      adapters/ytdlp/__init__.py memakai SATU ThreadPoolExecutor(max_workers=4)
+      yang di-share untuk search/extract/resolve/download (YtDlpClient facade).
+      ThreadPoolExecutor MENGGUNAKAN ULANG worker thread lintas job. Kalau
+      pakai os.nice() (relatif/kumulatif) di setiap job, niceness worker
+      thread itu akan terus NAIK setiap kali thread yang sama kebagian job
+      baru (10 → 20 → 30 → ...) sampai akhirnya starvation — bug tersembunyi
+      yang tidak disebut di temuan.md asli. os.setpriority(PRIO_PROCESS, 0, N)
+      bersifat absolut/idempotent per pemanggilan, jadi aman dipanggil
+      berulang di worker thread yang sama. Berlaku juga untuk analyzer.py
+      kalau nanti niat diubah dari subprocess nice/ionice ke setpriority
+      Python-level, tapi untuk analyzer.py solusi command-line nice/ionice
+      (PD-6) tetap dipertahankan karena itu proses subprocess terpisah, bukan
+      dalam-proses seperti yt-dlp.
+    status: resolved
+
+  PD-7:
+    question: "PERF-7 — PRAGMA synchronous level apa?"
+    chosen: "NORMAL"
+    rationale: >
+      Ditambahkan tepat setelah `PRAGMA journal_mode=WAL` di persistence/db.py.
+      Kombinasi WAL + synchronous=NORMAL didokumentasikan resmi SQLite sebagai
+      aman — mengurangi fsync per-commit, risiko residual (transaksi terakhir
+      hilang saat power-loss murni, bukan korupsi) bisa diterima untuk data
+      non-finansial (play count/riwayat/posisi).
+    status: resolved
+
+# ---------------------------------------------------------------------------
+# PETA SESI
+# ---------------------------------------------------------------------------
+sessions:
+  - session: 0
+    label: "Orientasi wajib"
+    parallel_ok: false
+    risk: gate
+    rationale: >
+      Baca temuan.md, AI_CONTEXT.md, CONSTRAINTS.md penuh; konfirmasi daftar
+      locked_files_global masih akurat; petakan owner semua file yang akan
+      disentuh sebelum implementasi apa pun dimulai.
+    tasks: [B0.1, B0.2]
+
+  - session: 1
+    label: "Quick wins — perubahan satu-baris/satu-argumen (PERF-1, PERF-7)"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Dua file berbeda, tidak saling terkait, masing-masing perubahan
+      trivial (1 argumen list / 1 baris PRAGMA). Effort/risk terendah di
+      seluruh temuan — dikerjakan lebih dulu sebagai batch cepat, TAPI tetap
+      didahulukan secara keseluruhan sebelum PERF-3/4/6 karena PERF-1 punya
+      dampak langsung ke keluhan utama (server mati saat layar off) meski
+      PERF-2 secara individual severity sama tinggi (lihat sesi 2, tabel
+      prioritas temuan.md).
+    patchlog_group: "1 entry gabungan untuk B1.1..B1.2"
+    tasks: [B1.1, B1.2]
+
+  - session: 2
+    label: "Wake-lock server + dokumentasi setup manual HyperOS (PERF-2)"
+    parallel_ok: true
+    risk: medium
+    rationale: >
+      B2.1 (kode: modul baru bootstrap/power.py + wiring startup) dan B2.2
+      (dokumentasi CONSTRAINTS.md) tidak saling depends — boleh paralel.
+      Risk medium karena menyentuh startup sequence server (walau fail-safe
+      dan tidak memblokir run_server()). Didahulukan setelah sesi 1 karena
+      severity Tinggi dan dampak langsung ke root cause utama (proses
+      dibekukan Doze/HyperOS saat layar mati).
+    tasks: [B2.1, B2.2]
+
+  - session: 3
+    label: "Satu titik kontrol visibility untuk 3 rAF loop (PERF-3)"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED. B3.1 mengubah satu-satunya listener visibilitychange yang
+      jadi titik kontrol (playback-sync.js), B3.2/B3.3 menambah guard
+      self-terminating di 2 file lain yang dipanggil ulang dari titik itu —
+      saling terkait erat (restart di B3.1 baru valid kalau guard di B3.2/
+      B3.3 sudah ada), jadi tidak boleh diselingi task lain. B3.4 adalah gate
+      self-audit sebelum sesi ini dianggap selesai, mengikuti pola R3.4 di
+      RFC radio_toggle (checklist isolasi wajib sebelum lanjut).
+    patchlog_group: "1 entry gabungan untuk B3.1..B3.4"
+    tasks: [B3.1, B3.2, B3.3, B3.4]
+
+  - session: 4
+    label: "WebSocket client reconnect backoff (PERF-4)"
+    parallel_ok: true
+    risk: medium
+    rationale: >
+      Satu file (ws.js), independen dari sesi 3 meski sama-sama frontend —
+      tidak ada overlap file maupun state. Risk medium karena menyentuh
+      jalur reconnect yang kalau salah bisa bikin client tidak pernah
+      reconnect sama sekali (perlu QA eksplisit di sesi 6).
+    tasks: [B4.1]
+
+  - session: 5
+    label: "Prioritas CPU/IO subprocess + charging-gate loudness (PERF-6)"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED. Tiga file (analyzer.py, service.py, adapters/ytdlp/__init__.py)
+      untuk satu temuan yang sama, saling melengkapi (nice/ionice di ffmpeg,
+      charging-gate di service.py yang membungkus analyzer, setpriority di
+      executor yt-dlp yang shared search+download) — dikerjakan berurutan
+      dalam satu sesi supaya konsistensi pendekatan (fail-safe check,
+      guard os.name) terjaga di ketiganya sekaligus.
+    tasks: [B5.1, B5.2, B5.3]
+
+  - session: 6
+    label: "QA & verifikasi menyeluruh — semua PERF-1..4, 6, 7"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Murni verifikasi manual/otomatis per temuan, tidak ada perubahan kode
+      produksi baru (kecuali fix kecil kalau QA menemukan masalah — kalau
+      ditemukan masalah struktural, kembali ke sesi terkait, jangan tambal
+      di sini). Semua task di sini depends_on sesi 1-5 selesai.
+    tasks: [B6.1, B6.2, B6.3, B6.4, B6.5, B6.6, B6.7]
+
+  - session: 7
+    label: "Dokumentasi penutup + PATCHLOG"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Regenerasi index/report, update STATUS.md & CHANGELOG.md (perubahan
+      ini user-facing: battery life & server stability), lalu satu entry
+      PATCHLOG penutup merangkum seluruh fitur dan mereferensikan temuan.md
+      + semua keputusan PD-1..PD-7.
+    patchlog_group: "PATCHLOG TERPISAH untuk sesi 7 (entry penutup, bukan bagian entry per-sesi 1/3)"
+    tasks: [B7.1, B7.2, B7.3]
+
+# ---------------------------------------------------------------------------
+tasks:
+
+  # ============================================================
+  # SESI 0 — Orientasi
+  # ============================================================
+  - id: B0.1
+    title: "Baca temuan.md + governance, konfirmasi locked files"
+    depends_on: []
+    locked: false
+    files: []
+    steps:
+      - "baca temuan.md penuh (semua 7 temuan + tabel prioritas)"
+      - "baca AI_CONTEXT.md, konfirmasi index.html/websocket.py/controller.py masih di daftar locked persis seperti di locked_files_global file ini"
+      - "baca docs/CONSTRAINTS.md §1 (Environment: Termux) — ini yang akan diupdate di B2.2"
+      - "baca 2-3 entry terakhir docs/PATCHLOG.md untuk konteks sprint aktif dan nomor PATCH- terbaru"
+    dod: ["locked_files_global terverifikasi akurat terhadap AI_CONTEXT.md saat ini", "nomor PATCH- berikutnya diketahui"]
+    patchlog: skip
+
+  - id: B0.2
+    title: "find_owner untuk semua file yang akan disentuh sesi 1-7"
+    depends_on: [B0.1]
+    locked: false
+    files: []
+    post_commands:
+      - "python automation/find_owner.py plugins/notifications.py --json"
+      - "python automation/find_owner.py persistence/db.py --json"
+      - "python automation/find_owner.py bootstrap/startup_tasks.py --json"
+      - "python automation/find_owner.py web/static/js/audio/playback-sync.js --json"
+      - "python automation/find_owner.py web/static/js/audio/visualizer.js --json"
+      - "python automation/find_owner.py web/static/js/render/radio-hero-moon.js --json"
+      - "python automation/find_owner.py web/static/js/render/player.js --json"
+      - "python automation/find_owner.py web/static/js/ws.js --json"
+      - "python automation/find_owner.py engine/loudness/analyzer.py --json"
+      - "python automation/find_owner.py engine/loudness/service.py --json"
+      - "python automation/find_owner.py adapters/ytdlp/__init__.py --json"
+    dod: ["owner/dependency seluruh file terkait dipahami sebelum implementasi"]
+    patchlog: skip
+
+  # ============================================================
+  # SESI 1 — Quick wins (parallel_ok: true)
+  # ============================================================
+  - id: B1.1
+    feature: perf_background_battery_survival
+    session: 1
+    parallel_ok: true
+    risk: low
+    title: "PERF-1 — tambah --ongoing ke termux-notification"
+    depends_on: [B0.2]
+    locked: false
+    files: ["plugins/notifications.py"]
+    evidence: "_render() baris 142-160, list `args` tidak menyertakan --ongoing (dikonfirmasi ulang lewat grep sebelum file ini ditulis)"
+    steps:
+      - "tambah string \"--ongoing\" ke list `args` di dalam fungsi `_render()`"
+      - "opsional: tambah \"--priority\", \"high\" di posisi setelahnya"
+      - "TIDAK ubah urutan/isi argumen lain (--id, --type media, -t, -c, --media-previous/play/pause/next)"
+      - "TIDAK ubah guard `shutil.which(\"termux-notification\")` di `start()` — best-effort check sudah benar"
+    existing_tests: ["tests/unit/plugins/test_notifications.py"]
+    post_commands:
+      - "pytest tests/unit/plugins/test_notifications.py -q"
+      - "grep -n '\\-\\-ongoing' plugins/notifications.py"
+    dod:
+      - "grep '\\-\\-ongoing' plugins/notifications.py -> muncul di dalam list args _render()"
+      - "tests/unit/plugins/test_notifications.py tetap PASS (update assertion args kalau test sebelumnya cek isi list persis)"
+      - "alur FIFO/callback tombol (prev/toggle/next) tidak berubah sama sekali"
+    patchlog_group: session_1
+
+  - id: B1.2
+    feature: perf_background_battery_survival
+    session: 1
+    parallel_ok: true
+    risk: low
+    title: "PERF-7 — tambah PRAGMA synchronous=NORMAL"
+    depends_on: [B0.2]
+    locked: false
+    files: ["persistence/db.py"]
+    evidence: "baris 48, hanya PRAGMA journal_mode=WAL yang di-set, synchronous tidak disentuh (default SQLite = FULL)"
+    steps:
+      - "tambah `await self._conn.execute(\"PRAGMA synchronous=NORMAL\")` tepat SETELAH baris `PRAGMA journal_mode=WAL`"
+      - "TIDAK ubah PRAGMA lain yang mungkin sudah ada di sekitar baris itu"
+    existing_tests: ["tests/unit/persistence/test_db.py"]
+    post_commands:
+      - "pytest tests/unit/persistence/test_db.py -q"
+      - "grep -n 'PRAGMA' persistence/db.py"
+    dod:
+      - "grep 'PRAGMA' persistence/db.py -> menampilkan journal_mode=WAL diikuti synchronous=NORMAL, urutan tsb"
+      - "tests/unit/persistence/test_db.py tetap PASS"
+    patchlog_group: session_1
+
+  # ============================================================
+  # SESI 2 — Wake-lock + dokumentasi manual (PERF-2)
+  # ============================================================
+  - id: B2.1
+    feature: perf_background_battery_survival
+    session: 2
+    parallel_ok: true
+    risk: medium
+    title: "Modul bootstrap/power.py — acquire_wake_lock() fail-safe"
+    depends_on: [B0.2]
+    locked: false
+    files:
+      - "bootstrap/power.py (baru)"
+      - "bootstrap/startup_tasks.py"
+    evidence: >
+      grep -r 'termux-wake-lock' seluruh codebase kosong. Wiring startup
+      task lain (check_connectivity, _init_mpv, _resume_last_track) semua
+      didaftarkan lewat safe_create_task() di run_startup_checks()
+      (bootstrap/startup_tasks.py baris ~104-116) — pola yang sama dipakai
+      di sini.
+    steps:
+      - "buat bootstrap/power.py, fungsi async `acquire_wake_lock()`"
+      - "guard `if os.name == 'nt': return` di awal (no-op di Windows)"
+      - "cek `shutil.which(\"termux-wake-lock\")`, kalau tidak ada: `logger.info(...)` lalu return (pola identik plugins/notifications.py `start()`)"
+      - "kalau ada: `await asyncio.create_subprocess_exec(\"termux-wake-lock\", ...)` lalu `await proc.wait()`, bungkus try/except Exception -> logger.warning, JANGAN raise"
+      - "di bootstrap/startup_tasks.py, import `acquire_wake_lock` dari `bootstrap.power`, tambah SATU baris di `run_startup_checks()`: `ctx.tasks.append(safe_create_task(acquire_wake_lock(), name=\"wake_lock_acquire\"))` — taruh sebelum atau sesudah connectivity_task, urutan tidak signifikan karena keduanya independen"
+      - "TIDAK menambahkan termux-wake-unlock di manapun — PARTIAL wake-lock ini didesain permanen selama proses hidup (dilepas otomatis oleh OS saat proses exit), konsisten dengan tujuan (server tidak boleh mati selama masih dianggap aktif)"
+    post_commands:
+      - "python automation/find_owner.py bootstrap/power.py --json"
+      - "python automation/doctor.py --json"
+    dod:
+      - "server tetap start normal di mesin tanpa termux-wake-lock (dev machine Linux/Windows/macOS) — hanya log info, tidak ada exception"
+      - "run_startup_checks() tetap non-blocking (server listening tidak menunggu acquire_wake_lock() selesai)"
+      - "tidak ada perubahan pada check_connectivity/_init_mpv/_resume_last_track"
+    patchlog_group: session_2
+
+  - id: B2.2
+    feature: perf_background_battery_survival
+    session: 2
+    parallel_ok: true
+    risk: low
+    title: "Dokumentasi setup manual HyperOS/MIUI (langkah primer wajib)"
+    depends_on: [B0.1]
+    locked: false
+    files: ["docs/CONSTRAINTS.md"]
+    evidence: "§1 Environment: Termux (Android) sudah punya bullet 'Background Execution' generik, belum ada detail HyperOS/MIUI"
+    steps:
+      - "perluas bullet 'Background Execution' di docs/CONSTRAINTS.md §1 dengan langkah konkret: Autostart diizinkan untuk aplikasi Termux, battery saver di-set 'No restrictions' untuk Termux, app di-lock di daftar recent-apps"
+      - "jelaskan eksplisit: wake-lock dari kode (B2.1) adalah LAPISAN SEKUNDER, bukan pengganti — policy custom HyperOS/MIUI bisa mengabaikan wake-lock/notification API standar Android sepenuhnya (PD-2)"
+      - "TIDAK menjanjikan ini bisa di-otomasi dari kode — eksplisit tulis ini adalah langkah manual user, satu kali saat setup device"
+    post_commands: ["python automation/verify_docs.py --json"]
+    dod: ["docs/CONSTRAINTS.md §1 menyebutkan HyperOS/MIUI + 3 langkah manual di atas secara eksplisit", "verify_docs.py tidak menambah error baru (frontmatter last_verified perlu diupdate ke tanggal task ini)"]
+    patchlog_group: session_2
+
+  # ============================================================
+  # SESI 3 — Visibility guard 3 rAF loop (DEDICATED) (PERF-3)
+  # ============================================================
+  - id: B3.1
+    feature: perf_background_battery_survival
+    session: 3
+    parallel_ok: false
+    risk: medium
+    title: "Extend listener visibilitychange di playback-sync.js jadi titik kontrol tunggal"
+    depends_on: [B0.2]
+    locked: false
+    files: ["web/static/js/audio/playback-sync.js"]
+    evidence: >
+      Listener visibilitychange SATU-SATUNYA di seluruh frontend ada di
+      baris 144-152, cabang `if (!document.hidden)` sudah ada (resume audio
+      browser), TIDAK ADA cabang untuk `document.hidden === true`.
+    steps:
+      - "tambah cabang `else` (document.hidden === true) di listener existing: panggil `if (typeof stopProgressClock === 'function') stopProgressClock();` — fungsi ini idempotent (guard _progressRafId di player.js), aman dipanggil walau sudah berhenti"
+      - "di cabang `if (!document.hidden)` yang sudah ada, TAMBAHKAN (jangan hapus logic audioCtx.resume/_resumeAndPlay existing): `if (typeof startProgressClock === 'function' && store.status === 'PLAYING') startProgressClock();`, `if (typeof resumeVisualizerLoop === 'function') resumeVisualizerLoop();`, dan baca ulang state radio dari DOM lalu panggil ulang animasinya: `if (typeof setRadioHeroAnimState === 'function' && dom.radioToggleBtn) setRadioHeroAnimState(dom.radioToggleBtn.dataset.on === 'true');`"
+      - "SEMUA pemanggilan di atas read-only terhadap state milik modul lain (store.status, dataset.on) — TIDAK menulis store/classList/dataset apa pun dari file ini (prinsip satu state satu pemilik, RFC radio_toggle §6, tetap berlaku)"
+      - "TIDAK menambah listener visibilitychange KEDUA di file ini — semua logic baru masuk ke listener yang SUDAH ADA"
+    post_commands:
+      - "grep -c \"addEventListener('visibilitychange'\" web/static/js/audio/playback-sync.js"
+    dod:
+      - "hasil grep di atas = 1 (tetap satu listener, bukan tambah baru)"
+      - "toggle tab hidden saat lagu PLAYING -> progress bar/visualizer/moon animation semuanya berhenti tanpa error console"
+      - "kembali visible -> ketiganya jalan lagi sesuai state masing-masing (radio ikut state on/off asli, bukan ke-reset)"
+
+  - id: B3.2
+    feature: perf_background_battery_survival
+    session: 3
+    parallel_ok: false
+    risk: low
+    title: "Guard document.hidden di visualizer.js (self-terminating)"
+    depends_on: [B3.1]
+    locked: false
+    files: ["web/static/js/audio/visualizer.js"]
+    evidence: >
+      startVisualizerLoop() baris ~47-68 sudah punya early-return
+      self-terminating (`if (!isBrowser || store.status !== "PLAYING")`,
+      men-set `_vizRafId = null`) tapi tidak cek document.hidden.
+      resumeVisualizerLoop() (baris akhir file) sudah ada dan pas dipakai
+      sebagai restart hook dari B3.1 tanpa perubahan.
+    steps:
+      - "ubah kondisi early-return di startVisualizerLoop() dari `if (!isBrowser || store.status !== \"PLAYING\")` jadi `if (!isBrowser || store.status !== \"PLAYING\" || document.hidden)` — konsisten dengan pola self-terminating yang sudah ada (tetap set _vizRafId = null, tetap bersihkan CSS custom property beat-glow)"
+      - "TIDAK ubah resumeVisualizerLoop() sama sekali — guard `if (!_vizRafId && analyser)` di dalamnya sudah tepat sebagai restart hook"
+      - "TIDAK sentuh startFakeBeatLoop()/setInterval (itu sudah dikonversi dari rAF di patch PERF-02 sebelumnya, bukan bagian temuan PERF-3 ini)"
+    post_commands: ["grep -n 'document.hidden' web/static/js/audio/visualizer.js"]
+    dod:
+      - "grep di atas -> muncul tepat 1 kali, di kondisi early-return startVisualizerLoop()"
+      - "saat tab hidden ketika lagu PLAYING, _vizRafId balik null (verifikasi console) dan tidak ada requestAnimationFrame baru terjadwal"
+      - "saat kembali visible (via resumeVisualizerLoop() dari B3.1), glow FFT jalan lagi tanpa reload halaman"
+
+  - id: B3.3
+    feature: perf_background_battery_survival
+    session: 3
+    parallel_ok: false
+    risk: medium
+    title: "Guard document.hidden di radio-hero-moon.js stepCycle/stepTween"
+    depends_on: [B3.2]
+    locked: false
+    files: ["web/static/js/render/radio-hero-moon.js"]
+    evidence: >
+      stepCycle(ts) dan stepTween(ts) reschedule diri sendiri via
+      requestAnimationFrame tanpa cek document.hidden. Sudah berhenti benar
+      saat prefers-reduced-motion (QA R6.6, di goCycling/goTweenToReal),
+      tapi itu cabang terpisah dari titik reschedule di stepCycle/stepTween.
+    steps:
+      - "di stepCycle(ts), SEBELUM baris `rafId = requestAnimationFrame(stepCycle);` di akhir fungsi: tambah guard, kalau `document.hidden` -> set `rafId = null; mode = \"idle\";` lalu return TANPA reschedule (perhitungan phase/render pada frame itu tetap jalan seperti biasa, guard hanya mencegah frame berikutnya)"
+      - "lakukan hal yang sama persis di stepTween(ts) sebelum baris reschedule-nya"
+      - "TIDAK ubah cabang `reduceMotion` yang sudah ada di goCycling()/goTweenToReal() — guard hidden ini terpisah dan tidak menggantikannya"
+      - "TIDAK menambah listener visibilitychange baru di file ini — restart sepenuhnya tanggung jawab B3.1 (playback-sync.js) lewat pemanggilan ulang setRadioHeroAnimState()"
+    post_commands:
+      - "grep -n 'document.hidden' web/static/js/render/radio-hero-moon.js"
+      - "grep -n 'requestAnimationFrame' web/static/js/render/radio-hero-moon.js"
+    dod:
+      - "grep document.hidden -> muncul di stepCycle dan stepTween saja (2 kemunculan baru), tidak di goCycling/goTweenToReal/render"
+      - "requestAnimationFrame tetap hanya muncul di dalam file ini (tidak bocor ke file lain) — DoD lama R3.4 dari RFC radio_toggle tetap terjaga"
+      - "toggle radio ON lalu hidden tab -> mode balik 'idle', rafId null; kembali visible -> animasi jalan lagi sesuai state radio saat itu (bukan lompat ke tampilan 'idle' kalau radio masih ON)"
+
+  - id: B3.4
+    feature: perf_background_battery_survival
+    session: 3
+    parallel_ok: false
+    risk: low
+    title: "Self-audit checklist isolasi PERF-3 sebelum lanjut sesi 4"
+    depends_on: [B3.3]
+    locked: false
+    files: []
+    steps:
+      - "jalankan tiap item checklist di post_commands, konfirmasi manual satu per satu"
+    post_commands:
+      - "grep -c \"addEventListener('visibilitychange'\" web/static/js/audio/playback-sync.js web/static/js/ws.js web/static/js/audio/visualizer.js web/static/js/render/radio-hero-moon.js"
+      - "grep -rn 'requestAnimationFrame' web/static/js/render/player.js web/static/js/audio/visualizer.js web/static/js/render/radio-hero-moon.js"
+    dod:
+      - "playback-sync.js = 1 listener (titik kontrol PERF-3), ws.js = 1 listener terpisah (PERF-4, dikerjakan sesi 4 — belum ada di titik ini, cek ulang setelah sesi 4), visualizer.js/radio-hero-moon.js = 0 listener baru (murni guard di titik reschedule)"
+      - "tidak ada rafId menumpuk setelah spam hidden/visible cepat berkali-kali (cek performance tab browser)"
+      - "posisi playback tetap akurat setelah resume — dihitung ulang dari anchor math (_posAnchorValue + elapsed) dan broadcast progress WS 1Hz existing, BUKAN dari MediaSession.setPositionState() (memang tidak diimplementasikan di codebase manapun, ini cuma koreksi catatan bukan bug)"
+    patchlog_group: session_3
+
+  # ============================================================
+  # SESI 4 — WS reconnect backoff (PERF-4)
+  # ============================================================
+  - id: B4.1
+    feature: perf_background_battery_survival
+    session: 4
+    parallel_ok: true
+    risk: medium
+    title: "Exponential backoff + hidden-aware delay di ws.js reconnect"
+    depends_on: [B0.2]
+    locked: false
+    files: ["web/static/js/ws.js"]
+    evidence: >
+      `ws.onclose` (baris ~54-58) memanggil `setTimeout(wsConnect, 2000)`
+      flat, tanpa backoff maupun cek document.hidden.
+    steps:
+      - "tambah variable module-level `let wsReconnectDelay = 2000;` dan `const WS_RECONNECT_MAX_DELAY = 30000;`"
+      - "di `ws.onclose`, ganti `setTimeout(wsConnect, 2000)` jadi pakai `wsReconnectDelay`, lalu update: `wsReconnectDelay = Math.min(wsReconnectDelay * 2, WS_RECONNECT_MAX_DELAY);` SETELAH menjadwalkan timer (supaya percobaan pertama tetap 2000ms seperti sebelumnya, baru naik di percobaan berikutnya)"
+      - "cari/tambah handler `ws.onopen` (kalau sudah ada handler lain di sana, JANGAN timpa — tambahkan baris ini ke handler yang sudah ada): reset `wsReconnectDelay = 2000;`"
+      - "tambah SATU listener `document.addEventListener('visibilitychange', ...)` BARU khusus modul ini (lihat PD-4 — ini sengaja terpisah dari listener di playback-sync.js/B3.1, scope beda): kalau timer reconnect sedang pending dan `document.hidden` balik ke `false`, langsung `clearTimeout` timer yang pending lalu panggil `wsConnect()` sekali dan reset `wsReconnectDelay = 2000`"
+      - "kalau `document.hidden === true` saat timer seharusnya jalan, JANGAN langsung batalkan — cukup biarkan timer capped di 30s jalan seperti biasa (tidak perlu pause total, cukup tidak dipercepat); prioritas utama adalah percobaan langsung begitu balik visible"
+    existing_tests: ["tests/frontend/ws-routing.test.js"]
+    post_commands:
+      - "npx vitest run tests/frontend/ws-routing.test.js"
+      - "grep -n 'wsReconnectDelay\\|WS_RECONNECT_MAX_DELAY' web/static/js/ws.js"
+    dod:
+      - "tests/frontend/ws-routing.test.js tetap PASS"
+      - "simulasi disconnect berulang -> delay naik 2s/4s/8s/16s/30s lalu cap, reset ke 2s setelah reconnect sukses (onopen)"
+      - "tab hidden lalu balik visible saat ada reconnect pending -> reconnect langsung dicoba tanpa menunggu sisa delay"
+    patchlog_group: "1 entry tersendiri untuk B4.1 (sesi 4)"
+
+  # ============================================================
+  # SESI 5 — nice/ionice + charging-gate (DEDICATED) (PERF-6)
+  # ============================================================
+  - id: B5.1
+    feature: perf_background_battery_survival
+    session: 5
+    parallel_ok: false
+    risk: medium
+    title: "Bungkus subprocess ffmpeg (loudness analyzer) dengan nice/ionice"
+    depends_on: [B0.2]
+    locked: false
+    files: ["engine/loudness/analyzer.py"]
+    evidence: "cmd list di measure_sync() baris 63-73, dijalankan via subprocess.run tanpa nice/ionice sama sekali."
+    steps:
+      - "guard `if os.name != 'nt':` di sekitar pembungkusan (no-op di Windows)"
+      - "cek `shutil.which(\"nice\")` dan `shutil.which(\"ionice\")` terpisah (fail-safe, mirip pola shutil.which('termux-notification'))"
+      - "kalau keduanya ada: prepend cmd jadi `[\"nice\", \"-n\", \"10\", \"ionice\", \"-c2\", \"-n7\"] + cmd_asli`"
+      - "kalau hanya salah satu ada: pakai yang tersedia saja (jangan gagalkan seluruh command hanya karena satu binary hilang)"
+      - "kalau tidak ada satupun: jalankan cmd asli tanpa wrapper (fail-open, TIDAK boleh raise/return None karena prioritas)"
+      - "TIDAK ubah timeout/capture_output/text/shell=False yang sudah ada"
+    existing_tests: ["tests/unit/engine/loudness/test_analyzer.py"]
+    post_commands:
+      - "pytest tests/unit/engine/loudness/test_analyzer.py -q"
+      - "grep -n 'nice\\|ionice' engine/loudness/analyzer.py"
+    dod:
+      - "tests/unit/engine/loudness/test_analyzer.py tetap PASS (mock subprocess perlu diupdate untuk cmd list baru kalau test cek isi cmd persis)"
+      - "di mesin tanpa nice/ionice (banyak dev container), ffmpeg tetap jalan normal tanpa wrapper"
+      - "kalau ada: `ps`/`top` menunjukkan proses ffmpeg berjalan di niceness lebih rendah dari default"
+
+  - id: B5.2
+    feature: perf_background_battery_survival
+    session: 5
+    parallel_ok: false
+    risk: medium
+    title: "Charging-gate untuk loudness batch analysis (khusus loudness, bukan yt-dlp)"
+    depends_on: [B5.1]
+    locked: false
+    files: ["engine/loudness/service.py"]
+    evidence: >
+      analyze_and_store() (baris 47-62) dipanggil fire-and-forget lewat
+      safe_create_task() dari engine/playback/track_loader.py baris ~94-97
+      setiap kali track dimuat DAN loudness_normalization_enabled true — TIDAK
+      pernah memblok playback, jadi aman ditunda tanpa efek samping ke UX.
+    steps:
+      - "tambah fungsi kecil (mis. `_is_charging_or_unknown() -> bool`) yang cek `shutil.which(\"termux-battery-status\")`, kalau tidak ada -> return True (anggap boleh jalan, fail-open untuk non-Termux/Windows/dev machine)"
+      - "kalau ada: jalankan subprocess best-effort, parse JSON, cek field `plugged` (atau field setara — VERIFIKASI nama field aktual dari output `termux-battery-status` asli, JANGAN asumsikan nama field tanpa cek, karena ini binary eksternal yang belum pernah dipanggil di codebase manapun sebelumnya)"
+      - "kalau parsing gagal / field tidak dikenali: return True (fail-open, sama seperti binary tidak ada)"
+      - "di `analyze_and_store()`, setelah cek row sudah dianalisis (baris 51-52 existing), TAMBAH: kalau `not _is_charging_or_unknown()`, `return` langsung TANPA memanggil run_in_executor — konsisten dengan pola existing 'kalau gagal, diam saja, coba lagi di play berikutnya' (baris 57), karena fungsi ini memang dipanggil ulang tiap track dimuat"
+      - "TIDAK menambah gating apapun ke adapters/ytdlp (lihat B5.3 — PD-6 eksplisit mengecualikan yt-dlp)"
+    existing_tests: []
+    post_commands:
+      - "python automation/find_owner.py engine/loudness/service.py --json"
+      - "grep -n 'termux-battery-status\\|_is_charging' engine/loudness/service.py"
+    dod:
+      - "tambah test unit baru (tests/unit/engine/loudness/) yang cover: binary tidak ada -> True, binary ada tapi parsing gagal -> True, binary ada dan plugged=false -> analisis di-skip (return awal), plugged=true -> lanjut run_in_executor seperti biasa"
+      - "di mesin tanpa termux-battery-status, analisis loudness tetap jalan seperti sebelum perubahan ini (tidak ada regresi behavior default)"
+      - "track_loader.py TIDAK disentuh sama sekali (gating cukup di dalam analyze_and_store())"
+
+  - id: B5.3
+    feature: perf_background_battery_survival
+    session: 5
+    parallel_ok: false
+    risk: medium
+    title: "Prioritas rendah untuk worker thread yt-dlp (setpriority, bukan nice)"
+    depends_on: [B5.2]
+    locked: false
+    files: ["adapters/ytdlp/__init__.py"]
+    evidence: >
+      ThreadPoolExecutor(max_workers=4) di YtDlpClient (baris 36) di-share
+      untuk search/extract_info/get_stream_url/download_audio (lihat
+      YtDlpSearcher/YtDlpResolver/YtDlpDownloader). Worker thread DIPAKAI
+      ULANG lintas job oleh ThreadPoolExecutor — lihat PD-6b kenapa
+      os.setpriority() dipakai, bukan os.nice().
+    steps:
+      - "guard `if os.name != 'nt':` (Windows tidak didukung os.setpriority dengan cara yang sama — no-op)"
+      - "cari titik di mana callable yang dikirim ke `self._executor` (lewat run_in_executor, di YtDlpSearcher/YtDlpResolver/YtDlpDownloader) mulai eksekusi — di titik itu (awal fungsi yang jalan DI DALAM worker thread, bukan di caller/event loop), panggil `os.setpriority(os.PRIO_PROCESS, 0, 10)` dibungkus try/except (AttributeError/PermissionError) -> pass diam-diam, jangan raise"
+      - "PENTING (PD-6b): pakai `os.setpriority(os.PRIO_PROCESS, 0, N)` — nilai ABSOLUT — BUKAN `os.nice(N)` yang relatif/kumulatif, supaya aman dipanggil berulang di worker thread yang sama (executor reuse) tanpa niceness terus naik tiap job"
+      - "TIDAK menambah charging-gate di file ini (PD-6, keputusan final: yt-dlp harus tetap responsif seketika)"
+      - "CATATAN RISIKO (wajib jadi bagian verifikasi B6.5, bukan alasan menunda task ini): karena executor di-share, search (interaktif, harus terasa cepat) IKUT kena prioritas rendah yang sama dengan download batch — ini trade-off yang melekat pada desain shared-executor existing, bukan regresi baru dari task ini, tapi WAJIB diverifikasi tidak terasa lag di kondisi CPU-contention nyata"
+    existing_tests: ["tests/unit/adapters/ytdlp/test_ytdlp.py"]
+    post_commands:
+      - "pytest tests/unit/adapters/ytdlp/test_ytdlp.py -q"
+      - "grep -rn 'setpriority\\|os.nice' adapters/ytdlp/"
+    dod:
+      - "grep di atas -> hanya os.setpriority yang muncul, TIDAK ada os.nice() di file/folder ini"
+      - "tests/unit/adapters/ytdlp/test_ytdlp.py tetap PASS"
+      - "di Windows/dev machine tanpa dukungan setpriority yang relevan, search/download tetap berfungsi normal (exception tertangkap diam-diam)"
+    patchlog_group: session_5
+
+  # ============================================================
+  # SESI 6 — QA & verifikasi menyeluruh (parallel_ok: true)
+  # ============================================================
+  - id: B6.1
+    feature: perf_background_battery_survival
+    session: 6
+    parallel_ok: true
+    title: "Verifikasi PERF-1 — notifikasi persistent"
+    depends_on: [B1.1]
+    files: []
+    dod:
+      - "notifikasi now-playing di Android TIDAK bisa di-swipe/dismiss selama track aktif (--ongoing efektif)"
+      - "tombol prev/toggle/next di notifikasi tetap berfungsi seperti sebelumnya (FIFO callback tidak berubah)"
+
+  - id: B6.2
+    feature: perf_background_battery_survival
+    session: 6
+    parallel_ok: true
+    title: "Verifikasi PERF-2 — wake-lock + startup tidak terganggu"
+    depends_on: [B2.1, B2.2]
+    files: []
+    dod:
+      - "di dev machine (bukan Termux), server start normal, hanya log info 'termux-wake-lock not found', tidak ada exception/crash"
+      - "di Termux asli: `termux-wake-lock` terpanggil saat startup (cek lewat proses/log), TIDAK memblok server mulai listening"
+      - "docs/CONSTRAINTS.md §1 sudah menyebutkan 3 langkah manual HyperOS secara eksplisit"
+
+  - id: B6.3
+    feature: perf_background_battery_survival
+    session: 6
+    parallel_ok: true
+    risk: medium
+    title: "Verifikasi PERF-3 — 3 rAF loop stop/resume total"
+    depends_on: [B3.4]
+    files: []
+    steps:
+      - "toggle tab ke hidden (switch app di Android, atau device emulation 'hidden' di DevTools) saat lagu PLAYING dan radio mode ON — pantau console + performance tab"
+      - "biarkan hidden >2 menit, kembali visible, cek posisi lagu masih akurat dan ketiga animasi (progress bar, visualizer glow, moon phase) resume tanpa reload"
+      - "spam hidden/visible cepat berkali-kali, pantau rafId tidak menumpuk (memory stabil)"
+    dod:
+      - "tidak ada error console dari playback-sync.js/visualizer.js/radio-hero-moon.js selama pengujian"
+      - "tidak ada rafId menumpuk setelah spam hidden/visible"
+      - "posisi lagu tetap akurat setelah resume (anchor math, bukan drift)"
+
+  - id: B6.4
+    feature: perf_background_battery_survival
+    session: 6
+    parallel_ok: true
+    title: "Verifikasi PERF-4 — reconnect backoff"
+    depends_on: [B4.1]
+    files: []
+    steps:
+      - "matikan server sementara (simulasi disconnect), amati jeda antar percobaan reconnect di Network tab (harus naik 2s→4s→8s→16s→30s lalu cap)"
+      - "nyalakan kembali server, konfirmasi reconnect sukses dan delay reset ke 2s untuk disconnect berikutnya"
+      - "hidden-kan tab saat sedang menunggu reconnect, lalu visible-kan kembali -> reconnect harus langsung dicoba, tidak menunggu sisa delay lama"
+    dod: ["backoff naik sesuai urutan yang ditentukan", "delay reset ke 2s setelah onopen sukses", "hidden->visible mempercepat reconnect seperti didesain"]
+
+  - id: B6.5
+    feature: perf_background_battery_survival
+    session: 6
+    parallel_ok: true
+    risk: medium
+    title: "Verifikasi PERF-6 — prioritas subprocess + charging-gate + responsivitas search"
+    depends_on: [B5.3]
+    files: []
+    steps:
+      - "cek niceness proses ffmpeg (loudness) dan proses/thread yt-dlp lewat `ps -o pid,ni,comm` atau `top` saat keduanya aktif bersamaan dengan playback MPV"
+      - "di Termux dengan termux-battery-status tersedia: lepas charger, load track baru yang belum dianalisis, konfirmasi analisis loudness TIDAK jalan (ter-skip); colokkan charger, load track lain yang belum dianalisis, konfirmasi analisis jalan normal"
+      - "KHUSUS risiko dari B5.3 (shared executor): lakukan search yt-dlp sambil satu proses ffmpeg loudness sedang jalan di background -> pastikan hasil search tetap muncul dalam waktu wajar (tidak terasa macet dibanding sebelum perubahan prioritas)"
+    dod:
+      - "ffmpeg & yt-dlp worker terverifikasi jalan di prioritas lebih rendah dari default"
+      - "loudness analysis ter-skip saat tidak charging, jalan normal saat charging (di environment yang punya termux-battery-status)"
+      - "search/download yt-dlp tidak terasa lag signifikan meski prioritas diturunkan — kalau ternyata terasa lag, catat sebagai bug/keputusan terpisah, JANGAN diam-diam menaikkan prioritas kembali tanpa mendokumentasikan alasannya (PD-6/PD-6b sudah final untuk desain ini)"
+
+  - id: B6.6
+    feature: perf_background_battery_survival
+    session: 6
+    parallel_ok: true
+    title: "Verifikasi PERF-7 — SQLite synchronous=NORMAL"
+    depends_on: [B1.2]
+    files: []
+    post_commands:
+      - "pytest tests/unit/persistence/test_db.py -q"
+    dod:
+      - "query manual `PRAGMA synchronous;` terhadap DB aktif mengembalikan NORMAL (nilai 1)"
+      - "journal_mode tetap WAL (tidak ke-reset)"
+      - "test suite persistence tetap PASS, tidak ada indikasi korupsi data di test manapun"
+
+  - id: B6.7
+    feature: perf_background_battery_survival
+    session: 6
+    parallel_ok: true
+    title: "Regresi penuh + health check"
+    depends_on: [B6.1, B6.2, B6.3, B6.4, B6.5, B6.6]
+    files: []
+    post_commands:
+      - "pytest -q"
+      - "npx vitest run"
+      - "python automation/doctor.py --strict --json"
+    dod: ["seluruh pytest & vitest suite PASS", "doctor.py --strict PASS, tidak ada FAIL baru dibanding baseline sebelum fitur ini"]
+
+  # ============================================================
+  # SESI 7 — Dokumentasi penutup + PATCHLOG (parallel_ok: true)
+  # ============================================================
+  - id: B7.1
+    feature: perf_background_battery_survival
+    session: 7
+    parallel_ok: true
+    title: "Regenerasi FILE_INDEX.md & REPORT.md"
+    depends_on: [B6.7]
+    files: []
+    post_commands:
+      - "python automation/generate_file_index.py"
+      - "python automation/generate_report.py"
+    dod: ["FILE_INDEX.md mencantumkan bootstrap/power.py (baru) dan fungsi baru lainnya", "REPORT.md ter-regenerate"]
+
+  - id: B7.2
+    feature: perf_background_battery_survival
+    session: 7
+    parallel_ok: true
+    title: "Update STATUS.md & CHANGELOG.md"
+    depends_on: [B7.1]
+    files: ["docs/STATUS.md", "CHANGELOG.md"]
+    steps:
+      - "update docs/STATUS.md: tandai file yang berubah (plugins/notifications.py, persistence/db.py, bootstrap/power.py [baru], bootstrap/startup_tasks.py, web/static/js/audio/playback-sync.js, web/static/js/audio/visualizer.js, web/static/js/render/radio-hero-moon.js, web/static/js/ws.js, engine/loudness/analyzer.py, engine/loudness/service.py, adapters/ytdlp/__init__.py, docs/CONSTRAINTS.md)"
+      - "tambah entry di CHANGELOG.md bagian [Unreleased] — ini bug fix krusial yang mempengaruhi user (server mati/battery drain saat layar off), memenuhi kriteria wajib update changelog di AI_CONTEXT.md"
+      - "catat PERF-5 di STATUS.md sebagai 'deferred — future work, butuh sign-off terpisah' supaya tidak terlihat seperti item yang lupa dikerjakan"
+    dod: ["docs/STATUS.md mencerminkan kondisi terbaru semua file di atas", "CHANGELOG.md [Unreleased] punya entry untuk fitur ini", "PERF-5/F1.1 tercatat eksplisit sebagai deferred, bukan hilang dari tracking"]
+
+  - id: B7.3
+    feature: perf_background_battery_survival
+    session: 7
+    parallel_ok: true
+    title: "PATCHLOG penutup fitur"
+    depends_on: [B7.2]
+    files: ["docs/PATCHLOG.md"]
+    steps:
+      - "satu entry PATCHLOG merangkum seluruh fitur (sesi 0-7), sertakan referensi ke temuan.md dan seluruh keputusan PD-1..PD-7 (termasuk PD-6b)"
+      - "sebutkan eksplisit di field Notes bahwa PERF-5 (F1.1) SENGAJA tidak termasuk patch ini, deferred, butuh sign-off terpisah"
+      - "gunakan `python automation/patchlog.py add` dengan flag wajib (--type, --area, --title, --reason, --files, --root-cause, --solution) sesuai format v2"
+    post_commands:
+      - "python automation/patchlog.py verify --json"
+    dod: ["entry baru ID PATCH-YYYY-MM-DD-NNN ada di paling atas docs/PATCHLOG.md, format sesuai konvensi v2", "patchlog.py verify tanpa entry rusak"]
+    bundle_cmd: 'zip -rq lunawave-B7.3-FINAL.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-B-*.zip"'
+
+execution_order:
+  - B0.1
+  - B0.2
+  # --- Sesi 1 (parallel_ok — quick wins) ---
+  - B1.1
+  - B1.2
+  # --- Sesi 2 (parallel_ok — wake-lock + docs) ---
+  - B2.1
+  - B2.2
+  # --- Sesi 3 (DEDICATED — kritis, saling terkait) ---
+  - B3.1
+  - B3.2
+  - B3.3
+  - B3.4
+  # --- Sesi 4 (parallel_ok — independen dari sesi 3) ---
+  - B4.1
+  # --- Sesi 5 (DEDICATED) ---
+  - B5.1
+  - B5.2
+  - B5.3
+  # --- Sesi 6 (parallel_ok — QA) ---
+  - B6.1
+  - B6.2
+  - B6.3
+  - B6.4
+  - B6.5
+  - B6.6
+  - B6.7
+  # --- Sesi 7 (parallel_ok — dokumentasi & patchlog penutup) ---
+  - B7.1
+  - B7.2
+  - B7.3
+  # catatan: 8 sesi (0-7). Sesi 3 dan 5 WAJIB dedicated. F1.1 (PERF-5) SENGAJA
+  # TIDAK ada di daftar ini — lihat blok `future_work` di bawah dan aturan
+  # eksekusi #2 di header file ini.
+
+# ---------------------------------------------------------------------------
+# FUTURE WORK — TIDAK TERMASUK execution_order DI ATAS.
+# PERF-5 dari temuan.md: broadcast progress 1Hz ke SEMUA klien termasuk yang
+# backgrounded. Menyentuh server/handlers/websocket.py (GOVERNED). temuan.md
+# eksplisit: "future work, bukan untuk dieksekusi bersamaan patch lain".
+# JANGAN jalankan blok ini sebagai bagian dari sesi 1-7 di atas. Butuh
+# sign-off eksplisit user TERPISAH sebelum sesi ini bahkan dimulai — bukan
+# sekadar gate per-file seperti file locked biasa.
+# ---------------------------------------------------------------------------
+future_work:
+  - id: F1.1
+    feature: perf_background_battery_survival
+    session: "future — TIDAK dijadwalkan"
+    parallel_ok: false
+    locked: true
+    requires_human_confirmation: true
+    title: "Broadcast progress adaptif per-visibility klien (PERF-5)"
+    depends_on: []  # sengaja tidak depends_on sesi 1-7 — independen, boleh dikerjakan kapan saja SETELAH sign-off, tidak harus menunggu sesi 1-7 selesai
+    files:
+      - "web/static/js/ws.js"                    # kirim pesan visibility ping
+      - "server/connection_manager.py"            # simpan flag per-koneksi
+      - "server/broadcast_service.py"              # broadcast_progress interval adaptif
+      - "server/handlers/event_listeners.py"       # pemicu _on_track_progress
+      - "LOCKED: server/handlers/websocket.py"     # governed — routing pesan visibility ping baru
+    evidence: >
+      ConnectionManager.broadcast() (server/connection_manager.py baris 56-)
+      kirim ke SEMUA active_connections tanpa terkecuali; _on_track_progress
+      (server/handlers/event_listeners.py baris 72-) panggil
+      broadcast_progress ke semua klien tiap 1 Hz selama ada track PLAYING,
+      termasuk klien backgrounded. Radio modem yang berkala menerima data
+      adalah penyebab utama modem tidak masuk deep-sleep.
+    steps:
+      - "STOP — minta konfirmasi eksplisit user SEBELUM sesi ini dimulai sama sekali (bukan cuma sebelum edit websocket.py), karena statusnya deferred/future-work per temuan.md, bukan task yang otomatis lanjut setelah sesi 1-7"
+      - "client (ws.js): kirim satu pesan ringan saat visibilitychange, mis. {\"action\":\"set_visibility\",\"data\":{\"hidden\":true|false}}"
+      - "server/handlers/websocket.py: routing pesan baru ini ke ConnectionManager (governed, edit minimal — hanya tambah satu case routing)"
+      - "ConnectionManager: simpan flag hidden per-koneksi (dict keyed by ws connection, default false)"
+      - "broadcast_service.broadcast_progress: kirim ke koneksi hidden dengan interval lebih jarang (mis. 1x/15 detik), kembali ke 1 detik saat visible — implementasi bisa throttle di level ConnectionManager.broadcast atau di caller, desain detail diputuskan saat sign-off, BUKAN di file ini"
+    dod:
+      - "TIDAK dieksekusi sampai ada sign-off eksplisit terpisah dari user"
+      - "kalau disetujui: klien backgrounded menerima progress update jauh lebih jarang tanpa kehilangan sinkronisasi saat kembali visible (anchor math di player.js tetap jadi fallback akurasi, bukan bergantung penuh ke broadcast)"
+      - "tidak ada regresi ke klien yang tetap visible (tetap 1Hz seperti sebelumnya)"

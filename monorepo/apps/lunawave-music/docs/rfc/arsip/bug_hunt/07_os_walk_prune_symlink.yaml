@@ -1,0 +1,102 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 07 — os.walk() prune symlinked dirs di ws_cache.py
+# (temuan audit-lunawave-temuan.md #8)
+# Depends on: TIDAK ADA (independen)
+# Risiko: RENDAH | Effort: KECIL
+# Bagian dari seri: docs/rfc/temuan_audit_2026_07_27/ — BACA 00_index_and_decisions.yaml
+# LEBIH DULU (berisi decisions/keputusan desain & deviation_protocol yang
+# berlaku untuk SEMUA file di seri ini, termasuk file ini).
+# =============================================================================
+
+phase:
+  id: T07
+  title: "os.walk() prune symlinked dirs di ws_cache.py"
+  temuan_ref: 8
+  closes_temuan: [8]
+  depends_on: []
+
+tasks:
+  - task_id: P2-T3
+    title: "os.walk() prune symlinked dirs di ws_cache.py"
+    temuan_ref: 8
+    severity_audit: "Rendah"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - server/handlers/ws_cache.py
+      modify_tests:
+        - tests/unit/server/handlers/test_ws_cache.py
+    steps:
+      - >
+        `view` file yang berisi `_get_cache_size_sync` dan
+        `_clear_cache_sync` (server/handlers/ws_cache.py, baris ~45-66
+        saat audit). VERIFIKASI ULANG kedua fungsi memakai
+        `for root, dirs, files in os.walk(str(DOWNLOAD_DIR)):` dengan
+        `dirs` yang dideklarasikan tapi tidak pernah dipakai untuk
+        pruning.
+      - >
+        Di KEDUA fungsi, tambahkan satu baris setelah `os.walk(...)`
+        untuk memangkas symlinked subdirectory dari traversal (mencegah
+        os.walk mengikuti symlink yang mengarah keluar DOWNLOAD_DIR --
+        `os.walk` default `followlinks=False` untuk FILE tapi TETAP
+        bisa list isi direktori bersimbol-link kalau tidak dipangkas
+        eksplisit di beberapa platform/edge-case; pruning eksplisit
+        lebih aman dan jelas niatnya):
+        ```python
+        for root, dirs, files in os.walk(str(DOWNLOAD_DIR)):
+            dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
+            for f in files:
+                ...
+        ```
+      - >
+        JANGAN ubah logic di dalam `for f in files:` (getsize/remove +
+        try/except OSError) -- perubahan HANYA menambah satu baris
+        pruning `dirs[:]` di awal loop tiap fungsi.
+      - >
+        Test baru di test_ws_cache.py: buat struktur direktori test
+        dengan satu subdirectory ASLI berisi file, dan satu symlink
+        direktori yang menunjuk ke luar DOWNLOAD_DIR berisi file lain
+        -- assert `_get_cache_size_sync()` HANYA menghitung file di
+        subdirectory asli (symlink tidak ikut ditelusuri). Test
+        serupa untuk `_clear_cache_sync()`: assert file di luar
+        symlink TIDAK ikut terhapus.
+      - >
+        Test regresi: skenario tanpa symlink sama sekali (kasus normal
+        existing) tetap menghitung/menghapus semua file seperti
+        sebelumnya.
+    acceptance_criteria:
+      - "os.walk() di kedua fungsi cache tidak lagi menelusuri subdirectory bersimbol-link."
+      - "Perilaku existing tanpa symlink (skenario normal) tidak berubah."
+    tests:
+      run:
+        - "pytest tests/unit/server/handlers/test_ws_cache.py -q"
+    patchlog:
+      type: bug_fix
+      area: "server/handlers"
+      title: "os.walk() cache: prune symlinked directories dari traversal"
+      reason: >
+        _get_cache_size_sync() dan _clear_cache_sync() mendeklarasikan
+        `dirs` dari os.walk() tapi tidak pernah memakainya untuk
+        pruning -- symlink direktori (kalau pernah masuk ke
+        DOWNLOAD_DIR, sengaja atau tidak) bisa membuat penghitungan
+        ukuran cache ikut menghitung, atau clear_cache ikut menghapus,
+        file di luar DOWNLOAD_DIR yang sebenarnya.
+      root_cause: >
+        Signature `for root, dirs, files in os.walk(...)` menyertakan
+        `dirs` mengikuti idiom standar Python untuk pruning, tapi
+        langkah pruning-nya sendiri tidak pernah ditulis -- variabel
+        dideklarasikan tanpa efek.
+      solution: >
+        Tambah `dirs[:] = [d for d in dirs if not
+        os.path.islink(os.path.join(root, d))]` di awal tiap loop
+        os.walk(), mencegah traversal masuk ke symlinked subdirectory.
+      files: "server/handlers/ws_cache.py, tests/unit/server/handlers/test_ws_cache.py"
+      notes: "Tidak menyentuh file locked."
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/patchlog.py verify"
+  - "ruff check ."

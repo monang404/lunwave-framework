@@ -1,0 +1,760 @@
+# task_breakdown_logging_redesign.yaml
+# v1 — 2026-07-23
+# Fitur: entrypoint_dashboard_redesign (redesain start.bat/start.sh/start.py/
+# main.py + dashboard web untuk observability, TANPA mengubah arsitektur
+# logging inti yang sudah ada)
+# Sumber proposal: PROPOSAL-Redesign-Logging-Dashboard-LunaWave.md (§3 Sistem
+# yang Diusulkan, §4 Tahapan Implementasi)
+# Sumber baseline logging: core/log_config.py, core/log_categories.py,
+# core/observability.py (sudah final, TIDAK diubah taksonominya)
+# Sumber RFC terkait (berjalan paralel, tidak boleh saling tabrak):
+# docs/rfc/observability_logging/observability_logging.md (status PLANNING)
+#
+# STATUS: final — semua keputusan desain (autentikasi dashboard, strategi
+# live-tail, format parser log, pola registrasi route) sudah disepakati di
+# blok `decisions` di bawah. Tidak ada keputusan produk baru yang perlu
+# diambil; file ini murni urutan eksekusi. Satu-satunya gate manusia: task
+# R6.2 (menyentuh server/handlers/websocket.py, file locked di AI_CONTEXT.md).
+#
+# ATURAN EKSEKUSI UNTUK AGENT:
+# 1. Ikuti `execution_order` di akhir file secara sekuensial per sesi. Task
+#    dalam satu `session` dengan `parallel_ok: true` boleh dikerjakan tidak
+#    berurutan relatif satu sama lain (asal depends_on terpenuhi) — tapi
+#    tetap tidak boleh melompati sesi.
+# 2. Sesi 2, 3, 4, 5, 6 WAJIB dedicated (parallel_ok: false) karena
+#    masing-masing menyentuh file bersama/sensitif (launcher entrypoint,
+#    main.py, server/app.py, server/handlers/websocket.py) secara
+#    berurutan — menyisipkan task lain di sesi yang sama berisiko konflik
+#    edit pada file yang sama.
+# 3. Jangan eksekusi task dengan `requires_human_confirmation: true` tanpa
+#    berhenti dan meminta konfirmasi eksplisit user PERSIS sebelum task itu.
+#    `server/handlers/websocket.py` ada di AI_CONTEXT.md sebagai file
+#    "jangan dipecah/direstrukturisasi tanpa persetujuan eksplisit" — task
+#    R6.2 HANYA boleh menambah satu percabangan dispatch baru, tidak lebih.
+# 4. Prinsip non-negotiable dari proposal §3.3 (dashboard read-only, tidak
+#    pernah menampilkan payload mentah/kredensial) WAJIB dipatuhi di semua
+#    task sesi 5-7, konsisten dengan LOGGING_STANDARD.md §8 (rahasia tidak
+#    pernah masuk log/tampilan).
+# 5. Setelah tiap task: jalankan `post_commands`, cek `dod` semua true, lalu
+#    prepend entry `docs/PATCHLOG.md` (ID: PATCH-YYYY-MM-DD-NNN — cek
+#    frontmatter `latest_patch_id` untuk nomor urut terbaru SEBELUM menulis,
+#    saat ini PATCH-2026-07-23-187 / total_entries 187) kecuali task punya
+#    `patchlog: skip`. Task bertanda `patchlog_group` ditulis SATU entry
+#    gabungan untuk seluruh anggota grup tsb.
+# 6. Field `files` dengan prefix `CAUTION:` = file berisiko tinggi atau
+#    sensitif menurut AI_CONTEXT.md/docs/STATUS.md, butuh review ekstra
+#    hati-hati sebelum commit (lihat aturan 3).
+# 7. Sesi dengan `parallel_ok: false` ("dedicated") wajib dikerjakan sendirian
+#    tanpa task lain disisipkan di sesi yang sama.
+# 8. Non-breaking per commit: tiap task harus meninggalkan aplikasi dalam
+#    keadaan berjalan normal (server tetap bisa start, player tetap bisa
+#    diputar) — dilarang "big bang" menggabungkan backend+frontend+wiring
+#    dashboard dalam satu commit di luar scope task ybs.
+# 9. Dashboard dan endpoint `/api/logs/*` WAJIB memakai proteksi akses yang
+#    sama seperti `/metrics` (localhost atau `X-Metrics-Token` dengan
+#    `secrets.compare_digest`) SEJAK task pertama yang membuatnya — bukan
+#    ditambah belakangan (lihat R-D1 dan proposal §5 "Risiko keamanan").
+# 10. Dilarang mengubah taksonomi 15 kategori di core/log_categories.py atau
+#     format `file_renderer()`/`lunawave.log` sebagai bagian dari fitur ini —
+#     fitur ini murni lapisan penyajian (baca proposal §3.1 prinsip #1).
+
+meta:
+  source_features: ["entrypoint_dashboard_redesign"]
+  source_proposal: "PROPOSAL-Redesign-Logging-Dashboard-LunaWave.md"
+  source_logging_baseline:
+    - "core/log_config.py"
+    - "core/log_categories.py"
+    - "core/observability.py"
+  source_rfc_parallel: "docs/rfc/observability_logging/observability_logging.md"
+  locked_files_global:
+    - web/static/index.html          # AI_CONTEXT.md: "tidak dipecah, ini keputusan final" — dashboard log adalah HALAMAN BARU terpisah (admin-logs.html), tidak menyentuh file ini
+    - server/handlers/websocket.py   # AI_CONTEXT.md: jangan dipecah/direstrukturisasi tanpa persetujuan eksplisit — task di file ini (R6.2) hanya boleh MENAMBAH satu percabangan dispatch baru, mengikuti pola ws_queue.py/ws_playback.py yang sudah ada
+  caution_files_global:
+    - server/app.py                  # wiring rute pusat aplikasi — disentuh 2x oleh fitur ini (R5.2 dan bagian dari R5.2 untuk /admin/logs), tiap edit harus minimal dan additive (add_get baru saja, tidak menata ulang urutan rute lain)
+    - server/connection_manager.py   # dipakai player utama (ws) dan sekarang juga log-viewer (R6.3) — perubahan harus terbukti tidak mengganggu ACTIVE_WEBSOCKETS/durasi sesi player yang sudah diinstrumentasi
+  conventions:
+    patchlog_id_format: "PATCH-YYYY-MM-DD-NNN"
+    ai_agent_flag_required_on: [doctor.py, verify_docs.py, architecture_lint.py, verify_structure.py, find_owner.py, patchlog.py]
+    ai_agent_flag: "--json"
+    dashboard_auth_pattern: >
+      Semua endpoint baru (/api/logs/tail, /api/logs/stats, /admin/logs)
+      memakai fungsi proteksi yang SAMA dengan server/handlers/http.py
+      serve_metrics() — is_local (127.0.0.1/::1) ATAU header
+      X-Metrics-Token yang valid via secrets.compare_digest(). Tidak ada
+      env var token baru; reuse LUNAWAVE_METRICS_TOKEN yang sudah ada.
+    bundle_cmd_template: >
+      zip -rq lunawave-{TASK_ID}.zip . -x ".git/*" -x "*__pycache__*"
+      -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+      -x "*.DS_Store" -x "lunawave-R-*.zip"
+
+decisions:
+  R-D1:
+    question: "Dashboard log dan /api/logs/* pakai sistem autentikasi baru, atau reuse proteksi /metrics yang sudah ada?"
+    chosen: "reuse_metrics_token"
+    rationale: >
+      Proposal §3.1 prinsip #4 dan §3.3 eksplisit: dashboard harus
+      "aman-default" mengikuti pola /metrics yang sudah terbukti dipakai
+      (localhost atau X-Metrics-Token + secrets.compare_digest). Membuat
+      sistem auth baru menambah permukaan risiko tanpa manfaat tambahan,
+      dan melanggar non-goal "tidak menambah dependency baru / env var
+      baru" yang sudah jadi prinsip di RFC observability_logging.md.
+    status: resolved
+  R-D2:
+    question: "Live tail dikirim per baris (push tiap event log terjadi) atau dikumpulkan dulu (batched)?"
+    chosen: "batched_500ms"
+    rationale: >
+      Proposal §5 "Risiko performa" mewajibkan live tail dibatasi rate
+      (contoh: batching per 500ms) supaya tidak membanjiri client saat log
+      sangat ramai (mis. radio_filter menghasilkan banyak baris DEBUG
+      dalam waktu singkat). Batching dilakukan di server/handlers/
+      ws_log_stream.py (R6.1), bukan di client, supaya perilaku sama untuk
+      semua jenis client (browser dashboard maupun kelak GUI launcher).
+    status: resolved
+  R-D3:
+    question: "Parser untuk /api/logs/tail baca lunawave.log via regex terhadap format file_renderer() yang sudah ada, atau format logging diubah jadi JSON Lines dual-output?"
+    chosen: "regex_terhadap_file_renderer_existing"
+    rationale: >
+      Aturan eksekusi #10 dan prinsip desain proposal §3.1 #1: fitur ini
+      TIDAK BOLEH mengubah arsitektur logging inti. Format
+      `[HH:MM:SS] LEVEL: event (k=v, ...)` dari file_renderer() di
+      core/log_config.py sudah stabil dan dapat diprediksi — cukup satu
+      regex per baris di core/log_reader.py (R1.1). Mengubah ke JSONL
+      berarti mengubah kontrak core/log_config.py, di luar scope, dan
+      berisiko bentrok dengan RFC observability_logging.md yang sedang
+      berjalan paralel (status PLANNING).
+    status: resolved
+  R-D4:
+    question: "Rute baru (/api/logs/tail, /api/logs/stats, /admin/logs) didaftarkan langsung di server/app.py, atau lewat sub-router terpisah?"
+    chosen: "penambahan_langsung_pola_existing"
+    rationale: >
+      server/app.py saat ini 100% memakai pola flat `app.router.add_get(...)`
+      untuk semua 8 rute yang ada (lihat create_app()) — tidak ada
+      preseden sub-router di codebase ini. Menambah sub-router baru hanya
+      untuk 3 rute dashboard akan jadi inkonsistensi arsitektur yang tidak
+      perlu (dan menambah permukaan review). R5.2 menambah 3 baris
+      add_get baru mengikuti pola yang sudah ada, ditempatkan bersebelahan
+      dengan /health dan /metrics yang secara fungsi paling dekat.
+    status: resolved
+  R-D5:
+    question: "server/handlers/websocket.py (locked file) — bagaimana menambah tipe pesan log_tail tanpa direstrukturisasi?"
+    chosen: "modul_terpisah_plus_satu_dispatch_branch"
+    rationale: >
+      AI_CONTEXT.md melarang memecah/merestrukturisasi file ini tanpa izin
+      eksplisit. Codebase SUDAH punya preseden untuk pola ini:
+      ws_queue.py, ws_playback.py, ws_discovery.py, ws_download.py masing-
+      masing modul terpisah per fitur, diimpor dan dipanggil dari satu
+      percabangan di websocket.py. R6.1 membuat server/handlers/
+      ws_log_stream.py mengikuti pola yang identik; R6.2 HANYA menambah
+      satu `elif`/pemanggilan baru ke handler tsb di websocket.py, nol
+      perubahan struktur lain.
+    status: resolved
+
+# ---------------------------------------------------------------------------
+# PETA SESI
+# ---------------------------------------------------------------------------
+sessions:
+  - session: 1
+    label: "Infrastruktur bersama — parser log & helper metrics (dependency-free)"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      File baru murni (belum dipakai modul manapun), tidak ada perubahan
+      behavior. Prasyarat untuk sesi 4 (main.py butuh helper metrics) dan
+      sesi 5 (endpoint dashboard butuh parser log) — infrastruktur dulu,
+      isi kemudian, sama seperti pola sesi 1 pada migrasi logging standar.
+    tasks: [R1.1, R1.2]
+
+  - session: 2
+    label: "Preflight check terpadu (launcher/dep_checker.py + launcher/preflight.py)"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED. Menyatukan logika yang saat ini terduplikasi persis di
+      start.bat dan start.sh (deps check, MPV check, port cleanup) ke satu
+      sumber kebenaran Python. Harus selesai dan diverifikasi sebelum sesi
+      3 menyederhanakan kedua skrip shell/batch supaya tidak ada window
+      waktu di mana entrypoint rusak.
+    tasks: [R2.1, R2.2]
+
+  - session: 3
+    label: "Sederhanakan start.bat & start.sh jadi thin wrapper"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED, kedua file harus diubah dalam satu sesi yang sama supaya
+      tidak drift satu sama lain (start.bat dan start.sh WAJIB memanggil
+      preflight.py yang sama dan menghasilkan output yang setara secara
+      fungsi) — sesuai proposal §3.1 prinsip #2.
+    tasks: [R3.1, R3.2]
+
+  - session: 4
+    label: "main.py — banner terstruktur + ringkasan sesi saat shutdown"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED karena main.py adalah file bootstrap tunggal yang dibaca
+      dan diubah oleh banyak fitur lain (lihat komentar T2.4/PATCH-2026-07-16
+      di file ini) — perubahan harus terisolasi dan gampang direview
+      terpisah dari perubahan lain.
+    tasks: [R4.1, R4.2]
+
+  - session: 5
+    label: "Backend endpoint dashboard (/api/logs/tail, /api/logs/stats, /admin/logs)"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED. R5.2 menyentuh server/app.py (CAUTION, wiring pusat) —
+      disendirikan supaya registrasi 3 rute baru direview sebagai satu
+      perubahan utuh, bukan tersebar di beberapa commit yang menyentuh
+      app.py berkali-kali secara terpisah.
+    tasks: [R5.1, R5.2]
+
+  - session: 6
+    label: "Live tail via WebSocket (locked file: server/handlers/websocket.py)"
+    parallel_ok: false
+    risk: high
+    rationale: >
+      DEDICATED + gate manusia. R6.2 menyentuh file locked
+      (server/handlers/websocket.py). Mengikuti R-D5: modul baru dulu
+      (R6.1), baru satu baris dispatch tambahan di websocket.py (R6.2),
+      lalu penyesuaian minimal ConnectionManager (R6.3). Urutan ini wajib
+      sekuensial, tidak boleh paralel, supaya tiap langkah bisa diverifikasi
+      tidak mengganggu WS player yang sudah berjalan.
+    tasks: [R6.1, R6.2, R6.3]
+
+  - session: 7
+    label: "Frontend dashboard (admin-logs.html + admin-logs.js)"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      File baru murni di web/static/, tidak menyentuh index.html (locked).
+      R7.1 dan R7.2 boleh dikerjakan tidak berurutan relatif satu sama lain
+      selama backend sesi 5-6 sudah tersedia sebagai kontrak API.
+    tasks: [R7.1, R7.2]
+
+  - session: 8
+    label: "GUI launcher desktop — tombol buka dashboard"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Perubahan kecil dan independen di launcher/gui/ (Tkinter), tidak
+      mempengaruhi jalur web sama sekali — aman paralel dengan sesi 9.
+    tasks: [R8.1]
+
+  - session: 9
+    label: "Dokumentasi — LOGGING_STANDARD.md, README.md, SECURITY.md"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Housekeeping dokumentasi, tidak menyentuh kode. Boleh paralel dengan
+      sesi 8, tapi baru bisa ditulis akurat setelah kontrak endpoint sesi
+      5-6 final.
+    tasks: [R9.1, R9.2]
+
+  - session: 10
+    label: "Verifikasi akhir & Definition of Done keseluruhan"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED, penutup fitur. Menjalankan seluruh automation health-check,
+      smoke test manual start.sh (Termux)/start.bat (Windows), dan
+      memverifikasi tidak ada regresi pada /health, /metrics, atau WS
+      player yang sudah ada sebelum fitur ini dianggap selesai.
+    patchlog_group: "PATCHLOG TERPISAH untuk sesi 10 (penutup, bukan bagian entry implementasi utama)"
+    tasks: [R10.1]
+
+# ---------------------------------------------------------------------------
+tasks:
+
+  # ---------- ORIENTASI ----------
+  - id: R0.1
+    title: "Baca proposal + baseline logging + governance, cek owner file terkait"
+    depends_on: []
+    locked: false
+    files: []
+    steps:
+      - "baca PROPOSAL-Redesign-Logging-Dashboard-LunaWave.md penuh (khususnya §3-§5)"
+      - "baca core/log_config.py, core/log_categories.py, core/observability.py — pahami kontrak yang TIDAK BOLEH berubah"
+      - "baca docs/rfc/observability_logging/observability_logging.md — pastikan tidak ada tumpang tindih task dengan RFC yang sedang berjalan (mis. server_clock.py, mem_stats.py sudah/akan dibuat RFC lain, jangan dibuat ulang di sini)"
+      - "baca AI_CONTEXT.md, konfirmasi status server/handlers/websocket.py (locked) dan web/static/index.html (locked)"
+      - "baca 2-3 entry terakhir docs/PATCHLOG.md untuk konteks sprint aktif"
+    post_commands:
+      - "python automation/find_owner.py server/app.py --json"
+      - "python automation/find_owner.py server/handlers/websocket.py --json"
+      - "python automation/find_owner.py server/connection_manager.py --json"
+      - "python automation/find_owner.py launcher/dep_checker.py --json"
+      - "python automation/find_owner.py core/observability.py --json"
+    dod: ["owner/dependency file infrastruktur yang akan disentuh dipahami sebelum implementasi, dan tidak ada tumpang tindih dengan RFC observability_logging.md yang sedang berjalan"]
+    patchlog: skip
+
+  # ============================================================
+  # SESI 1 — Infrastruktur bersama (parallel_ok: true)
+  # ============================================================
+  - id: R1.1
+    feature: entrypoint_dashboard_redesign
+    session: 1
+    parallel_ok: true
+    title: "Buat core/log_reader.py — parser lunawave.log + tail() + stats()"
+    depends_on: [R0.1]
+    locked: false
+    files: ["core/log_reader.py (baru)"]
+    steps:
+      - "tambah regex parser untuk satu baris file_renderer(): `[HH:MM:SS] LEVEL: event (k=v, k2=v2, ...)` -> dict {time, level, event, fields}"
+      - "tambah fungsi tail(limit=200, category=None, level=None, query=None) — baca lunawave.log dari akhir (termasuk 2 file backup rotasi .1/.2 bila limit belum terpenuhi dari file utama), filter sesuai parameter"
+      - "tambah fungsi stats(window_seconds=3600) — hitung jumlah baris per level dan per category dalam window waktu tsb, dari isi yang sudah di-parse"
+      - "baris yang gagal di-parse (mis. baris banner SESSION START/END) TETAP disertakan sebagai entry dengan level=\"BANNER\", tidak di-drop diam-diam"
+      - "tambah unit test: parser terhadap sample baris log realistis (termasuk baris dengan banyak field dan baris banner), test tail() dengan filter kombinasi category+level+query, test stats() menghasilkan angka benar untuk input sintetis"
+    dod:
+      - "parser mengembalikan dict lengkap (time, level, event, fields) untuk baris log standar dan menandai baris banner secara eksplisit, bukan meng-crash atau melewatkannya"
+      - "tail() mendukung filter category/level/query secara independen maupun kombinasi, teruji dengan unit test"
+      - "stats() menghasilkan agregat yang benar untuk input sintetis, teruji dengan unit test"
+      - "modul ini belum dipanggil dari mana pun (murni infrastruktur, tidak ada perubahan behavior aplikasi)"
+
+  - id: R1.2
+    feature: entrypoint_dashboard_redesign
+    session: 1
+    parallel_ok: true
+    title: "Tambah core/observability.py — get_counter_value() helper baca-saja"
+    depends_on: [R1.1]
+    locked: false
+    files: ["core/observability.py"]
+    steps:
+      - "tambah fungsi get_counter_value(metric, **label_kwargs) -> float — baca nilai kumulatif Counter/Histogram Prometheus yang sudah ada (HTTP_REQUESTS_TOTAL, COMMAND_COUNT, dst) tanpa mengubah definisi metric manapun"
+      - "gunakan API publik prometheus_client (collect()/samples) untuk membaca nilai, BUKAN mengakses atribut privat (`_value`) — supaya tidak rapuh terhadap perubahan versi library"
+      - "fail-safe: kembalikan 0.0 dan JANGAN raise bila metric belum punya sample sama sekali (mis. server baru start, belum ada request)"
+      - "tambah unit test: get_counter_value pada metric yang sudah di-increment vs metric kosong"
+    post_commands: ["python automation/find_owner.py core/observability.py --json"]
+    dod:
+      - "get_counter_value() mengembalikan angka benar untuk metric yang sudah di-increment, dan 0.0 (bukan exception) untuk metric kosong"
+      - "5 metric Counter/Histogram/Gauge yang sudah ada di file ini TIDAK berubah definisinya sama sekali (nama, label, help text identik dengan sebelum task ini)"
+    patchlog_group: session_1
+    bundle_cmd: 'zip -rq lunawave-R1.2.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-R-*.zip"'
+
+  # ============================================================
+  # SESI 2 — Preflight check terpadu (DEDICATED)
+  # ============================================================
+  - id: R2.1
+    feature: entrypoint_dashboard_redesign
+    session: 2
+    parallel_ok: false
+    risk: medium
+    title: "Perluas launcher/dep_checker.py — tambah cek port & versi MPV"
+    depends_on: [R0.1]
+    locked: false
+    files: ["launcher/dep_checker.py"]
+    steps:
+      - "DependencyChecker.check_dependencies() TETAP tidak berubah signature/return-nya (dipakai launcher/gui/app.py, jangan pecah kontrak existing)"
+      - "tambah method baru check_port(host, port) -> bool — deteksi port sudah terpakai proses lain sebelum boot, memakai socket standar (tidak ada dependency baru)"
+      - "tambah method baru mpv_version() -> str | None — parse `mpv --version` bila mpv ditemukan, None bila gagal/tidak ada (fail-safe, tidak melempar exception)"
+      - "tambah unit test untuk dua method baru: check_port pada port yang sengaja dibuka test vs port bebas, mpv_version terhadap output mpv yang di-mock"
+    post_commands: ["python automation/find_owner.py launcher/gui/app.py --json"]
+    dod:
+      - "check_dependencies() existing tidak berubah perilaku/return type — dikonfirmasi test lama (bila ada) masih hijau"
+      - "check_port() dan mpv_version() baru, teruji unit test, fail-safe (tidak pernah melempar exception ke pemanggil)"
+    bundle_cmd: 'zip -rq lunawave-R2.1.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-R-*.zip"'
+
+  - id: R2.2
+    feature: entrypoint_dashboard_redesign
+    session: 2
+    parallel_ok: false
+    risk: medium
+    title: "Buat launcher/preflight.py — orkestrator satu sumber kebenaran"
+    depends_on: [R2.1]
+    locked: false
+    files: ["launcher/preflight.py (baru)"]
+    steps:
+      - "buat fungsi run(host, port) yang memanggil DependencyChecker (R2.1: check_dependencies, check_port, mpv_version) secara berurutan"
+      - "tiap langkah dicetak ke stdout (format yang sama seperti output start.bat/start.sh saat ini: `[*] ...`, `[+] ...`, `[-] ...`) DAN dicatat ke lunawave.log via structlog: event preflight_check, category=LC_LIFECYCLE, field check, result"
+      - "panggil setup_logging() di awal preflight.py SEBELUM mencatat apa pun, supaya baris preflight juga masuk lunawave.log meski main.py belum jalan (fail-safe bila setup_logging gagal: tetap lanjut cetak ke stdout saja)"
+      - "exit code preflight: 0 bila semua check lolos (atau hanya warning non-fatal), 1 bila ada kegagalan fatal (belum tentu mem-block start, mengikuti perilaku start.bat/start.sh saat ini yang tetap lanjut dengan warning untuk deps/MPV)"
+      - "CLI: `python -m launcher.preflight --host <h> --port <p>`"
+      - "tambah unit test: preflight.run() dengan DependencyChecker di-mock (semua lolos vs sebagian gagal), verifikasi baris log ditulis dengan category yang benar"
+    post_commands:
+      - "python -m launcher.preflight --host 127.0.0.1 --port 8765"
+      - "python automation/doctor.py --json"
+    dod:
+      - "python -m launcher.preflight menghasilkan output terminal yang setara dengan langkah manual di start.bat/start.sh saat ini"
+      - "setiap check preflight menghasilkan tepat satu baris di lunawave.log dengan category=LC_LIFECYCLE, event=preflight_check"
+      - "doctor.py tidak menambah error baru dibanding baseline"
+    patchlog_group: session_2
+    bundle_cmd: 'zip -rq lunawave-R2.2.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-R-*.zip"'
+
+  # ============================================================
+  # SESI 3 — Sederhanakan start.bat & start.sh (DEDICATED)
+  # ============================================================
+  - id: R3.1
+    feature: entrypoint_dashboard_redesign
+    session: 3
+    parallel_ok: false
+    title: "start.sh jadi thin wrapper atas launcher.preflight"
+    depends_on: [R2.2]
+    locked: false
+    files: ["start.sh"]
+    steps:
+      - "hapus logika duplikat (dependency check python -c inline, deteksi MPV manual, cleanup port manual) — pindahkan sepenuhnya ke `python -m launcher.preflight --host $LUNAWAVE_HOST --port $LUNAWAVE_PORT`"
+      - "TETAP pertahankan: banner ASCII, warna terminal, export env var (LUNAWAVE_HOST/PORT/ADMIN_USER/ADMIN_PASS + legacy YTGUI_*), info admin access, cleanup mpv.exe/socket file sebelum start"
+      - "tambah baris ringkasan URL baru: `Dashboard Logging : http://localhost:$LUNAWAVE_PORT/admin/logs` sejajar dengan Client/Admin/Health/Metrics yang sudah ada"
+      - "saat `python main.py` keluar dengan kode bukan 0: cetak 3 baris terakhir lunawave.log ke terminal (via `tail -n 3 lunawave.log`) sebelum pesan error, menggantikan pesan generik \"check application logs\""
+    post_commands:
+      - "bash -n start.sh"
+      - "python automation/verify_structure.py --json"
+    dod:
+      - "start.sh tidak lagi punya logika dependency/MPV/port-check inline — semuanya delegasi ke launcher.preflight"
+      - "output start.sh menampilkan URL dashboard baru dan 3 baris log terakhir saat server gagal start (diuji manual: matikan koneksi DB sengaja untuk memicu kegagalan)"
+      - "bash -n (syntax check) lolos tanpa error"
+
+  - id: R3.2
+    feature: entrypoint_dashboard_redesign
+    session: 3
+    parallel_ok: false
+    title: "start.bat jadi thin wrapper atas launcher.preflight (setara start.sh)"
+    depends_on: [R3.1]
+    locked: false
+    files: ["start.bat"]
+    steps:
+      - "hapus logika duplikat yang setara dengan yang dihapus di R3.1 (python -c inline check, where mpv, taskkill/netstat port cleanup manual) — delegasi ke `python -m launcher.preflight --host %LUNAWAVE_HOST% --port %LUNAWAVE_PORT%`"
+      - "TETAP pertahankan: banner ASCII, chcp 65001/PYTHONUTF8, export env var (dengan legacy YTGUI_* fallback), info admin access, taskkill mpv.exe sebelum start"
+      - "tambah baris ringkasan URL Dashboard Logging, identik posisi/format dengan R3.1 (paritas Windows/Unix)"
+      - "saat `python main.py` keluar dengan errorlevel bukan 0: tampilkan 3 baris terakhir lunawave.log (PowerShell `Get-Content -Tail 3` dipanggil dari dalam .bat, atau python -c cross-platform helper) sebelum pesan error"
+      - "verifikasi manual paritas: bandingkan urutan dan isi output start.bat vs start.sh baris per baris (selain perbedaan sintaks shell yang memang tak terhindarkan)"
+    post_commands:
+      - "python automation/verify_structure.py --json"
+    dod:
+      - "start.bat tidak lagi punya logika dependency/MPV/port-check inline — semuanya delegasi ke launcher.preflight, identik dengan start.sh"
+      - "output start.bat menampilkan URL dashboard baru dan 3 baris log terakhir saat server gagal start"
+      - "paritas start.bat vs start.sh dikonfirmasi manual (poin, urutan, dan isi pesan setara)"
+    patchlog_group: session_3
+    bundle_cmd: 'zip -rq lunawave-R3.2.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-R-*.zip"'
+
+  # ============================================================
+  # SESI 4 — main.py: banner terstruktur + ringkasan shutdown (DEDICATED)
+  # ============================================================
+  - id: R4.1
+    feature: entrypoint_dashboard_redesign
+    session: 4
+    parallel_ok: false
+    risk: medium
+    title: "Ganti banner print() di main.py jadi event structlog startup_summary"
+    depends_on: [R1.1]
+    locked: false
+    files: ["CAUTION: main.py"]
+    steps:
+      - "blok `print(\"=====...\")` beserta url_client/url_admin di run_server() diganti jadi satu pemanggilan logger.info(\"startup_summary\", category=LC_LIFECYCLE, pid=pid, host=display_host, port=port, client_url=url_client, admin_url=url_admin, dashboard_url=f\"http://{display_host}:{port}/admin/logs\")"
+      - "TETAP panggil log_session_start(pid, host=host, port=port) persis seperti sebelumnya (banner sesi ADR-0010 tidak diubah) — startup_summary baru ditulis SETELAH log_session_start, bukan menggantikannya"
+      - "TIDAK mengubah urutan/isi try/except/finally run_server() selain baris print yang diganti ini — non-breaking per commit"
+      - "verifikasi manual: jalankan `python main.py`, konfirmasi baris startup_summary muncul di console (berwarna sesuai level INFO) dan di lunawave.log (plain, tanpa ANSI)"
+    post_commands:
+      - "python automation/doctor.py --json"
+      - "grep -c 'startup_summary' lunawave.log"
+    dod:
+      - "banner startup tidak lagi memakai print() polos — satu baris terstruktur startup_summary muncul konsisten di console dan lunawave.log"
+      - "grep di atas mengonfirmasi minimal 1 baris startup_summary tercatat setelah satu kali start"
+      - "doctor.py tidak menambah error baru"
+
+  - id: R4.2
+    feature: entrypoint_dashboard_redesign
+    session: 4
+    parallel_ok: false
+    risk: medium
+    title: "Tambah event session_summary sebelum log_session_end() saat shutdown"
+    depends_on: [R4.1, R1.2]
+    locked: false
+    files: ["CAUTION: main.py"]
+    steps:
+      - "di blok finally run_server(), SEBELUM pemanggilan log_session_end(pid): tambah logger.info(\"session_summary\", category=LC_LIFECYCLE, duration_seconds=<dari server_clock jika tersedia>, total_requests=get_counter_value(HTTP_REQUESTS_TOTAL), total_errors=<jumlah background_task_crashed yang sudah dicatat di sesi ini>)"
+      - "total_errors dihitung dari counter lokal sederhana (increment tiap kali blok background_task_crashed di finally() tereksekusi), BUKAN metric Prometheus baru — cukup variabel lokal dalam scope run_server()"
+      - "seluruh pengambilan angka HARUS fail-safe (try/except, fallback None) — session_summary TIDAK BOLEH menggagalkan proses shutdown itu sendiri, konsisten dengan filosofi log_session_start/end yang sudah ada"
+      - "verifikasi manual: start lalu Ctrl+C, konfirmasi baris session_summary muncul tepat sebelum SESSION END di lunawave.log"
+    post_commands:
+      - "python automation/doctor.py --json"
+      - "grep -A1 'session_summary' lunawave.log | grep 'SESSION END'"
+    dod:
+      - "session_summary tercatat tepat satu kali per sesi, berisi duration_seconds/total_requests/total_errors (atau None yang fallback wajar, bukan crash)"
+      - "urutan log saat shutdown: shutdown_completed -> session_summary -> SESSION END, tidak berubah urutan lain"
+      - "kegagalan pengambilan salah satu angka TIDAK menghentikan proses shutdown (diuji dengan memaksa get_counter_value melempar exception sementara, konfirmasi shutdown tetap selesai)"
+    patchlog_group: session_4
+    bundle_cmd: 'zip -rq lunawave-R4.2.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-R-*.zip"'
+
+  # ============================================================
+  # SESI 5 — Backend endpoint dashboard (DEDICATED)
+  # ============================================================
+  - id: R5.1
+    feature: entrypoint_dashboard_redesign
+    session: 5
+    parallel_ok: false
+    title: "Buat server/handlers/log_dashboard.py — handler tail/stats + halaman"
+    depends_on: [R1.1, R1.2]
+    locked: false
+    files: ["server/handlers/log_dashboard.py (baru)"]
+    steps:
+      - "tambah async def get_logs_tail(request) — baca query param limit/category/level/q, panggil core.log_reader.tail(...), balas JSON"
+      - "tambah async def get_logs_stats(request) — panggil core.log_reader.stats(...) + get_counter_value untuk metric utama (COMMAND_COUNT, HTTP_REQUESTS_TOTAL, RESOLVE_LATENCY, dst), balas JSON gabungan"
+      - "tambah async def serve_log_dashboard(request) — web.FileResponse ke web/static/admin-logs.html (pola identik serve_index di server/handlers/http.py), header Cache-Control: no-cache"
+      - "ketiga handler WAJIB memakai fungsi proteksi yang sama persis dengan serve_metrics() di server/handlers/http.py (is_local ATAU X-Metrics-Token valid) — ekstrak logika proteksi jadi helper `require_local_or_token(request)` yang diimpor DUA sisi (http.py dan log_dashboard.py) supaya tidak duplikasi kode dan tidak drift"
+      - "refactor kecil non-breaking di server/handlers/http.py: pindahkan logika proteksi dari dalam serve_metrics() ke helper baru yang diimpor balik oleh serve_metrics() sendiri — TIDAK mengubah perilaku /metrics sama sekali"
+      - "tambah unit test: get_logs_tail dengan berbagai kombinasi filter, get_logs_stats format output, proteksi akses (403 untuk non-localhost tanpa token, 200 dengan token valid) — mirror test pattern yang sudah ada untuk serve_metrics"
+    post_commands:
+      - "python automation/find_owner.py server/handlers/http.py --json"
+      - "pytest tests/unit -k log_dashboard"
+    dod:
+      - "get_logs_tail dan get_logs_stats mengembalikan JSON valid, terfilter sesuai query param, teruji unit test"
+      - "ketiga handler menolak akses non-localhost tanpa token valid (403), diterima dengan token valid — perilaku identik /metrics"
+      - "/metrics existing TIDAK berubah perilaku setelah refactor helper (test lama untuk serve_metrics, bila ada, tetap hijau)"
+
+  - id: R5.2
+    feature: entrypoint_dashboard_redesign
+    session: 5
+    parallel_ok: false
+    title: "Daftarkan 3 rute baru di server/app.py"
+    depends_on: [R5.1]
+    locked: false
+    files: ["CAUTION: server/app.py"]
+    steps:
+      - "tambah 3 baris di create_app(), bersebelahan dengan /health dan /metrics yang sudah ada: app.router.add_get(\"/admin/logs\", serve_log_dashboard), app.router.add_get(\"/api/logs/tail\", get_logs_tail), app.router.add_get(\"/api/logs/stats\", get_logs_stats)"
+      - "import handler baru dari server.handlers.log_dashboard di dalam create_app() (pola import lokal yang sama seperti handler lain di fungsi ini)"
+      - "TIDAK menata ulang urutan 8 rute yang sudah ada, TIDAK mengubah middleware/AppKey apa pun — murni penambahan 3 baris + 1 baris import"
+    post_commands:
+      - "python automation/architecture_lint.py --json"
+      - "python automation/doctor.py --json"
+      - "curl -s http://127.0.0.1:8765/admin/logs -o /dev/null -w '%{http_code}\\n'"
+    dod:
+      - "3 rute baru terdaftar dan dapat diakses dari localhost (200), ditolak dari non-localhost tanpa token (403)"
+      - "8 rute lama di server/app.py tidak berubah urutan/perilaku"
+      - "architecture_lint.py dan doctor.py tidak menambah error baru"
+    patchlog_group: session_5
+    bundle_cmd: 'zip -rq lunawave-R5.2.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-R-*.zip"'
+
+  # ============================================================
+  # SESI 6 — Live tail via WebSocket (DEDICATED, locked file gate)
+  # ============================================================
+  - id: R6.1
+    feature: entrypoint_dashboard_redesign
+    session: 6
+    parallel_ok: false
+    risk: high
+    title: "Buat server/handlers/ws_log_stream.py — modul dispatch log_tail (pola ws_queue.py)"
+    depends_on: [R1.1, R5.1]
+    locked: false
+    files: ["server/handlers/ws_log_stream.py (baru)"]
+    steps:
+      - "tiru struktur server/handlers/ws_queue.py: async def handle_log_stream_command(ws, manager, msg, ...) menerima aksi 'subscribe'/'unsubscribe'"
+      - "saat 'subscribe': daftarkan koneksi ws sebagai log-viewer (state minimal, TIDAK menyentuh state player), mulai kirim baris baru dari lunawave.log yang muncul SETELAH waktu subscribe (bukan replay seluruh file — replay historis sudah tercakup /api/logs/tail)"
+      - "batching wajib (R-D2): kumpulkan baris baru selama jendela 500ms, kirim sebagai satu pesan JSON berisi array baris, bukan satu pesan per baris"
+      - "saat 'unsubscribe' atau koneksi ws tertutup: hentikan proses tail untuk koneksi tsb, tidak membiarkan task menggantung (pola cleanup sama seperti disconnect di ConnectionManager)"
+      - "reuse parser dari core/log_reader.py (R1.1) untuk mem-format tiap baris baru jadi dict sebelum dikirim sebagai JSON"
+      - "tambah unit test: subscribe->beberapa baris baru ditulis ke file log sintetis->klien menerima batch sesuai jendela 500ms; unsubscribe menghentikan pengiriman; disconnect tidak meninggalkan task berjalan (dicek lewat asyncio.all_tasks())"
+    post_commands: ["python automation/find_owner.py server/handlers/ws_queue.py --json"]
+    dod:
+      - "subscribe/unsubscribe log_tail bekerja, batching 500ms terverifikasi unit test"
+      - "disconnect klien membersihkan task tail sepenuhnya — nol task menggantung setelah test disconnect (dicek eksplisit di test)"
+      - "modul ini belum dipanggil dari websocket.py (persiapan untuk R6.2) — nol perubahan behavior sampai task berikutnya"
+
+  - id: R6.2
+    feature: entrypoint_dashboard_redesign
+    session: 6
+    parallel_ok: false
+    risk: high
+    requires_human_confirmation: true
+    title: "Tambah SATU percabangan dispatch log_tail di server/handlers/websocket.py (LOCKED FILE)"
+    depends_on: [R6.1]
+    locked: true
+    files: ["CAUTION: server/handlers/websocket.py"]
+    steps:
+      - "WAJIB berhenti dan minta konfirmasi eksplisit user PERSIS sebelum mengedit file ini (aturan eksekusi #3) — file locked di AI_CONTEXT.md"
+      - "tambah SATU import baru: from server.handlers.ws_log_stream import handle_log_stream_command — mengikuti pola import handler ws_* lain yang sudah ada di file ini"
+      - "tambah SATU percabangan dispatch baru (elif atau entri pada struktur dispatch yang sudah ada, ikuti pola persis yang dipakai handle_queue_command/handle_playback_command) yang memanggil handle_log_stream_command untuk tipe pesan 'log_tail'"
+      - "DILARANG KERAS mengubah baris lain di file ini selain 1 import + 1 percabangan dispatch — tidak ada refactor, tidak ada penataan ulang fungsi, tidak ada perubahan pada dispatch existing untuk playback/queue/discovery/download"
+      - "verifikasi manual menyeluruh SETELAH perubahan: player utama (play/pause/queue/radio) masih berfungsi normal end-to-end, tidak ada regresi sama sekali"
+    post_commands:
+      - "python automation/architecture_lint.py --json"
+      - "python automation/doctor.py --strict --json"
+      - "git diff --stat server/handlers/websocket.py"
+    dod:
+      - "diff server/handlers/websocket.py HANYA menunjukkan 1 baris import baru + percabangan dispatch baru untuk 'log_tail' — dikonfirmasi eksplisit dengan git diff --stat / git diff, tidak ada baris lain yang berubah"
+      - "seluruh fungsi WS player existing (play, pause, queue, discovery, download, radio) diverifikasi manual masih berjalan normal tanpa regresi"
+      - "architecture_lint.py --json dan doctor.py --strict --json tidak menambah error baru dibanding baseline"
+    patchlog_group: session_6
+    bundle_cmd: 'zip -rq lunawave-R6.2.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-R-*.zip"'
+
+  - id: R6.3
+    feature: entrypoint_dashboard_redesign
+    session: 6
+    parallel_ok: false
+    risk: medium
+    title: "Penyesuaian minimal server/connection_manager.py untuk klien log-viewer"
+    depends_on: [R6.2]
+    locked: false
+    files: ["CAUTION: server/connection_manager.py"]
+    steps:
+      - "tambah flag/atribut opsional pada koneksi (mis. is_log_viewer: bool = False) HANYA bila ws_log_stream.py (R6.1) membutuhkan ConnectionManager untuk tracking — bila R6.1 sudah cukup mandiri dengan state lokalnya sendiri, task ini menjadi NO-OP terdokumentasi (jangan memaksa perubahan yang tidak perlu)"
+      - "bila memang perlu perubahan: pastikan ACTIVE_WEBSOCKETS gauge dan histogram ACTIVE_USER_SESSION_SECONDS (dipakai untuk durasi sesi PLAYER) tidak ikut menghitung koneksi log-viewer, supaya metric player tidak terdistorsi oleh dashboard admin"
+      - "verifikasi manual: buka dashboard log (menambah 1 koneksi ws) sambil memantau /metrics — ACTIVE_WEBSOCKETS untuk player TIDAK bertambah akibat koneksi dashboard"
+    post_commands:
+      - "python automation/doctor.py --json"
+      - "curl -s http://127.0.0.1:8765/metrics | grep ytplayer_active_websockets"
+    dod:
+      - "metric player (ACTIVE_WEBSOCKETS, ACTIVE_USER_SESSION_SECONDS) tidak terpengaruh oleh koneksi log-viewer, diverifikasi manual dengan /metrics"
+      - "bila task ini NO-OP, didokumentasikan eksplisit di commit message/PATCHLOG kenapa tidak ada perubahan yang diperlukan"
+    patchlog_group: session_6
+
+  # ============================================================
+  # SESI 7 — Frontend dashboard (parallel_ok: true)
+  # ============================================================
+  - id: R7.1
+    feature: entrypoint_dashboard_redesign
+    session: 7
+    parallel_ok: true
+    title: "Buat web/static/admin-logs.html — layout dashboard"
+    depends_on: [R5.2]
+    locked: false
+    files: ["web/static/admin-logs.html (baru)"]
+    steps:
+      - "halaman baru terpisah, TIDAK menyentuh web/static/index.html (locked) — link masuk dari /admin/logs berdiri sendiri"
+      - "layout: header status (reuse data /health: db/mpv/uptime/memory/active_connections), panel live tail, filter bar (kategori/level/search), panel ringkasan statistik, tombol unduh lunawave.log"
+      - "vanilla HTML/CSS, tanpa framework baru (konsisten batasan AI_CONTEXT.md 'Tidak boleh tambah JS framework')"
+      - "skema warna level mengikuti _LEVEL_COLORS di core/log_config.py (DEBUG cyan, INFO hijau, WARNING kuning, ERROR merah, CRITICAL latar merah) supaya konsisten dengan tampilan console"
+    dod:
+      - "halaman dapat diakses di /admin/logs (localhost), menampilkan struktur lengkap (header status, panel tail kosong, filter bar, panel statistik, tombol unduh) sebelum JS dipasang (R7.2)"
+      - "tidak ada satu baris pun perubahan di web/static/index.html"
+
+  - id: R7.2
+    feature: entrypoint_dashboard_redesign
+    session: 7
+    parallel_ok: true
+    title: "Buat web/static/js/admin-logs.js — fetch tail/stats + live WS + render"
+    depends_on: [R7.1, R6.3]
+    locked: false
+    files: ["web/static/js/admin-logs.js (baru)"]
+    steps:
+      - "saat load: fetch /api/logs/tail (200 baris awal) dan /api/logs/stats, render ke panel tail dan panel statistik"
+      - "buka koneksi ws ke /ws, kirim pesan {type: 'log_tail', action: 'subscribe'}, render batch baris baru yang masuk (auto-scroll, badge kategori berwarna berbeda per 15 kategori LC_*)"
+      - "filter bar (kategori/level/search) memfilter ulang lewat fetch /api/logs/tail dengan query param baru, BUKAN filter sisi klien atas data yang sudah di-render (supaya konsisten dengan histori penuh, bukan hanya yang kebetulan sudah termuat)"
+      - "tombol unduh mengarah ke endpoint statis yang sudah ada di aiohttp (bisa reuse /static/ existing bila lunawave.log disalin sementara, atau tambah 1 endpoint unduh sederhana — didiskusikan singkat dengan reviewer sebelum memilih, catat keputusan di komentar kode)"
+      - "saat koneksi ws log_tail terputus: kirim {action: 'unsubscribe'} sebelum unload, dan tampilkan indikator 'live tail terputus, menampilkan histori saja' di UI (tidak diam-diam gagal)"
+    post_commands: ["python automation/verify_docs.py --json"]
+    dod:
+      - "dashboard menampilkan tail awal + live update baru secara real-time, teruji manual dengan memicu beberapa log baru (mis. login percobaan gagal) dan mengonfirmasi baris muncul di panel"
+      - "filter kategori/level/search berfungsi dan mengubah hasil sesuai ekspektasi"
+      - "indikator koneksi terputus muncul saat ws log_tail diputus paksa (uji manual: matikan server sebentar)"
+    patchlog_group: session_7
+    bundle_cmd: 'zip -rq lunawave-R7.2.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-R-*.zip"'
+
+  # ============================================================
+  # SESI 8 — GUI launcher desktop (parallel_ok: true)
+  # ============================================================
+  - id: R8.1
+    feature: entrypoint_dashboard_redesign
+    session: 8
+    parallel_ok: true
+    title: "Tombol 'Buka Dashboard Logging' di launcher/gui"
+    depends_on: [R5.2]
+    locked: false
+    files: ["launcher/gui/ui_builder.py", "launcher/gui/app.py"]
+    steps:
+      - "tambah satu tombol baru di panel yang sudah ada (sejajar tombol start/stop server), label 'Buka Dashboard Logging'"
+      - "handler tombol: webbrowser.open(f'http://{host}:{port}/admin/logs') memakai host/port yang sama dengan yang dipakai server_lifecycle.py untuk menampilkan URL client/admin yang sudah ada"
+      - "tombol nonaktif (disabled) bila server belum berjalan, mengikuti pola enable/disable tombol lain yang sudah ada di ui_builder.py"
+    dod:
+      - "tombol muncul, terhubung, dan membuka /admin/logs di browser default saat server berjalan"
+      - "tombol disabled dengan benar saat server belum/tidak berjalan, konsisten dengan tombol lain"
+
+  # ============================================================
+  # SESI 9 — Dokumentasi (parallel_ok: true)
+  # ============================================================
+  - id: R9.1
+    feature: entrypoint_dashboard_redesign
+    session: 9
+    parallel_ok: true
+    title: "Update LOGGING_STANDARD.md + README.md — dokumentasikan dashboard"
+    depends_on: [R7.2]
+    locked: false
+    files: ["docs/rfc/logging_standard/LOGGING_STANDARD.md", "README.md"]
+    steps:
+      - "tambah subbagian baru (bukan mengubah §1-§12 yang sudah final): 'Lapisan Penyajian — Dashboard Logging', jelaskan /admin/logs, /api/logs/tail, /api/logs/stats sebagai KONSUMEN read-only dari standar ini, bukan bagian dari taksonomi itu sendiri"
+      - "README.md: tambah baris di bagian fitur/URL yang sudah ada, sejajar deskripsi /health dan /metrics"
+    post_commands: ["python automation/verify_docs.py --json"]
+    dod:
+      - "verify_docs.py tidak menambah error baru"
+      - "pembaca baru bisa memahami dari README saja bahwa /admin/logs tersedia dan cara mengaksesnya (localhost atau token)"
+
+  - id: R9.2
+    feature: entrypoint_dashboard_redesign
+    session: 9
+    parallel_ok: true
+    title: "Update SECURITY.md — proteksi akses dashboard"
+    depends_on: [R7.2]
+    locked: false
+    files: ["SECURITY.md"]
+    steps:
+      - "dokumentasikan eksplisit bahwa /admin/logs dan /api/logs/* memakai proteksi yang SAMA dengan /metrics (localhost atau X-Metrics-Token via secrets.compare_digest) — reuse env var LUNAWAVE_METRICS_TOKEN, tidak ada token baru"
+      - "tegaskan dashboard tidak pernah menampilkan payload request mentah/kredensial (mengacu §8/§12.1 LOGGING_STANDARD.md yang sudah melarang data sensitif masuk log sejak sumbernya)"
+    dod: ["SECURITY.md mencakup bagian baru yang menjelaskan model akses dashboard logging secara akurat dan konsisten dengan implementasi R5.1"]
+    patchlog_group: session_9
+
+  # ============================================================
+  # SESI 10 — Verifikasi akhir (DEDICATED)
+  # ============================================================
+  - id: R10.1
+    feature: entrypoint_dashboard_redesign
+    session: 10
+    parallel_ok: false
+    risk: medium
+    title: "Verifikasi akhir menyeluruh + Definition of Done fitur"
+    depends_on: [R3.2, R4.2, R5.2, R6.3, R7.2, R8.1, R9.1, R9.2]
+    locked: false
+    files: []
+    steps:
+      - "jalankan start.sh (Termux atau simulasi Linux) DAN start.bat (Windows) minimal sekali masing-masing — konfirmasi keduanya menampilkan URL dashboard baru dan tetap start server dengan sukses"
+      - "smoke test dashboard: buka /admin/logs, konfirmasi header status, live tail, filter, dan panel statistik semuanya bekerja terhadap server yang benar-benar berjalan (bukan mock)"
+      - "regresi: konfirmasi /health dan /metrics existing tidak berubah perilaku, WS player (play/pause/queue/radio/download) tidak ada regresi"
+      - "cek Definition of Done keseluruhan dari proposal §3-§4 satu per satu"
+    post_commands:
+      - "python automation/doctor.py --strict --json"
+      - "python automation/verify_docs.py --json"
+      - "python automation/architecture_lint.py --json"
+      - "python automation/verify_structure.py --json"
+      - "python automation/patchlog.py verify --json"
+    dod:
+      - "start.sh dan start.bat berhasil start server dan menampilkan URL dashboard baru, di platform masing-masing"
+      - "/admin/logs berfungsi penuh (status, live tail, filter, statistik, unduh) terhadap server nyata"
+      - "nol regresi terkonfirmasi pada /health, /metrics, dan seluruh perintah WS player yang sudah ada sebelumnya"
+      - "core/log_categories.py (15 kategori) dan format file_renderer()/lunawave.log tidak berubah sama sekali dibanding sebelum fitur ini (dikonfirmasi diff kosong pada kedua file)"
+      - "semua automation health-check (doctor --strict, verify_docs, architecture_lint, verify_structure, patchlog verify) tidak menambah error baru dibanding baseline sebelum fitur ini"
+    patchlog_group: session_10
+    bundle_cmd: 'zip -rq lunawave-R10.1-FINAL.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-R-*.zip"'
+
+execution_order:
+  - R0.1
+  # --- Sesi 1 (parallel_ok — infrastruktur bersama) ---
+  - R1.1
+  - R1.2
+  # --- Sesi 2 (DEDICATED — preflight terpadu) ---
+  - R2.1
+  - R2.2
+  # --- Sesi 3 (DEDICATED — start.sh & start.bat) ---
+  - R3.1
+  - R3.2
+  # --- Sesi 4 (DEDICATED — main.py) ---
+  - R4.1
+  - R4.2
+  # --- Sesi 5 (DEDICATED — backend endpoint dashboard) ---
+  - R5.1
+  - R5.2
+  # --- Sesi 6 (DEDICATED, gate manusia di R6.2 — live tail WS) ---
+  - R6.1
+  - R6.2
+  - R6.3
+  # --- Sesi 7 (parallel_ok — frontend dashboard) ---
+  - R7.1
+  - R7.2
+  # --- Sesi 8 (parallel_ok — GUI launcher) ---
+  - R8.1
+  # --- Sesi 9 (parallel_ok — dokumentasi) ---
+  - R9.1
+  - R9.2
+  # --- Sesi 10 (DEDICATED — verifikasi akhir) ---
+  - R10.1
+  # catatan: 11 sesi (0-10, termasuk orientasi). Sesi 2, 3, 4, 5, 6, 10 WAJIB
+  # dedicated. R6.2 WAJIB requires_human_confirmation sebelum menyentuh
+  # server/handlers/websocket.py (locked file di AI_CONTEXT.md) — HANYA boleh
+  # menambah 1 import + 1 percabangan dispatch, nol perubahan lain.

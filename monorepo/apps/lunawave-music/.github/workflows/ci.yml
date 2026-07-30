@@ -1,0 +1,113 @@
+# CI — LunaWave
+#
+# PATCH-2026-07-17-076: sebelumnya architecture_lint.py, verify_docs.py,
+# verify_structure.py, dan verify_security.py HANYA jalan lewat
+# .pre-commit-config.yaml (hook lokal). Kalau kontributor/AI agent lupa
+# `pre-commit install`, atau commit dengan --no-verify, atau push langsung
+# tanpa pernah menjalankan hook secara lokal, drift arsitektur/dokumentasi
+# lolos ke main tanpa gate otomatis apapun. Workflow ini menutup celah itu
+# dengan menjalankan checker yang sama sebagai gate wajib di CI.
+#
+# PATCH-2026-07-25-XXX: frontend-tests sebelumnya cuma jalankan `npm test`
+# (vitest). ESLint dan tsc --typecheck sudah dikonfigurasi di package.json
+# (`npm run lint`, `npm run typecheck`) tapi tidak pernah dipanggil di CI,
+# sehingga pelanggaran lint/type bisa lolos ke main asal test-nya tetap
+# hijau. Sama halnya dengan depcruise (batas dependency antar layer di sisi
+# JS, analog import-linter di sisi Python) yang juga belum di-gate. Ditambah
+# di sini supaya semua alat yang sudah disiapkan benar-benar dipakai sebagai
+# gate, bukan sekadar terpasang di package.json.
+name: CI
+
+on:
+  push:
+    branches: [main, develop, termux]
+  pull_request:
+    branches: [main, develop, termux]
+
+jobs:
+  health-checks:
+    name: Project Health (doctor.py --strict)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: doctor.py — semua checker (docs, arsitektur, struktur, security, event graph)
+        run: python automation/doctor.py --strict
+
+      - name: patchlog.py verify — pastikan tidak ada entry PATCHLOG gagal parse
+        run: python automation/patchlog.py verify
+
+      - name: import-linter — batas dependency antar layer
+        run: |
+          pip install import-linter
+          lint-imports
+
+  security-and-lint:
+    name: Security & Lint (bandit, pip-audit, ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: ruff — lint
+        run: ruff check .
+
+      - name: bandit — static security scan (config di pyproject.toml)
+        run: bandit -r . -c pyproject.toml
+
+      - name: pip-audit — cek CVE di dependency pinned
+        run: pip-audit -r requirements.txt
+
+  python-tests:
+    name: Python Tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run pytest
+        run: pytest -q
+
+  frontend-tests:
+    name: Frontend Tests (vitest, eslint, tsc, depcruise)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: eslint — lint
+        run: npm run lint
+
+      - name: tsc — typecheck (JSDoc-based types)
+        run: npm run typecheck
+
+      - name: depcruise — batas dependency antar layer (sisi JS)
+        run: npm run depcruise
+
+      - name: vitest — unit tests
+        run: npm test

@@ -1,0 +1,143 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 09 — Inventory try/except/pass + pilot triase 2 file
+# (temuan audit-lunawave-temuan.md #9)
+# Depends on: TIDAK ADA (independen)
+# Risiko: RENDAH | Effort: SEDANG (pilot scope terbatas)
+# Bagian dari seri: docs/rfc/temuan_audit_2026_07_27/ — BACA 00_index_and_decisions.yaml
+# LEBIH DULU (berisi decisions/keputusan desain & deviation_protocol yang
+# berlaku untuk SEMUA file di seri ini, termasuk file ini).
+# =============================================================================
+
+phase:
+  id: T09
+  title: "Inventory try/except/pass + pilot triase 2 file"
+  temuan_ref: 9
+  closes_temuan: [9]
+  depends_on: []
+
+tasks:
+  - task_id: P4-T1
+    title: "Inventory try/except/pass terklasifikasi + pilot fix 2 file"
+    temuan_ref: 9
+    severity_audit: "Rendah"
+    depends_on: []
+    touches_locked_files: false
+    scope_note: >
+      LIHAT decisions.d7_pass_except_scope -- task ini TIDAK memperbaiki
+      semua ~99 (terverifikasi ~64+ varian) titik try/except/pass di
+      repo. Scope: (a) skrip inventory otomatis, (b) pilot perbaikan di
+      2 file yang disebut eksplisit di audit.
+    files:
+      create:
+        - automation/find_silent_excepts.py
+      modify:
+        - core/log_context.py
+      modify_glob:
+        - "launcher/*.py"
+      modify_tests:
+        - tests/unit/core/test_log_context.py
+    steps:
+      - >
+        Buat automation/find_silent_excepts.py: skrip yang men-scan
+        seluruh `**/*.py` (skip venv/node_modules/.cache) mencari pola
+        `except ...:` diikuti langsung (baris berikutnya, whitespace
+        diabaikan) `pass` TANPA komentar penjelas di baris yang sama
+        atau baris sebelumnya. Output: JSON/tabel berisi (file, baris,
+        exception type yang ditangkap, apakah ada comment di
+        sekitarnya). Ikuti pola CLI automation/doctor.py --json yang
+        sudah ada (lihat automation/doctor.py untuk gaya argparse &
+        output JSON konsisten).
+      - >
+        Jalankan skrip, simpan hasilnya sebagai lampiran PATCHLOG (di
+        field `notes` task ini) berupa ringkasan jumlah per direktori
+        (mis. "core/: 6, launcher/: N, engine/: N, ..."), BUKAN daftar
+        lengkap 99 baris (terlalu panjang untuk PATCHLOG entry) --
+        daftar lengkap cukup jadi output skrip yang bisa dijalankan
+        ulang kapan saja.
+      - >
+        `view` core/log_context.py baris ~50-105 (6 titik
+        except/pass). Untuk TIAP titik, klasifikasikan: apakah ini
+        "best-effort cleanup" (aman silent, mis. gagal set context var
+        yang non-kritis) atau "menelan error yang mungkin perlu
+        diketahui" (butuh logging). VERIFIKASI ULANG konteks tiap blok
+        sebelum memutuskan -- JANGAN blanket-tambah logging ke semua 6
+        tanpa baca konteksnya masing-masing.
+      - >
+        Untuk titik yang diklasifikasikan "best-effort cleanup"
+        (kemungkinan besar mayoritas di file ini, karena log_context.py
+        menangani context var untuk logging itu sendiri -- error di
+        sini seharusnya tidak pernah mengganggu alur utama), GANTI
+        `except Exception: pass` menjadi `except Exception:
+        logger.debug(...)` HANYA kalau structlog logger sudah
+        tersedia di module scope (VERIFIKASI ULANG), supaya jejak
+        tetap ada di level debug tanpa berisik di log produksi normal
+        (INFO+). Kalau logger belum ada di scope dan menambahkannya
+        berisiko circular-import (log_context.py adalah bagian dari
+        infrastruktur logging itu sendiri -- SANGAT MUNGKIN
+        berisiko), JANGAN paksakan; biarkan titik itu silent dan catat
+        alasannya sebagai komentar 1 baris di kode, lalu masukkan ke
+        daftar "sengaja tetap silent" di PATCHLOG notes.
+      - >
+        `view` semua file di launcher/*.py, cari pola except/pass
+        serupa. Klasifikasikan sama seperti di atas. Untuk yang aman
+        diberi logging (bukan circular-import risk, karena launcher/
+        adalah entry-point bukan infrastruktur logging), tambahkan
+        `logging.getLogger(__name__).debug(...)` atau structlog
+        setara sesuai konvensi yang sudah dipakai file lain di
+        launcher/ (VERIFIKASI ULANG apakah launcher/ pakai stdlib
+        logging atau structlog -- JANGAN campur dua sistem logging
+        dalam satu file kalau existing sudah konsisten satu jenis).
+      - >
+        Test: untuk log_context.py, pastikan test existing
+        (tests/unit/core/test_log_context.py kalau ada, kalau belum
+        ada BUAT minimal 1 test yang memicu tiap except-block via
+        mock/monkeypatch untuk memastikan tidak ada regresi perilaku
+        (tetap silent-safe untuk kasus yang sengaja dibiarkan, tetap
+        tidak melempar untuk semua kasus).
+      - >
+        JANGAN sentuh file di luar 2 target ini (core/log_context.py,
+        launcher/*.py) dalam task ini -- sisanya masuk backlog di
+        acceptance_criteria bagian bawah untuk sesi lanjutan terpisah.
+    acceptance_criteria:
+      - "automation/find_silent_excepts.py bisa dijalankan kapan saja untuk regenerasi inventory terkini (bukan snapshot statis yang basi)."
+      - "core/log_context.py dan launcher/*.py sudah ditriase: tiap titik except/pass punya keputusan eksplisit (tetap silent dengan alasan tercatat, atau diberi logging debug-level)."
+      - "Tidak ada perubahan perilaku untuk jalur sukses/error yang sudah ditest -- perubahan murni observability (logging tambahan), bukan perubahan control-flow."
+      - "BACKLOG (belum dieksekusi di task ini, untuk sesi lanjutan terpisah): sisa lokasi except/pass di luar core/log_context.py dan launcher/*.py -- gunakan output automation/find_silent_excepts.py sebagai starting point, klasifikasikan per-file dengan pola triase yang sama sebelum menambah logging."
+    tests:
+      run:
+        - "python automation/find_silent_excepts.py --json"
+        - "pytest tests/unit/core/test_log_context.py -q"
+        - "pytest tests/unit -q -k launcher"
+    patchlog:
+      type: cleanup
+      area: "core, launcher, automation"
+      title: "Inventory try/except/pass terklasifikasi + pilot triase 2 file"
+      reason: >
+        ~99 pola try/except/pass tersebar luas di codebase menelan
+        exception diam-diam -- sebagian memang best-effort/cleanup
+        yang sengaja silent, sebagian berpotensi menyembunyikan error
+        yang seharusnya diketahui saat debugging produksi.
+      root_cause: >
+        Pola except/pass ditulis berulang di banyak titik selama
+        pengembangan tanpa konvensi terpusat kapan silent itu aman vs
+        kapan butuh logging minimal -- tidak ada satu 'penyebab' tunggal,
+        ini akumulasi kebiasaan penulisan defensive code.
+      solution: >
+        Skrip inventory baru (automation/find_silent_excepts.py) untuk
+        audit berkelanjutan. Pilot triase & fix di 2 file yang
+        disebut eksplisit di audit (core/log_context.py, launcher/*.py)
+        -- titik yang aman silent didokumentasikan alasannya, titik
+        yang berisiko menyembunyikan error diberi logging debug-level.
+      files: "automation/find_silent_excepts.py, core/log_context.py, launcher/*.py, tests/unit/core/test_log_context.py"
+      notes: >
+        Scope sengaja dibatasi 2 file sebagai pilot (lihat
+        decisions.d7_pass_except_scope) -- BUKAN perbaikan menyeluruh
+        ~99 titik. Sisanya backlog untuk sesi lanjutan, pakai skrip
+        inventory yang sama sebagai starting point.
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/patchlog.py verify"
+  - "ruff check ."

@@ -1,0 +1,92 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 11 — Perbarui komentar header stale di radio-hero-moon.js
+# (temuan audit-lunawave-temuan.md #11)
+# Depends on: TIDAK ADA (independen)
+# Risiko: SANGAT RENDAH (komentar saja) | Effort: SANGAT KECIL
+# Bagian dari seri: docs/rfc/temuan_audit_2026_07_27/ — BACA 00_index_and_decisions.yaml
+# LEBIH DULU (berisi decisions/keputusan desain & deviation_protocol yang
+# berlaku untuk SEMUA file di seri ini, termasuk file ini).
+# =============================================================================
+
+phase:
+  id: T11
+  title: "Perbarui komentar header stale di radio-hero-moon.js"
+  temuan_ref: 11
+  closes_temuan: [11]
+  depends_on: []
+
+tasks:
+  - task_id: P4-T3
+    title: "Perbarui komentar header stale di radio-hero-moon.js"
+    temuan_ref: 11
+    severity_audit: "Dokumentasi (bukan bug eksekusi)"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - web/static/shared/js/render/radio-hero-moon.js
+    steps:
+      - >
+        `view` web/static/shared/js/render/radio-hero-moon.js baris
+        ~1-23 (header comment block). VERIFIKASI ULANG kalimat "File
+        ini belum di-load dari index.html manapun sampai sesi 4 (R4.1,
+        gate governance-locked)" (baris ~15-16).
+      - >
+        `view` web/static/pages/app/main.js baris ~15 untuk konfirmasi
+        `import { initRadioHeroBusSubscriptions } from
+        "../../shared/js/render/radio-hero-moon.js";` SUDAH ada --
+        file ini SUDAH di-load, komentar sudah basi (sesi 4 sudah
+        lewat).
+      - >
+        Ganti kalimat tsb (baris ~15-16) dari:
+        "Dibangun bertahap sesi 3 (R3.1..R3.4). File ini belum
+        di-load dari index.html manapun sampai sesi 4 (R4.1, gate
+        governance-locked)."
+        menjadi kalimat yang mencerminkan kondisi final, mis.:
+        "Dibangun bertahap sesi 3-4 (R3.1..R4.1). Sudah di-load lewat
+        import initRadioHeroBusSubscriptions di
+        web/static/pages/app/main.js."
+      - >
+        JANGAN ubah komentar lain di header yang masih akurat (mis.
+        bagian "SELF-CONTAINED", bagian "UPDATE (progress-driven)")
+        maupun komentar inline lain di file (mis. baris ~32 "walau
+        elemen SVG belum ada di index.html" -- VERIFIKASI ULANG apakah
+        kalimat itu juga stale atau memang masih relevan sebagai guard
+        null-check yang valid untuk kasus file di-load standalone;
+        audit hanya menandai header comment baris ~15-16, bukan baris
+        ~32 -- kalau ragu, biarkan baris ~32 apa adanya, di luar scope
+        temuan #11).
+      - >
+        Tidak perlu test baru -- perubahan murni komentar.
+    acceptance_criteria:
+      - "Komentar header tidak lagi menyatakan file belum di-load, sudah mencerminkan kondisi saat ini (sudah di-import di main.js)."
+      - "Tidak ada perubahan logic/behavior di file ini."
+    tests:
+      run:
+        - "npx vitest run tests/frontend/render/radio-hero-moon.test.js"
+    patchlog:
+      type: docs
+      area: "web/static/shared/js/render"
+      title: "Perbarui komentar header stale di radio-hero-moon.js"
+      reason: >
+        Komentar header menyatakan file "belum di-load dari index.html
+        manapun sampai sesi 4" -- padahal sudah di-import di
+        web/static/pages/app/main.js, komentar jadi menyesatkan
+        pembaca yang mengira modul ini masih standalone/belum aktif.
+      root_cause: >
+        Komentar ditulis di sesi 3 sebagai catatan status sementara,
+        tidak ikut diperbarui saat sesi 4 (yang menyelesaikan gate
+        governance-locked & melakukan import) selesai.
+      solution: >
+        Perbarui kalimat header agar mencerminkan status final (sudah
+        di-load via import di main.js), tanpa mengubah komentar lain
+        yang masih akurat.
+      files: "web/static/shared/js/render/radio-hero-moon.js"
+      notes: "Perubahan murni komentar. Tidak menyentuh file locked."
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/patchlog.py verify"
+  - "npx eslint web/static"

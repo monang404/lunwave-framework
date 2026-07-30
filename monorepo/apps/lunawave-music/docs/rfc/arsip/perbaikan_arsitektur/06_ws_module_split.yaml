@@ -1,0 +1,184 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 06 — Split ws.js (451 baris, god-module) -> transport/router/handlers
+# (Temuan G / §4.G, Fase 7)
+# Depends on: TIDAK ADA (independen dari file 04/05, meski secara narasi
+# proposal menaruhnya setelah E/F -- tidak ada dependency teknis nyata)
+# Risiko: RENDAH (ada fallback switch-case lama selama migrasi bertahap)
+# Effort: SEDANG-TINGGI
+#
+# Public API WAJIB tetap sama: `import { wsConnect, wsSend } from "./ws.js"`
+# di file manapun TIDAK BOLEH perlu diubah.
+#
+# Case message yang dikonfirmasi ada di ws.js saat audit (16 case, bukan
+# "15+" seperti disebut proposal secara umum -- dikonfirmasi via grep):
+# auth_status, setup_status, state, progress, lyrics, search_results,
+# discover_search_results, discover_data, artist_detail, log, error,
+# download_progress, cache_size, cache_cleared, chat_history, chat_message.
+# =============================================================================
+
+phase:
+  id: P06
+  title: "Split ws.js jadi transport.js + router.js + message-handlers/*"
+  proposal_ref: "§4.G"
+  closes_temuan: [G]
+  depends_on: []
+
+tasks:
+  - task_id: P06-T1
+    title: "Buat ws/transport.js (murni transport, tanpa tahu isi pesan)"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      create:
+        - web/static/shared/js/ws/transport.js
+    steps:
+      - >
+        Ekstrak dari ws.js SEMUA logic: koneksi WebSocket (`wsConnect`),
+        reconnect backoff, visibilitychange listener, `wsSend`, dan
+        assignment `globalThis.ws = ws` (baris 28 saat audit -- ini
+        TERMASUK penggunaan globalThis yang SAH/di-KEEP per keputusan d6,
+        JANGAN dihapus, hanya dipindah lokasinya).
+      - >
+        `ws.onmessage` di transport.js HANYA melakukan
+        `try { routeMessage(JSON.parse(event.data)) } catch(e) { console.error(...) }`
+        -- TIDAK ADA logic parsing/mutasi state/DOM di file ini sama
+        sekali, sesuai desain proposal.
+      - "Import routeMessage dari ./router.js (dibuat di task berikutnya -- urutan pembuatan file boleh dibalik selama commit akhir konsisten, tapi transport.js akan gagal import sampai router.js ada; buat kedua file dalam 1 commit/sesi task, jangan di-split jadi 2 PATCHLOG terpisah)."
+    acceptance_criteria:
+      - "transport.js TIDAK mengandung satupun switch-case per message type atau manipulasi DOM."
+      - "Logic reconnect backoff & visibilitychange PERSIS sama dengan versi lama (copy, bukan rewrite)."
+    tests: {}
+
+  - task_id: P06-T2
+    title: "Buat ws/router.js + 4 message-handlers/*.js dengan fallback switch-case lama"
+    depends_on: [P06-T1]
+    touches_locked_files: false
+    files:
+      create:
+        - web/static/shared/js/ws/router.js
+        - web/static/shared/js/ws/message-handlers/auth-messages.js
+        - web/static/shared/js/ws/message-handlers/playback-messages.js
+        - web/static/shared/js/ws/message-handlers/discover-messages.js
+        - web/static/shared/js/ws/message-handlers/chat-messages.js
+    steps:
+      - >
+        Buat 4 message-handlers, migrasi case PER FILE sesuai
+        pengelompokan (dikonfirmasi dari isi ws.js asli, bukan tebakan):
+        - auth-messages.js: case "auth_status", "setup_status" (termasuk
+          fungsi renderHeader() yang saat ini ada di ws.js baris ~430-447
+          -- proposal menaruh renderHeader di sini karena manipulasi DOM
+          status koneksi terkait erat dengan auth/connection state, bukan
+          audio-sync).
+        - playback-messages.js: case "state", "progress", "lyrics".
+        - discover-messages.js: case "search_results",
+          "discover_search_results", "discover_data", "artist_detail".
+        - chat-messages.js: case "chat_history", "chat_message".
+      - >
+        Case "log", "error", "download_progress", "cache_size",
+        "cache_cleared" TIDAK disebut proposal masuk kategori manapun --
+        keputusan untuk task ini: taruh di playback-messages.js SEMENTARA
+        sebagai "system/misc" kalau tidak ada rumah alami yang lebih
+        cocok, KECUALI saat migrasi ternyata "download_progress" dan
+        "cache_size"/"cache_cleared" lebih related ke fitur download/cache
+        -- kalau begitu, buat 1 file tambahan
+        `message-handlers/system-messages.js` untuk case ini (log, error,
+        download_progress, cache_size, cache_cleared) supaya
+        playback-messages.js tidak jadi dumping ground. INI KEPUTUSAN
+        FINAL untuk task ini, bukan open question: buat
+        system-messages.js sebagai file ke-5.
+      - >
+        router.js: object `HANDLERS = { auth_status: handleAuthMessage,
+        setup_status: handleAuthMessage, state: handlePlaybackMessage,
+        progress: handlePlaybackMessage, lyrics: handlePlaybackMessage,
+        search_results: handleDiscoverMessage,
+        discover_search_results: handleDiscoverMessage,
+        discover_data: handleDiscoverMessage,
+        artist_detail: handleDiscoverMessage,
+        chat_history: handleChatMessage, chat_message: handleChatMessage,
+        log: handleSystemMessage, error: handleSystemMessage,
+        download_progress: handleSystemMessage,
+        cache_size: handleSystemMessage, cache_cleared: handleSystemMessage }`.
+        Fungsi `routeMessage(msg)`: `const handler = HANDLERS[msg.type]; if (handler) handler(msg); else { /* fallback: proses lewat switch-case lama kalau ada case yang belum dipindah */ }`.
+      - >
+        SELAMA migrasi (kalau task ini tidak menuntaskan semua case
+        sekaligus dalam 1 sesi), `router.js` HARUS punya fallback ke
+        switch-case lama untuk case yang belum ada di HANDLERS -- tapi
+        karena task ini memigrasi SEMUA 16 case sekaligus (bukan
+        sebagian), fallback ini pada akhirnya tidak terpakai untuk case
+        manapun. Tetap sertakan sebagai safety net kalau ada case
+        tersembunyi yang terlewat audit.
+      - "Isi tiap message-handlers/*.js: pindahkan body switch-case yang relevan APA ADANYA (termasuk semua bus() call dan mutasi store yang sudah ada), TIDAK direfactor logic-nya di task ini -- ini murni pemindahan lokasi kode, bukan perbaikan logic."
+    acceptance_criteria:
+      - "Semua 16 case message type yang ada di ws.js asli punya handler baru di message-handlers/*.js -- tidak ada case yang hilang (bandingkan dengan grep 'case \"' di ws.js lama sebelum dihapus)."
+      - "router.js tidak melakukan mutasi store langsung -- hanya delegasi ke handler."
+    tests: {}
+
+  - task_id: P06-T3
+    title: "ws.js jadi thin re-export + test per message-handler"
+    depends_on: [P06-T2]
+    touches_locked_files: false
+    files:
+      modify:
+        - web/static/shared/js/ws.js
+      create:
+        - tests/frontend/ws/transport.test.js
+        - tests/frontend/ws/router.test.js
+        - tests/frontend/ws/message-handlers/playback-messages.test.js
+        - tests/frontend/ws/message-handlers/auth-messages.test.js
+        - tests/frontend/ws/message-handlers/discover-messages.test.js
+        - tests/frontend/ws/message-handlers/chat-messages.test.js
+        - tests/frontend/ws/message-handlers/system-messages.test.js
+    steps:
+      - >
+        Ganti seluruh isi ws.js (451 baris) menjadi thin re-export:
+        `export { wsConnect, wsSend } from "./ws/transport.js";` dan
+        `export { renderHeader } from "./ws/message-handlers/auth-messages.js";`
+        plus export lain apapun yang di-import dari ws.js oleh file lain
+        di luar folder ws/ (cek dulu dengan
+        `grep -rn 'from ".*\\/ws\\.js"' web/static` atau
+        `grep -rn 'from "\\.\\/ws.js"'` untuk memastikan semua named
+        export yang dipakai caller eksternal ikut di-re-export -- JANGAN
+        cuma re-export wsConnect/wsSend/renderHeader kalau ternyata ada
+        export lain yang dipakai file lain).
+      - >
+        Buat test terpisah per message-handler -- ini keuntungan utama
+        split ini: test playback-messages.js TIDAK PERLU mock WebSocket
+        sama sekali (hanya panggil handler langsung dengan objek pesan
+        palsu, assert perubahan store).
+      - "Buat juga test untuk router.js (routing ke handler yang benar per msg.type) dan transport.js (reconnect backoff logic, kalau bisa ditest tanpa real WebSocket -- pakai mock/fake WebSocket seperti pola tests/frontend/ws-connect.test.js yang sudah ada)."
+      - "Jalankan seluruh suite tests/frontend/*.test.js (termasuk ws-routing.test.js dan ws-connect.test.js LAMA) -- kalau ada test lama yang mengasumsikan struktur file ws.js lama secara langsung (import internal, bukan public API), update test tsb mengikuti lokasi baru TANPA mengubah apa yang divalidasi."
+    acceptance_criteria:
+      - "Semua file lain yang sebelumnya `import { wsSend } from './ws.js'` TIDAK PERLU diubah sama sekali."
+      - "ws.js final < 20 baris (murni re-export + docstring singkat)."
+      - "Test message-handlers/*.js berjalan tanpa mock WebSocket sama sekali."
+      - "Seluruh suite vitest hijau, termasuk ws-routing.test.js dan ws-connect.test.js yang sudah ada sebelumnya."
+    tests:
+      run:
+        - "npx vitest run"
+    patchlog:
+      type: refactor
+      area: "web/static/shared/js"
+      title: "Split ws.js (451 baris god-module) -> transport/router/message-handlers"
+      reason: >
+        ws.js mencampur 4 tanggung jawab berbeda (transport, routing,
+        mutasi state, manipulasi DOM) dalam 1 file -- perubahan kecil di
+        satu aspek berisiko menyentuh kode reconnect yang sudah stabil.
+      root_cause: >
+        Tidak ada pemisahan lapisan sejak awal; semua logic WS
+        terakumulasi di 1 file seiring bertambahnya message type.
+      solution: >
+        ws/transport.js (murni transport), ws/router.js (dispatch table),
+        ws/message-handlers/{auth,playback,discover,chat,system}-messages.js.
+        ws.js jadi thin re-export untuk backward-compat. Semua 16 case
+        message dimigrasi sekaligus dalam 1 sesi (bukan bertahap) karena
+        audit menemukan struktur cukup jelas untuk migrasi penuh
+        langsung; fallback switch-case lama di router.js disertakan
+        sebagai safety net tapi tidak dipakai untuk case manapun.
+      files: "web/static/shared/js/ws.js, web/static/shared/js/ws/transport.js, web/static/shared/js/ws/router.js, web/static/shared/js/ws/message-handlers/*.js, tests/frontend/ws/**"
+
+post_phase_commands:
+  - "npx vitest run"
+  - "python automation/doctor.py"
+  - "python automation/generate_file_index.py"

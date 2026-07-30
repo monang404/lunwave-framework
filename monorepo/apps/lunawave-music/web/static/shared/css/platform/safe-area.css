@@ -1,0 +1,15 @@
+@supports (padding: env(safe-area-inset-top)) {
+  /* C-04: iPhone notch / Dynamic Island */
+  #app-header {
+    padding-top: calc(var(--s4) + env(safe-area-inset-top));
+  }
+}
+
+@supports (padding: env(safe-area-inset-bottom)) {
+  #nav-bar {
+    padding-bottom: calc(5px + env(safe-area-inset-bottom));
+  }
+  #player-bar {
+    padding-bottom: calc(4px + env(safe-area-inset-bottom));
+  }
+}

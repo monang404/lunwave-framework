@@ -1,0 +1,772 @@
+# task_breakdown_launcher_qt.yaml
+# v1 — 2026-07-28
+# Fitur: launcher_redesign_pyside6 (redesain visual start.py/launcher + migrasi Tkinter -> PySide6)
+# Sumber desain: desain_ulang_launcher.md (design brief) + launcher-redesign-mockup.html (mockup statis)
+# Baseline kode: lunawave-develop.zip, launcher/gui/{app,ui_builder,popups,log_view,auth_panel}.py (Tkinter)
+#
+# STATUS: draft siap eksekusi — blok `decisions` di bawah berisi DEFAULT yang saya
+# pilih (bukan hasil konfirmasi eksplisit kamu), ditandai status: default_diusulkan.
+# Silakan override cepat sebelum menjalankan sesi 1 kalau ada yang tidak cocok;
+# semua task lain sudah bisa dieksekusi mengikuti default tsb tanpa menunggu.
+#
+# ATURAN EKSEKUSI UNTUK AGENT:
+# 1. Ikuti `execution_order` di akhir file secara sekuensial per sesi. Task dalam
+#    satu `session` dengan `parallel_ok: true` boleh dikerjakan tidak berurutan
+#    relatif satu sama lain (asal depends_on terpenuhi) — tapi tidak boleh
+#    melompati sesi.
+# 2. Task dengan `locked: true` atau `requires_human_confirmation: true` WAJIB
+#    berhenti dan minta konfirmasi eksplisit sebelum eksekusi, walau sesi
+#    sebelumnya sudah selesai & lolos DoD.
+# 3. SESI 0 ADALAH GATE UTAMA (LQ0.3): kalau PySide6 terbukti tidak bisa
+#    dipasang/dijalankan di salah satu target platform (Windows atau
+#    Termux/HyperOS), CATAT hasilnya di decisions.LQ-D4 dan re-evaluasi scope
+#    sebelum lanjut ke sesi 1. Jangan lanjut berasumsi PySide6 pasti jalan di
+#    semua platform.
+# 4. `launcher/__main__.py` sudah punya fallback graceful kalau GUI toolkit
+#    tidak tersedia (lihat baseline: pesan "gunakan start.sh di Termux").
+#    Prinsip ini WAJIB dipertahankan/diperluas, BUKAN dihapus — lihat LQ6.1.
+# 5. import-linter contract `launcher-no-server-import` (.importlinter) tetap
+#    berlaku sepanjang migrasi ini: launcher/gui_qt/* TIDAK BOLEH import dari
+#    server/engine/services, persis seperti launcher/gui/* lama.
+# 6. Setelah tiap task: jalankan `post_commands`, cek `dod` semua true, lalu
+#    tambahkan entry `docs/PATCHLOG.md` via `python automation/patchlog.py add`
+#    (format v2 field-based) kecuali task punya `patchlog: skip`. Task dengan
+#    `patchlog_group` yang sama ditulis SATU entry gabungan untuk seluruh
+#    anggota grup tsb.
+# 7. Kode Tkinter lama (`launcher/gui/*`) TIDAK dihapus sampai sesi 8 —
+#    selama sesi 1-7 kedua implementasi (Tkinter lama + Qt baru) hidup
+#    berdampingan, entry point pilih salah satu lewat fallback (LQ6.1).
+#    Ini supaya start.py tidak pernah dalam kondisi "rusak total" di
+#    tengah migrasi.
+
+meta:
+  source_features: ["launcher_redesign_pyside6"]
+  source_design_doc: "desain_ulang_launcher.md"
+  source_mockup: "launcher-redesign-mockup.html"
+  suggested_repo_path: "docs/rfc/launcher_redesign/"
+  locked_files_global: []   # tidak ada file global launcher yang locked di AI_CONTEXT.md saat ini
+  gated_files:
+    - path: "start.py"
+      reason: "entry point produksi — disentuh di LQ6.1, wajib konfirmasi eksplisit"
+    - path: "launcher/__main__.py"
+      reason: "entry point produksi — disentuh di LQ6.1, wajib konfirmasi eksplisit"
+  conventions:
+    patchlog_id_format: "PATCH-YYYY-MM-DD-NNN"
+    patchlog_cmd: "python automation/patchlog.py add --type <type> --area launcher --title <title> --reason <reason> --files <files> --root-cause <root_cause> --solution <solution> --notes <notes>"
+    ai_agent_flag_required_on: [doctor.py, verify_docs.py, architecture_lint.py, verify_structure.py, find_owner.py, patchlog.py]
+    ai_agent_flag: "--json"
+    bundle_cmd_template: >
+      zip -rq lunawave-{TASK_ID}.zip . -x ".git/*" -x "*__pycache__*"
+      -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+      -x "*.DS_Store" -x "lunawave-LQ-*.zip"
+
+decisions:
+  LQ-D1:
+    question: "Warna state 'conflict' dipisah dari accent brand (gold) atau reuse accent yang sama?"
+    chosen: "warna terpisah (--warn: #F5A524), accent (#F2B544) murni brand/primary action"
+    rationale: "Supaya brand color dan status warning tidak tumpang tindih semantik. Lihat desain_ulang_launcher.md §2.1 & §6 poin 1."
+    status: default_diusulkan
+
+  LQ-D2:
+    question: "Environment tag (Termux · HyperOS / Windows) ditampilkan di titlebar?"
+    chosen: "ya, ditampilkan"
+    rationale: >
+      Deteksi sys.platform sudah ada di network.py/process.py, murah untuk
+      diekspos ke UI. Catatan realistis: launcher/__main__.py baseline
+      menunjukkan tkinter (dan kemungkinan PySide6) sering TIDAK tersedia di
+      Termux headless — jadi tag ini paling sering terlihat saat GUI jalan
+      di Windows/Linux desktop dengan display, bukan di Termux tanpa GUI.
+      Tetap valid ditampilkan, hanya ekspektasinya disesuaikan.
+    status: default_diusulkan
+
+  LQ-D3:
+    question: "Tambah state visual baru 'Starting…' (belum ada di versi lama)?"
+    chosen: "ya, ditambahkan"
+    rationale: "Mengisi celah UX antara klik Start dan status Running. Butuh 1 hook additive-only di ServerLifecycle.start() — lihat LQ5.3."
+    status: default_diusulkan
+
+  LQ-D4:
+    question: "Framework: tetap Tkinter (restyle) atau migrasi penuh ke PySide6?"
+    chosen: "PySide6 (viable di Windows). Untuk Termux/Android fallback Tkinter dipertahankan secara permanen (sesi 8 skip)."
+    rationale: >
+      Kamu sudah menyatakan niat pindah ke PySide6. Namun PySide6 di
+      Termux/Android (aarch64, bukan glibc standar) belum tervalidasi —
+      wheel PyPI untuk PySide6 pada praktiknya menyasar desktop Linux/
+      Windows/macOS, bukan Android/Termux. LQ0.3 adalah spike WAJIB sebelum
+      commit penuh ke arah ini. Kalau PySide6 terbukti tidak jalan di
+      Termux: itu BUKAN blocker, karena baseline sudah punya fallback
+      headless untuk Termux (launcher/__main__.py) — GUI (baik Tkinter
+      lama maupun Qt baru) secara historis memang lebih relevan untuk
+      penggunaan di Windows/desktop.
+    status: confirmed
+    outcome_pending: false
+
+  LQ-D5:
+    question: "Custom frameless titlebar (dekorasi ● ● ● di mockup) atau titlebar native OS?"
+    chosen: "titlebar native OS dipertahankan, body window saja yang di-restyle"
+    rationale: >
+      Frameless window butuh kerja tambahan lintas-platform (drag region,
+      resize handle manual, perilaku minimize/maximize berbeda tiap OS) —
+      risiko lebih tinggi dari nilai yang didapat untuk tool internal
+      solo-dev. Elemen ● ● ● di mockup murni ilustrasi, tidak diimplementasikan.
+    status: default_diusulkan
+
+  LQ-D6:
+    question: "PySide6 masuk requirements.txt inti atau file terpisah opsional?"
+    chosen: "file terpisah: requirements-gui.txt"
+    rationale: >
+      Supaya instalasi headless/Termux/server-only TIDAK wajib menarik
+      PySide6 (paket besar, berpotensi gagal install di beberapa
+      lingkungan). Konsisten dengan filosofi launcher/__main__.py yang
+      sudah menganggap GUI toolkit sebagai dependency opsional.
+    status: default_diusulkan
+
+# ---------------------------------------------------------------------------
+# PETA SESI
+# ---------------------------------------------------------------------------
+sessions:
+  - session: 0
+    label: "Orientasi + feasibility gate PySide6"
+    parallel_ok: true
+    risk: gate
+    rationale: >
+      LQ0.3 adalah gate keras (lihat aturan eksekusi #3) — menentukan apakah
+      sesi 1-8 jalan penuh sesuai rencana, atau scope perlu disesuaikan
+      (misal: PySide6 hanya untuk target Windows, Termux tetap headless
+      seperti sekarang, tidak ada regresi).
+    tasks: [LQ0.1, LQ0.2, LQ0.3]
+
+  - session: 1
+    label: "Fondasi: dependency opsional + design tokens + ikon"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Aset & konstanta murni, belum menyentuh widget/window manapun. Boleh
+      dikerjakan tidak berurutan antar sub-task.
+    patchlog_group: "1 entry gabungan untuk LQ1.1..LQ1.4"
+    tasks: [LQ1.1, LQ1.2, LQ1.3, LQ1.4]
+
+  - session: 2
+    label: "Window shell + status hero + conflict banner"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED. Widget fondasi yang dipakai semua sesi berikutnya — dibangun
+      bertahap dalam satu sesi supaya kontrak API antar-widget konsisten.
+    patchlog_group: "1 entry gabungan untuk LQ2.1..LQ2.3"
+    tasks: [LQ2.1, LQ2.2, LQ2.3]
+
+  - session: 3
+    label: "Toolbar + info bars (admin/environment) + quick links"
+    parallel_ok: false
+    risk: low
+    rationale: "DEDICATED. Tiga widget yang saling independen tapi dikerjakan berurutan biar konsisten styling-nya."
+    patchlog_group: "1 entry gabungan untuk LQ3.1..LQ3.3"
+    tasks: [LQ3.1, LQ3.2, LQ3.3]
+
+  - session: 4
+    label: "Console (log panel) + toast server-ready"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED. Console butuh pola thread-safety yang tepat (Signal/Slot)
+      sebelum dipakai sesi 5 — kalau salah di sini, bug-nya baru kelihatan
+      saat wiring lifecycle (race condition, mirip kelas bug PATCH-2026-07-16-002
+      di baseline Tkinter).
+    patchlog_group: "1 entry gabungan untuk LQ4.1..LQ4.2"
+    tasks: [LQ4.1, LQ4.2]
+
+  - session: 5
+    label: "Wiring: state machine + ServerLifecycle + thread-safety"
+    parallel_ok: false
+    risk: high
+    rationale: >
+      DEDICATED. Ini yang menyambungkan semua widget visual ke logic nyata
+      (ServerLifecycle, network, process). Risiko tertinggi karena portingan
+      _refresh_status() dan _safe_after() harus 1:1 secara behavior dengan
+      baseline Tkinter, cuma beda mekanisme (QTimer/Signal vs after()).
+    tasks: [LQ5.1, LQ5.2, LQ5.3, LQ5.4]
+
+  - session: 6
+    label: "Gate — entry point start.py / launcher/__main__.py"
+    parallel_ok: false
+    risk: gate
+    rationale: >
+      DEDICATED, WAJIB konfirmasi eksplisit (lihat meta.gated_files). Ini
+      titik di mana user pertama kali benar-benar menjalankan `python
+      start.py` dan dapat GUI baru — harus dipastikan fallback ke Tkinter
+      lama/headless message tetap 100% berfungsi sebelum disentuh.
+    tasks: [LQ6.1]
+
+  - session: 7
+    label: "QA menyeluruh"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Verifikasi manual/otomatis, tidak ada perubahan kode produksi kecuali
+      fix kecil hasil temuan QA. Kalau ditemukan masalah struktural, kembali
+      ke sesi terkait — jangan tambal di sini.
+    tasks: [LQ7.1, LQ7.2, LQ7.3, LQ7.4, LQ7.5, LQ7.6]
+
+  - session: 8
+    label: "Cleanup: hapus GUI Tkinter lama + dokumentasi penutup"
+    parallel_ok: true
+    risk: gate
+    rationale: >
+      DESTRUCTIVE — hanya dijalankan setelah sesi 6 & 7 lolos DAN ada
+      keputusan eksplisit bahwa PySide6 jadi satu-satunya jalur GUI
+      permanen (bukan dual-path selamanya). Kalau LQ0.3/LQ-D4 outcome-nya
+      "PySide6 tidak viable di semua target", sesi ini SKIP total dan
+      Tkinter lama tetap jadi jalur utama/satu-satunya — re-evaluasi scope,
+      jangan paksa lanjut.
+    tasks: [LQ8.1, LQ8.2, LQ8.3]
+
+# ---------------------------------------------------------------------------
+tasks:
+
+  # ============================================================
+  # SESI 0 — Orientasi + feasibility gate (parallel_ok: true kecuali LQ0.3)
+  # ============================================================
+  - id: LQ0.1
+    session: 0
+    parallel_ok: true
+    title: "Baca design brief + mockup, pahami state machine existing"
+    depends_on: []
+    locked: false
+    files: []
+    steps:
+      - "baca desain_ulang_launcher.md penuh (khususnya §2 tokens, §3 layout, §4 state machine)"
+      - "buka launcher-redesign-mockup.html di browser, coba semua state switcher"
+      - "baca launcher/gui/app.py::_refresh_status() sebagai sumber kebenaran state machine yang HARUS direplikasi 1:1"
+    post_commands:
+      - "python automation/find_owner.py launcher/gui/app.py --json"
+      - "python automation/find_owner.py launcher/server_lifecycle.py --json"
+      - "python automation/find_owner.py launcher/__main__.py --json"
+      - "python automation/find_owner.py start.py --json"
+    dod: ["tabel state machine §4 desain brief dikonfirmasi cocok persis dengan _refresh_status() baseline"]
+    patchlog: skip
+
+  - id: LQ0.2
+    session: 0
+    parallel_ok: true
+    title: "Context pack seluruh file launcher/gui lama"
+    depends_on: [LQ0.1]
+    locked: false
+    files: []
+    post_commands:
+      - "python automation/context_pack.py launcher/gui/app.py"
+      - "python automation/context_pack.py launcher/gui/ui_builder.py"
+      - "python automation/context_pack.py launcher/gui/popups.py"
+      - "python automation/context_pack.py launcher/gui/log_view.py"
+      - "python automation/context_pack.py launcher/gui/auth_panel.py"
+      - "python automation/context_pack.py launcher/server_lifecycle.py"
+    dod: ["semua fungsi publik & callback signature (on_log, on_ready, on_deps_checked) dari 6 file di atas terdaftar sebagai kontrak yang harus dipertahankan di implementasi Qt"]
+    patchlog: skip
+
+  - id: LQ0.3
+    session: 0
+    parallel_ok: false
+    risk: gate
+    title: "Feasibility spike: PySide6 di target platform (Windows + Termux/HyperOS)"
+    depends_on: [LQ0.2]
+    locked: false
+    files: []
+    steps:
+      - "di lingkungan Windows: `pip install PySide6` lalu smoke test `python -c \"from PySide6.QtWidgets import QApplication, QLabel; import sys; app=QApplication(sys.argv); w=QLabel('ok'); w.show(); sys.exit(0)\"` (jalankan manual, exit sebelum event loop supaya tidak nge-hang CI) — catat sukses/gagal"
+      - "di Termux/HyperOS: coba `pip install PySide6` (kemungkinan gagal karena wheel PyPI menyasar glibc desktop, bukan Android/bionic) — catat pesan error persis apa adanya, JANGAN buang waktu debug mendalam kalau memang tidak ada wheel yang cocok, itu jawabannya"
+      - "cek exit code & apakah tkinter sendiri tersedia di Python Termux saat ini (baseline __main__.py sudah mengasumsikan sering tidak ada) — `python -c \"import tkinter\"`"
+    dod:
+      - "hasil PySide6 di Windows dicatat: viable / tidak viable"
+      - "hasil PySide6 di Termux/HyperOS dicatat: viable / tidak viable / tidak dicoba (alasan)"
+      - "decisions.LQ-D4.outcome_pending diupdate jadi false, dan decisions.LQ-D4.chosen direvisi sesuai temuan nyata (bukan asumsi) sebelum lanjut sesi 1"
+    patchlog: skip
+    requires_human_confirmation: true
+    steps_if_not_viable_anywhere: >
+      STOP total rencana ini. Tkinter lama tetap jadi satu-satunya implementasi.
+      Balik ke opsi "restyle Tkinter" dari desain_ulang_launcher.md §6 poin 4
+      (perlu RFC/plan terpisah, di luar file ini).
+    steps_if_viable_windows_only: >
+      Lanjut sesi 1-7 seperti rencana, TAPI sesi 8 (hapus Tkinter lama) di-skip
+      permanen — Tkinter tetap jadi fallback resmi untuk platform tanpa PySide6,
+      bukan cuma fallback sementara migrasi.
+
+  # ============================================================
+  # SESI 1 — Fondasi (parallel_ok: true)
+  # ============================================================
+  - id: LQ1.1
+    feature: launcher_redesign_pyside6
+    session: 1
+    parallel_ok: true
+    title: "Tambah requirements-gui.txt (PySide6 opsional, LQ-D6)"
+    depends_on: [LQ0.3]
+    locked: false
+    files: ["requirements-gui.txt (baru)"]
+    steps:
+      - "buat requirements-gui.txt berisi `PySide6>=6.7,<7` — TIDAK ditambahkan ke requirements.txt inti"
+      - "tambah catatan singkat di README/docs/devops/tooling.md: cara install GUI Qt (`pip install -r requirements-gui.txt`) bersifat opsional"
+    dod: ["`pip install -r requirements.txt` (tanpa -gui) tetap tidak menarik PySide6 sama sekali"]
+
+  - id: LQ1.2
+    feature: launcher_redesign_pyside6
+    session: 1
+    parallel_ok: true
+    title: "Skeleton package launcher/gui_qt/"
+    depends_on: [LQ0.3]
+    locked: false
+    files:
+      - "launcher/gui_qt/__init__.py (baru)"
+      - "launcher/gui_qt/widgets/__init__.py (baru)"
+      - "launcher/gui_qt/icons/ (baru, folder kosong dulu)"
+    steps:
+      - "buat struktur folder kosong sesuai path di atas, tanpa logic — murni skeleton supaya sesi 2+ punya tempat menulis"
+      - "pastikan launcher/gui_qt TIDAK diimport dari launcher/__init__.py atau __main__.py di task ini (baru disambung di LQ6.1)"
+    post_commands: ["python automation/architecture_lint.py --json"]
+    dod: ["import-linter tidak melaporkan pelanggaran baru (launcher-no-server-import tetap bersih)"]
+
+  - id: LQ1.3
+    feature: launcher_redesign_pyside6
+    session: 1
+    parallel_ok: true
+    title: "Vendor ikon SVG (subset Lucide, monoline)"
+    depends_on: [LQ1.2]
+    locked: false
+    files: ["launcher/gui_qt/icons/*.svg (baru)"]
+    steps:
+      - "ambil hanya ikon yang dipakai mockup: play, square (stop), rotate-ccw (restart), external-link (open portal), terminal (logs), key (admin), globe/activity/bar-chart (quick links), check-circle, alert-triangle, x (kill), settings, moon (logomark)"
+      - "simpan sebagai file .svg individual, stroke=currentColor supaya bisa diwarnai lewat QSS/QIcon runtime, JANGAN hardcode warna di file svg"
+      - "catat lisensi (Lucide = ISC) di launcher/gui_qt/icons/LICENSE.md singkat"
+    dod: ["semua ikon di mockup punya padanan file .svg di folder ini", "tidak ada warna hardcoded (fill/stroke) selain currentColor di masing-masing svg"]
+
+  - id: LQ1.4
+    feature: launcher_redesign_pyside6
+    session: 1
+    parallel_ok: true
+    title: "theme.py (token Python) + theme.qss (stylesheet)"
+    depends_on: [LQ1.2]
+    locked: false
+    files:
+      - "launcher/gui_qt/theme.py (baru)"
+      - "launcher/gui_qt/theme.qss (baru)"
+    steps:
+      - "port token warna dari desain_ulang_launcher.md §2.1 jadi konstanta Python (BG, BG_SURFACE, BG_ELEVATED, BORDER, ACCENT, SUCCESS, DANGER, WARN sesuai LQ-D1, TEXT_1/2/3)"
+      - "port skala spacing §2.3 (grid 4px, kelipatan 8) jadi konstanta SPACE_XS..SPACE_XL"
+      - "tulis theme.qss yang mereferensikan token yang sama (duplikasi nilai literal di dua tempat TIDAK apa-apa untuk QSS karena bukan variable system asli seperti CSS var, tapi WAJIB satu sumber comment yang menyatakan 'derived from theme.py, update dua-duanya kalau ubah token')"
+      - "font: deklarasikan Inter + JetBrains Mono; kalau tidak bundling font file, fallback ke font sistem terdekat (Segoe UI/system-ui untuk UI, Consolas/monospace untuk data) — keputusan bundling font vs fallback dicatat di dod, BUKAN diam-diam pilih salah satu"
+    dod:
+      - "semua warna di theme.qss match 1:1 dengan theme.py (tidak ada nilai hex yang beda)"
+      - "keputusan bundling-font-atau-fallback-sistem tercatat eksplisit di komentar theme.py"
+    patchlog_group: session_1
+    bundle_cmd: 'zip -rq lunawave-LQ1.4.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-LQ-*.zip"'
+
+  # ============================================================
+  # SESI 2 — Window shell + status hero + conflict banner (DEDICATED)
+  # ============================================================
+  - id: LQ2.1
+    feature: launcher_redesign_pyside6
+    session: 2
+    parallel_ok: false
+    title: "QMainWindow shell (titlebar native, geometri, icon)"
+    depends_on: [LQ1.4, LQ1.3]
+    locked: false
+    files: ["launcher/gui_qt/app.py (baru)"]
+    steps:
+      - "port _build_window() dari app.py lama: title 'LunaWave — Server Manager', geometry 600x680 -> sesuaikan ke ~880x720 (layout baru lebih lega, lihat mockup), minsize, center-on-screen"
+      - "titlebar NATIVE OS (LQ-D5) — jangan bikin frameless window"
+      - "load theme.qss via setStyleSheet(), load window icon dari web/static/icons/icon-512.png dengan try/except sama seperti baseline (best-effort, jangan gagalkan startup kalau icon tidak ada)"
+      - "belum ada widget konten apa pun di task ini — murni shell kosong + styling"
+    dod: ["window kosong ber-style terbuka tanpa error di lingkungan yang lolos LQ0.3", "resize ke minsize tidak memotong apa pun (belum ada konten, jadi cek tidak ada crash saja)"]
+
+  - id: LQ2.2
+    feature: launcher_redesign_pyside6
+    session: 2
+    parallel_ok: false
+    title: "Widget status_hero.py (state ring + label + stats)"
+    depends_on: [LQ2.1]
+    locked: false
+    files: ["launcher/gui_qt/widgets/status_hero.py (baru)"]
+    steps:
+      - "buat class StatusHero(QWidget) — murni presentational, TIDAK ada logic ServerLifecycle di sini (props in, signal out untuk port-changed)"
+      - "method set_state(name: str) menerima salah satu dari 'stopped'|'starting'|'running'|'conflict', mengubah ikon/warna ring/label/sub sesuai §4 tabel desain brief — samakan persis mapping warna dengan theme.py (LQ-D1: conflict pakai WARN, bukan ACCENT)"
+      - "ring pulse animation (state running) pakai QPropertyAnimation pada custom property (opacity/scale border) — bukan QTimer manual redraw ala Canvas Tkinter lama"
+      - "ring spin animation (state starting) pakai QPropertyAnimation rotasi berulang (loopCount=-1)"
+      - "stats row: Port sebagai QLineEdit (bisa di-enable/disable via method set_port_editable(bool), emit Signal port_changed(int) saat editingFinished), PID dan Uptime sebagai QLabel read-only"
+    dod:
+      - "set_state() untuk keempat state menghasilkan ikon+warna+label+sub yang match visual mockup (screenshot manual dibandingkan ke launcher-redesign-mockup.html)"
+      - "widget ini bisa di-instantiate & displayed standalone tanpa dependency ke ServerLifecycle (test isolasi)"
+
+  - id: LQ2.3
+    feature: launcher_redesign_pyside6
+    session: 2
+    parallel_ok: false
+    title: "Widget conflict_banner.py"
+    depends_on: [LQ2.2]
+    locked: false
+    files: ["launcher/gui_qt/widgets/conflict_banner.py (baru)"]
+    steps:
+      - "buat class ConflictBanner(QWidget) — hidden by default (setVisible(False))"
+      - "method set_conflict(pid: int | None) — update teks 'Port :{port} dipakai PID {pid}' dan label tombol 'Kill PID {pid}' (atau 'Kill Port Owner' kalau pid None, sama seperti baseline app.py::_refresh_status logic)"
+      - "emit Signal kill_requested() saat tombol diklik — TIDAK memanggil lifecycle.kill_conflict() langsung dari widget ini (itu tanggung jawab main_window di sesi 5, sesuai prinsip presentational widget)"
+    dod: ["banner show/hide tidak menyebabkan layout 'loncat' pada widget lain di sekitarnya (beda dari bug pack()/pack_forget() baseline — verifikasi dengan container yang sudah reserve ruang atau animasi height)"]
+    patchlog_group: session_2
+    bundle_cmd: 'zip -rq lunawave-LQ2.3.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-LQ-*.zip"'
+
+  # ============================================================
+  # SESI 3 — Toolbar + info bars + quick links (DEDICATED)
+  # ============================================================
+  - id: LQ3.1
+    feature: launcher_redesign_pyside6
+    session: 3
+    parallel_ok: false
+    title: "Widget toolbar.py (Start/Stop/Restart/Open/Logs)"
+    depends_on: [LQ2.3]
+    locked: false
+    files: ["launcher/gui_qt/widgets/toolbar.py (baru)"]
+    steps:
+      - "5 QPushButton dengan ikon dari LQ1.3 + label, styling primary (Start) / danger-outline (Stop) / default (Restart, Open, Logs) sesuai mockup"
+      - "expose Signal per tombol (start_clicked, stop_clicked, restart_clicked, open_clicked, logs_clicked) — widget ini TIDAK tahu apa-apa soal ServerLifecycle"
+      - "method set_enabled_map(dict) menerima {'start': bool, 'stop': bool, ...} untuk toggle disabled state sesuai tabel §4 desain brief"
+    dod: ["kelima tombol bisa di-disable/enable independen sesuai tabel state machine tanpa mengubah urutan/posisi tombol (tidak ada layout shift)"]
+
+  - id: LQ3.2
+    feature: launcher_redesign_pyside6
+    session: 3
+    parallel_ok: false
+    title: "Widget info_bars.py (Admin Access + Environment)"
+    depends_on: [LQ3.1]
+    locked: false
+    files: ["launcher/gui_qt/widgets/info_bars.py (baru)"]
+    steps:
+      - "AdminBar: label 'admin · ••••••••' + tombol 'Reset Password' -> Signal reset_password_clicked() (main_window nanti panggil logic yang sama seperti auth_panel.py::on_reset_password: buka browser ke portal, TIDAK ada auth logic baru)"
+      - "EnvironmentBar: method set_status(missing: list[str], mpv_ok: bool) — port logic teks dari app.py::_on_deps_checked apa adanya (cuma ganti representasi visual jadi baris compact dengan icon check/x, bukan teks panjang)"
+    dod: ["EnvironmentBar menampilkan pesan yang informasinya identik dengan _on_deps_checked baseline (missing libs apa saja, MPV ok/tidak), cuma beda tata letak"]
+
+  - id: LQ3.3
+    feature: launcher_redesign_pyside6
+    session: 3
+    parallel_ok: false
+    title: "Widget quicklinks.py (chip row)"
+    depends_on: [LQ3.2]
+    locked: false
+    files: ["launcher/gui_qt/widgets/quicklinks.py (baru)"]
+    steps:
+      - "4 chip: Client Portal (/), Admin Console (/admin), System Health (/health), Metrics API (/metrics) — port dari _make_link() baseline"
+      - "method set_base_port(port: int) untuk membangun URL saat diklik, pakai webbrowser.open() persis seperti baseline (bukan reimplementasi HTTP client apa pun)"
+    dod: ["klik tiap chip membuka http://localhost:{port}{path} yang benar sesuai port aktif saat itu"]
+    patchlog_group: session_3
+    bundle_cmd: 'zip -rq lunawave-LQ3.3.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-LQ-*.zip"'
+
+  # ============================================================
+  # SESI 4 — Console + toast (DEDICATED)
+  # ============================================================
+  - id: LQ4.1
+    feature: launcher_redesign_pyside6
+    session: 4
+    parallel_ok: false
+    risk: medium
+    title: "Widget console.py (log panel thread-safe)"
+    depends_on: [LQ3.3]
+    locked: false
+    files: ["launcher/gui_qt/widgets/console.py (baru)"]
+    steps:
+      - "QPlainTextEdit read-only, monospace (JetBrains Mono), styling sesuai mockup (header dengan line-count + tombol Clear)"
+      - "expose method append_log(msg: str, tag: str = '', is_end: bool = False) — port logic auto-tagging (err/ok/dim keyword matching) 1:1 dari log_view.py::write_log, TERMASUK format timestamp [%H:%M:%S]"
+      - "WAJIB thread-safe: append_log() harus AMAN dipanggil dari thread background (dependency check, server-ready poller, stdout pipe reader) — implementasikan lewat custom Signal (mis. `log_signal = Signal(str, str, bool)`) yang di-connect ke slot internal yang benar-benar menulis ke QPlainTextEdit. Qt Signal/Slot otomatis marshal ke main thread kalau widget dibuat di main thread (queued connection default lintas-thread) — TIDAK perlu pola manual mirip _safe_after()"
+      - "method clear_log() — port dari log_view.py::clear_log apa adanya"
+    post_commands: []
+    dod:
+      - "append_log() dipanggil dari QThread terpisah tidak menyebabkan crash/warning 'QObject::startTimer: Timers can only be used with threads started with QThread' atau sejenisnya"
+      - "tag coloring (err=danger, ok=success, accent=accent, dim=text-3) match warna theme.py"
+
+  - id: LQ4.2
+    feature: launcher_redesign_pyside6
+    session: 4
+    parallel_ok: false
+    title: "Widget ready_toast.py (port dari popups.py)"
+    depends_on: [LQ4.1]
+    locked: false
+    files: ["launcher/gui_qt/widgets/ready_toast.py (baru)"]
+    steps:
+      - "port show_server_ready_popup() jadi widget/dialog baru bergaya toast (lihat mockup: card kecil pojok kanan-bawah, bukan modal Toplevel center-screen seperti baseline) — DEVIASI DISENGAJA dari baseline, catat di dod kenapa (toast tidak memblokir interaksi window utama, modal lama pakai grab_set() yang blocking)"
+      - "isi & fungsi tombol identik baseline: 'Buka Login' -> webbrowser.open ke /admin, 'Tutup' -> dismiss"
+      - "auto-dismiss timer opsional (mockup pakai 4.5s) — TETAP sediakan tombol Tutup manual, jangan andalkan auto-dismiss saja"
+    dod: ["toast muncul saat dipanggil dari main_window (sesi 5) tanpa mem-block interaksi window utama, beda dari popup.grab_set() modal baseline — perbedaan ini didokumentasikan sebagai keputusan sadar, bukan regresi tak sengaja"]
+    patchlog_group: session_4
+    bundle_cmd: 'zip -rq lunawave-LQ4.2.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-LQ-*.zip"'
+
+  # ============================================================
+  # SESI 5 — Wiring: state machine + ServerLifecycle (DEDICATED, HIGH RISK)
+  # ============================================================
+  - id: LQ5.1
+    feature: launcher_redesign_pyside6
+    session: 5
+    parallel_ok: false
+    risk: high
+    title: "main_window.py — rakit semua widget + refresh_status()"
+    depends_on: [LQ4.2]
+    locked: false
+    files: ["launcher/gui_qt/main_window.py (baru)"]
+    steps:
+      - "class ServerManagerQt(QMainWindow) (atau compose ke app.py dari LQ2.1) — instantiate StatusHero, ConflictBanner, Toolbar, AdminBar, EnvironmentBar, QuickLinks, Console dari sesi 2-4, susun sesuai layout §3 desain brief"
+      - "buat self.lifecycle = ServerLifecycle(...) — import langsung dari launcher.server_lifecycle, TIDAK ADA PERUBAHAN ke file itu di task ini (perubahan additive di LQ5.3, task terpisah)"
+      - "port _refresh_status() dari app.py 1:1 secara LOGIKA (kondisi running/conflict/stopped, PID/port text, enabled_map per tombol) — HANYA representasinya yang beda (panggil widget.set_state()/set_conflict()/set_enabled_map() alih-alih widget.config() Tkinter)"
+      - "polling: gunakan QTimer(interval=2000, timeout=self._refresh_status) di-start sekali di __init__, BUKAN rekursif QTimer.singleShot berulang manual (Qt QTimer punya start()/stop() native, lebih robust daripada pola after() rekursif baseline)"
+    post_commands: ["python automation/find_owner.py launcher/server_lifecycle.py --json"]
+    dod:
+      - "tabel state machine §4 desain brief dan tabel di aturan eksekusi #4 desain brief tereplikasi persis (dibandingkan baris per baris dengan _refresh_status() baseline)"
+      - "QTimer polling berhenti bersih saat window ditutup (tidak ada callback nyasar setelah close, padanan guard _closing baseline)"
+
+  - id: LQ5.2
+    feature: launcher_redesign_pyside6
+    session: 5
+    parallel_ok: false
+    risk: high
+    title: "Thread-safety: guard closing + Qt Signal marshaling untuk semua callback lifecycle"
+    depends_on: [LQ5.1]
+    locked: false
+    files: ["launcher/gui_qt/main_window.py"]
+    steps:
+      - "tambahkan self._closing = False, di-set True di closeEvent() override — padanan flag _closing baseline"
+      - "SEMUA callback dari ServerLifecycle (on_log, on_ready, on_deps_checked) yang jalan di thread lain WAJIB masuk lewat Qt Signal (bukan manggil widget method langsung dari thread lain) — buat Signal khusus di main_window (mis. deps_checked_signal, server_ready_signal) yang di-emit dari callback thread lain, di-connect ke slot yang cek self._closing dulu sebelum update widget"
+      - "reproduksi skenario bug PATCH-2026-07-16-002 baseline (thread selesai SETELAH window ditutup) sebagai test manual: tutup window persis saat dependency-check masih berjalan di background, pastikan tidak ada exception/crash"
+    dod:
+      - "tidak ada widget Qt yang dipanggil langsung dari non-main-thread di file manapun (grep manual: semua akses widget dari callback lifecycle lewat emit Signal)"
+      - "skenario 'tutup window saat background thread masih jalan' tidak crash dan tidak melempar RuntimeError"
+
+  - id: LQ5.3
+    feature: launcher_redesign_pyside6
+    session: 5
+    parallel_ok: false
+    risk: medium
+    title: "Hook additive state 'Starting' di ServerLifecycle (LQ-D3)"
+    depends_on: [LQ5.2]
+    locked: false
+    files: ["launcher/server_lifecycle.py"]
+    steps:
+      - "tambah SATU parameter opsional baru di constructor/berlaku method start(): on_starting: Callable | None = None, default None — dipanggil sekali di awal proses start SEBELUM proses benar-benar jalan"
+      - "WAJIB additive-only: caller existing (launcher/gui/app.py Tkinter lama, yang TIDAK memberikan argumen ini) harus tetap jalan tanpa perubahan behavior sama sekali"
+      - "main_window.py (Qt) memberikan on_starting=self._on_starting yang emit state 'starting' ke StatusHero"
+    post_commands: ["python -m pytest tests/unit/launcher/test_server_lifecycle.py -q"]
+    dod:
+      - "tests/unit/launcher/test_server_lifecycle.py existing tetap PASS tanpa modifikasi assertion (bukti perubahan benar-benar additive)"
+      - "launcher/gui/app.py (Tkinter lama) tidak perlu diubah sama sekali supaya tetap berfungsi setelah task ini"
+
+  - id: LQ5.4
+    feature: launcher_redesign_pyside6
+    session: 5
+    parallel_ok: false
+    title: "Wire semua Signal widget ke ServerLifecycle + quick links + admin reset"
+    depends_on: [LQ5.3]
+    locked: false
+    files: ["launcher/gui_qt/main_window.py"]
+    steps:
+      - "toolbar.start_clicked -> self.lifecycle.start(self.server_port) lalu self._refresh_status() — port persis dari app.py::_on_start dst untuk semua 5 tombol"
+      - "conflict_banner.kill_requested -> self.lifecycle.kill_conflict(self.server_port)"
+      - "admin_bar.reset_password_clicked -> buka browser ke portal, port logic dari auth_panel.py::on_reset_password apa adanya (tidak ada auth logic baru ditulis di GUI, sesuai catatan asli file itu)"
+      - "quicklinks -> set_base_port dipanggil ulang tiap _refresh_status jalan (port bisa berubah saat state stopped)"
+      - "lifecycle.on_ready -> emit server_ready_signal -> tampilkan ReadyToast (LQ4.2)"
+    dod: ["seluruh interaksi tombol/link menghasilkan efek yang identik dengan baseline Tkinter (dibandingkan manual satu-satu terhadap app.py)"]
+    patchlog_group: session_5
+    bundle_cmd: 'zip -rq lunawave-LQ5.4.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-LQ-*.zip"'
+
+  # ============================================================
+  # SESI 6 — Gate: entry point (DEDICATED, WAJIB konfirmasi eksplisit)
+  # ============================================================
+  - id: LQ6.1
+    feature: launcher_redesign_pyside6
+    session: 6
+    parallel_ok: false
+    locked: true
+    requires_human_confirmation: true
+    title: "Ganti launcher/__main__.py: coba PySide6 -> fallback Tkinter -> fallback headless"
+    depends_on: [LQ5.4]
+    files: ["LOCKED: launcher/__main__.py", "start.py (cek ulang, kemungkinan tidak perlu berubah)"]
+    steps:
+      - "STOP — minta konfirmasi eksplisit user sebelum menyentuh __main__.py, walau sesi 1-5 sudah selesai & lolos"
+      - "urutan try-import di main(): (1) coba `from launcher.gui_qt.main_window import ServerManagerQt` — kalau sukses, jalankan itu; (2) kalau ImportError (PySide6 tidak terpasang), fallback ke `import tkinter` + `from launcher.gui import ServerManager` PERSIS seperti baseline; (3) kalau tkinter JUGA tidak ada, tampilkan pesan headless PERSIS seperti baseline ('Tkinter is not available...'), sys.exit(1)"
+      - "start.py TIDAK perlu diubah kalau masih `from launcher.__main__ import main` — verifikasi ulang, hanya edit kalau ternyata ada penyesuaian yang dibutuhkan"
+    post_commands:
+      - "python automation/doctor.py --json"
+      - "python automation/architecture_lint.py --json"
+    dod:
+      - "di lingkungan dengan PySide6 terpasang: `python start.py` membuka window Qt baru"
+      - "di lingkungan tanpa PySide6 tapi ada tkinter: `python start.py` membuka window Tkinter lama tanpa error apa pun (regresi nol)"
+      - "di lingkungan tanpa PySide6 dan tanpa tkinter: pesan stderr & exit code 1 identik persis dengan baseline sebelum task ini"
+      - "doctor.py --strict tidak menambah error baru dibanding baseline sebelum task ini"
+    patchlog_group: session_6
+    bundle_cmd: 'zip -rq lunawave-LQ6.1.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-LQ-*.zip"'
+
+  # ============================================================
+  # SESI 7 — QA (parallel_ok: true)
+  # ============================================================
+  - id: LQ7.1
+    feature: launcher_redesign_pyside6
+    session: 7
+    parallel_ok: true
+    title: "QA visual Windows — semua state vs mockup"
+    depends_on: [LQ6.1]
+    files: []
+    dod: ["keempat state (Stopped/Starting/Running/Conflict) di window Qt nyata match visual launcher-redesign-mockup.html (warna, spacing, ikon, teks)"]
+
+  - id: LQ7.2
+    feature: launcher_redesign_pyside6
+    session: 7
+    parallel_ok: true
+    title: "QA fallback — lingkungan tanpa PySide6"
+    depends_on: [LQ6.1]
+    files: []
+    steps:
+      - "uninstall/simulasikan tanpa PySide6 (venv terpisah tanpa requirements-gui.txt), jalankan start.py"
+    dod: ["fallback ke Tkinter lama (atau headless message kalau tkinter juga tidak ada) berjalan identik dengan baseline sebelum seluruh migrasi ini dimulai"]
+
+  - id: LQ7.3
+    feature: launcher_redesign_pyside6
+    session: 7
+    parallel_ok: true
+    title: "QA resize/minsize"
+    depends_on: [LQ6.1]
+    files: []
+    dod: ["resize window ke minsize tidak memotong/overflow konten apa pun (console tetap punya ruang wajar, toolbar tidak wrap aneh)"]
+
+  - id: LQ7.4
+    feature: launcher_redesign_pyside6
+    session: 7
+    parallel_ok: true
+    risk: medium
+    title: "QA thread-safety — tutup window saat proses background jalan"
+    depends_on: [LQ6.1]
+    files: []
+    steps:
+      - "klik Start, LANGSUNG tutup window sebelum status berubah ke Running (dependency-check + server-ready poller masih jalan di background)"
+      - "ulangi untuk Restart dan untuk kondisi kill_conflict"
+    dod: ["tidak ada crash/traceback di semua skenario di atas, padanan test kelas PATCH-2026-07-16-002 baseline tapi untuk implementasi Qt"]
+
+  - id: LQ7.5
+    feature: launcher_redesign_pyside6
+    session: 7
+    parallel_ok: true
+    title: "QA keyboard/focus dasar"
+    depends_on: [LQ6.1]
+    files: []
+    dod: ["seluruh tombol & port field bisa dijangkau via Tab, ada visible focus indicator (quality floor, bukan full accessibility audit)"]
+
+  - id: LQ7.6
+    feature: launcher_redesign_pyside6
+    session: 7
+    parallel_ok: true
+    title: "Tulis ulang tests/unit/launcher/gui/*"
+    depends_on: [LQ6.1]
+    files:
+      - "tests/unit/launcher/gui/test_app.py"
+      - "tests/unit/launcher/gui/test_auth_panel.py"
+      - "tests/unit/launcher/gui_qt/ (baru, kalau ditambah test khusus Qt)"
+    steps:
+      - "audit test_app.py & test_auth_panel.py existing — assertion-nya kemungkinan besar terikat ke API Tkinter (widget.config(), pack_forget(), dst) dan TIDAK applicable ke implementasi Qt, sesuai catatan desain_ulang_launcher.md §5"
+      - "test lama untuk launcher/gui/* (Tkinter) TETAP DIPERTAHANKAN apa adanya selama sesi 8 belum dijalankan (kode itu masih hidup, jangan hapus test-nya duluan)"
+      - "tulis test baru untuk launcher/gui_qt/* memakai pytest-qt atau QTest, fokus ke: state machine main_window (LQ5.1), thread-safety guard (LQ5.2), signal wiring (LQ5.4) — bukan sekadar smoke test widget muncul"
+    post_commands: ["python -m pytest tests/unit/launcher/ -q"]
+    dod: ["seluruh test launcher (lama + baru) PASS", "coverage config (pyproject.toml tool.coverage omit launcher/gui/*) dipertimbangkan ulang: apakah launcher/gui_qt/* juga perlu di-omit atau justru mulai dihitung coverage-nya — putuskan eksplisit, jangan diam-diam ikut default lama"]
+    patchlog_group: session_7
+    bundle_cmd: 'zip -rq lunawave-LQ7.6.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-LQ-*.zip"'
+
+  # ============================================================
+  # SESI 8 — Cleanup Tkinter lama (parallel_ok: true, DESTRUCTIVE GATE)
+  # ============================================================
+  - id: LQ8.1
+    feature: launcher_redesign_pyside6
+    session: 8
+    parallel_ok: true
+    locked: true
+    requires_human_confirmation: true
+    title: "Hapus launcher/gui/*.py (Tkinter lama)"
+    depends_on: [LQ7.1, LQ7.2, LQ7.3, LQ7.4, LQ7.5, LQ7.6]
+    files:
+      - "LOCKED: launcher/gui/app.py"
+      - "LOCKED: launcher/gui/ui_builder.py"
+      - "LOCKED: launcher/gui/popups.py"
+      - "LOCKED: launcher/gui/log_view.py"
+      - "LOCKED: launcher/gui/auth_panel.py"
+    steps:
+      - "STOP — minta konfirmasi eksplisit user. Task ini HANYA jalan kalau decisions.LQ-D4.outcome sesi 0 = 'PySide6 viable di semua target platform yang dipakai user' (bukan cuma Windows). Kalau tidak, SKIP task ini permanen, Tkinter tetap fallback resmi"
+      - "pastikan branch git terpisah/commit checkpoint sebelum hapus, supaya gampang di-revert kalau ternyata ada regresi tak terduga"
+      - "hapus 5 file di atas + fallback di __main__.py yang mengarah ke launcher.gui (LQ6.1 langkah (2)) — sesuaikan __main__.py jadi (1) coba PySide6 (2) fallback headless langsung, tanpa opsi Tkinter lagi"
+    post_commands:
+      - "grep -rn 'from launcher.gui import\\|from launcher.gui.' --include='*.py' . "
+      - "python automation/doctor.py --strict --json"
+    dod: ["hasil grep di atas kosong (tidak ada residual import ke launcher.gui Tkinter lama)", "doctor.py --strict PASS"]
+
+  - id: LQ8.2
+    feature: launcher_redesign_pyside6
+    session: 8
+    parallel_ok: true
+    title: "Update dokumentasi (README, packaging, requirements notes)"
+    depends_on: [LQ8.1]
+    files:
+      - "README.md"
+      - "docs/devops/packaging.md"
+      - "docs/devops/tooling.md"
+    steps:
+      - "update instruksi run (`python start.py`) untuk menyebut requirement PySide6 (requirements-gui.txt) sebagai wajib (bukan opsional lagi, karena Tkinter fallback sudah dihapus di LQ8.1)"
+      - "regenerasi index/report"
+    post_commands:
+      - "python automation/generate_file_index.py"
+      - "python automation/generate_report.py"
+    dod: ["FILE_INDEX.md/REPORT.md ter-regenerate, tidak ada referensi launcher/gui/*.py lama tersisa di docs"]
+
+  - id: LQ8.3
+    feature: launcher_redesign_pyside6
+    session: 8
+    parallel_ok: true
+    title: "PATCHLOG penutup fitur"
+    depends_on: [LQ8.2]
+    files: ["docs/PATCHLOG.md"]
+    steps:
+      - "satu entry PATCHLOG merangkum seluruh fitur (sesi 0-8), sertakan referensi ke desain_ulang_launcher.md dan keputusan LQ-D1..LQ-D6 beserta outcome final LQ-D4"
+    post_commands: ["python automation/patchlog.py verify --json"]
+    dod: ["entry baru ID PATCH-YYYY-MM-DD-NNN ada di paling atas docs/PATCHLOG.md, format v2 field-based, verify PASS"]
+    bundle_cmd: 'zip -rq lunawave-LQ8.3-FINAL.zip . -x ".git/*" -x "*__pycache__*" -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*" -x "*.DS_Store" -x "lunawave-LQ-*.zip"'
+
+execution_order:
+  # --- Sesi 0 (GATE — LQ0.3 wajib konfirmasi & bisa menghentikan seluruh rencana) ---
+  - LQ0.1
+  - LQ0.2
+  - LQ0.3
+  # --- Sesi 1 (parallel_ok) ---
+  - LQ1.1
+  - LQ1.2
+  - LQ1.3
+  - LQ1.4
+  # --- Sesi 2 (DEDICATED) ---
+  - LQ2.1
+  - LQ2.2
+  - LQ2.3
+  # --- Sesi 3 (DEDICATED) ---
+  - LQ3.1
+  - LQ3.2
+  - LQ3.3
+  # --- Sesi 4 (DEDICATED) ---
+  - LQ4.1
+  - LQ4.2
+  # --- Sesi 5 (DEDICATED — high risk, wiring inti) ---
+  - LQ5.1
+  - LQ5.2
+  - LQ5.3
+  - LQ5.4
+  # --- Sesi 6 (DEDICATED — gate entry point) ---
+  - LQ6.1
+  # --- Sesi 7 (parallel_ok — QA) ---
+  - LQ7.1
+  - LQ7.2
+  - LQ7.3
+  - LQ7.4
+  - LQ7.5
+  - LQ7.6
+  # --- Sesi 8 (parallel_ok — cleanup, DESTRUCTIVE GATE, kondisional) ---
+  - LQ8.1
+  - LQ8.2
+  - LQ8.3
+  # catatan: 9 sesi (0-8). Sesi 0, 6, dan 8 adalah gate yang WAJIB konfirmasi
+  # eksplisit dan bisa mengubah/menghentikan scope sesi berikutnya (lihat
+  # decisions.LQ-D4.outcome_pending dan catatan di masing-masing sesi). Sesi
+  # 2, 3, 4, 5 WAJIB dedicated karena tiap sesi membangun kontrak
+  # widget/wiring yang dipakai sesi setelahnya. Sesi 1 dan 7 boleh dikerjakan
+  # lebih longgar/paralel.

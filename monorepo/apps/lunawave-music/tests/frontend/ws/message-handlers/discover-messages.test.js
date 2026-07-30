@@ -1,0 +1,1 @@
+import { describe, it, expect } from "vitest"; import { handleDiscoverMessage } from "../../../../web/static/shared/js/ws/message-handlers/discover-messages.js"; describe("discover-messages.js", () => { it("handles search_results message", () => { expect(() => handleDiscoverMessage({ type: "search_results", data: [] })).not.toThrow(); }); });

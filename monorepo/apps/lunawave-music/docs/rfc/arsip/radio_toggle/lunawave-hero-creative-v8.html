@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LunaWave — Hero Concept: Night Dial (Real Moon Phase)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;1,9..144,500&family=Space+Grotesk:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --void:#0B0B10;
+    --void-2:#141222;
+    --moon-light:#F4EFE6;
+    --moon-glow:#F2B544;
+    --indigo-deep:#211C36;
+    --static-grey:#4B505C;
+    --text-1:#F5F3EF;
+    --text-2:#8B8FA3;
+    --text-3:#54586B;
+    --r-full:999px;
+    --font-display:'Fraunces', serif;
+    --font-body:'Inter', system-ui, sans-serif;
+    --font-mono:'Space Grotesk', monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--void);
+    font-family:var(--font-body);
+    color:var(--text-1);
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    padding:32px 16px 90px;
+  }
+  .page-label{
+    color:var(--text-3);
+    font-family:var(--font-mono);
+    font-size:11px;
+    letter-spacing:2px;
+    text-transform:uppercase;
+    margin-bottom:8px;
+  }
+  .page-title{
+    font-family:var(--font-body);
+    font-size:19px;
+    font-weight:500;
+    color:var(--text-2);
+    margin:0 0 30px;
+    text-align:center;
+    max-width:400px;
+  }
+
+  /* ══ HERO ══ */
+  .hero{
+    width:100%;
+    max-width:420px;
+    height:322px;
+    border-radius:24px;
+    position:relative;
+    overflow:hidden;
+    cursor:pointer;
+    border:1px solid rgba(255,255,255,0.045);
+    background:
+      radial-gradient(ellipse 140% 90% at 50% -10%, rgba(33,28,54,0.9) 0%, transparent 55%),
+      linear-gradient(180deg, #0F0D17 0%, #0A0910 60%, #0B0B10 100%);
+    transition:background 0.6s cubic-bezier(.2,.8,.2,1), border-color 0.6s ease, box-shadow 0.6s ease;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:flex-start;
+    padding:22px 20px 26px;
+  }
+  .hero.on{
+    border-color:rgba(242,181,68,0.16);
+    box-shadow:0 20px 60px -20px rgba(242,181,68,0.18), inset 0 0 60px rgba(242,181,68,0.03);
+  }
+
+  /* faint starfield */
+  .star{
+    position:absolute;
+    width:2px; height:2px;
+    background:var(--text-2);
+    border-radius:50%;
+    opacity:0.35;
+  }
+  .hero.on .star{ animation:twinkle 3.4s ease-in-out infinite; }
+  @keyframes twinkle{
+    0%,100%{ opacity:0.25; }
+    50%{ opacity:0.7; }
+  }
+
+  /* ── Occasional shooting star: a thin comet-like streak that crosses
+       the sky at random moments, random position and angle, spawned and
+       removed from JS. Kept small, quick and low-contrast so it reads as
+       something happening far in the background, not a foreground effect
+       competing with the moon. ── */
+  .shooting-star{
+    position:absolute;
+    top:0; left:0;
+    height:1px;
+    border-radius:2px;
+    background:linear-gradient(90deg,
+      rgba(245,243,239,0) 0%,
+      rgba(220,224,235,0.45) 55%,
+      rgba(255,255,255,0.9) 100%);
+    opacity:0;
+    transform-origin:100% 50%;
+    pointer-events:none;
+    filter:drop-shadow(0 0 1.5px rgba(255,255,255,0.55));
+  }
+  .shooting-star.fire{
+    animation-name:shootingStarMove;
+    animation-timing-function:cubic-bezier(.13,.66,.35,1);
+    animation-fill-mode:forwards;
+  }
+  @keyframes shootingStarMove{
+    0%{ opacity:0; transform:rotate(var(--ang)) translateX(0); }
+    9%{ opacity:0.9; }
+    72%{ opacity:0.7; }
+    100%{ opacity:0; transform:rotate(var(--ang)) translateX(var(--dist)); }
+  }
+
+  /* ── ON AIR tag — fully absent while off, not just muted ── */
+  .onair-tag{
+    position:absolute; top:18px; right:18px;
+    display:flex; align-items:center; gap:7px;
+    font-family:var(--font-mono);
+    font-size:10px; font-weight:600;
+    letter-spacing:1.6px;
+    color:var(--moon-glow);
+    border:1px solid rgba(242,181,68,0.35);
+    padding:5px 10px 5px 8px;
+    border-radius:var(--r-full);
+    z-index:2;
+    opacity:0;
+    visibility:hidden;
+    transform:translateY(-2px);
+    transition:opacity 0.5s ease, transform 0.5s ease, visibility 0s linear 0.5s;
+  }
+  .onair-dot{
+    width:6px; height:6px; border-radius:50%;
+    background:var(--moon-glow);
+  }
+  .hero.on .onair-tag{
+    opacity:1;
+    visibility:visible;
+    transform:translateY(0);
+    transition:opacity 0.5s ease 0.15s, transform 0.5s ease 0.15s, visibility 0s linear 0s;
+  }
+  .hero.on .onair-dot{
+    animation:onairPulse 1.6s ease-in-out infinite;
+  }
+  @keyframes onairPulse{
+    0%,100%{ box-shadow:0 0 0 0 rgba(242,181,68,0.5); }
+    50%{ box-shadow:0 0 0 5px rgba(242,181,68,0); }
+  }
+
+  /* ── Moon / tuner SVG — fixed viewBox, layout-immune ── */
+  .dial-svg{
+    width:172px;
+    height:172px;
+    display:block;
+    flex-shrink:0;
+    margin-top:2px;
+  }
+
+  .moon-lit-cool{
+    fill:url(#litGradCool);
+    opacity:1;
+    transition:opacity 0.7s ease;
+  }
+  .moon-lit-warm{
+    fill:url(#litGradWarm);
+    opacity:0;
+    transition:opacity 0.7s ease;
+  }
+  .hero.on .moon-lit-cool{ opacity:0; }
+  .hero.on .moon-lit-warm{ opacity:1; }
+
+  .moon-group{
+    transform-box: fill-box;
+    transform-origin: center;
+    will-change: transform;
+  }
+  .moon-glow-wrap{ transition:filter 0.6s ease; }
+  .hero.on .moon-glow-wrap{ animation:moonBreathe 5s ease-in-out infinite; }
+  @keyframes moonBreathe{
+    0%,100%{ filter: drop-shadow(0 0 8px rgba(242,181,68,0.22)); }
+    50%{ filter: drop-shadow(0 0 20px rgba(242,181,68,0.48)); }
+  }
+
+  .tick{
+    stroke:var(--static-grey);
+    stroke-width:2.4;
+    stroke-linecap:round;
+    transform-box:fill-box;
+    transform-origin:center;
+    transition:stroke 0.5s ease;
+  }
+  .hero.on .tick{ stroke:rgba(242,181,68,0.55); }
+  .hero.on .tick{ animation:tickPulse 1s ease-in-out infinite alternate; }
+  .tick.tuned{ stroke:var(--static-grey); }
+  .hero.on .tick.tuned{ stroke:var(--moon-glow); animation:none; }
+
+  .tick:nth-child(1){ animation-delay:.05s; animation-duration:.7s; }
+  .tick:nth-child(2){ animation-delay:.2s; animation-duration:.55s; }
+  .tick:nth-child(3){ animation-delay:.1s; animation-duration:.8s; }
+  .tick:nth-child(4){ animation-delay:.3s; animation-duration:.6s; }
+  .tick:nth-child(6){ animation-delay:.3s; animation-duration:.6s; }
+  .tick:nth-child(7){ animation-delay:.1s; animation-duration:.8s; }
+  .tick:nth-child(8){ animation-delay:.2s; animation-duration:.55s; }
+  .tick:nth-child(9){ animation-delay:.05s; animation-duration:.7s; }
+
+  @keyframes tickPulse{
+    0%{ transform:scaleY(0.7); }
+    100%{ transform:scaleY(1.35); }
+  }
+
+  .freq-label{
+    font-family:var(--font-mono);
+    font-size:9px;
+    fill:var(--text-3);
+    letter-spacing:0.5px;
+  }
+  .freq-label.tuned{ fill:var(--text-2); }
+  .hero.on .freq-label.tuned{ fill:var(--moon-glow); }
+
+  /* ── Text block ── */
+  .hero-name{
+    font-family:var(--font-display);
+    font-style:italic;
+    font-size:19px;
+    font-weight:500;
+    letter-spacing:0.2px;
+    color:var(--text-2);
+    margin-top:10px;
+  }
+  .hero-sub{
+    font-family:var(--font-mono);
+    font-size:11px;
+    letter-spacing:0.8px;
+    color:var(--text-3);
+    margin-top:5px;
+    min-height:14px;
+    text-transform:uppercase;
+    transition:color 0.5s ease;
+  }
+  .hero.on .hero-sub{ color:rgba(242,181,68,0.7); }
+
+  .toggle-hint{
+    margin-top:20px;
+    font-size:12px;
+    color:var(--text-3);
+    text-align:center;
+    max-width:340px;
+  }
+
+  .compare{
+    margin-top:44px;
+    width:100%;
+    max-width:420px;
+  }
+  .compare h3{
+    font-family:var(--font-mono);
+    font-size:11px;
+    letter-spacing:1.5px;
+    text-transform:uppercase;
+    color:var(--text-3);
+    font-weight:600;
+    margin:0 0 12px;
+  }
+  .compare ul{
+    margin:0; padding-left:18px;
+    font-size:13px; line-height:1.75; color:var(--text-2);
+  }
+  .compare li b{ color:var(--text-1); font-weight:500; }
+
+  @media (prefers-reduced-motion: reduce){
+    .hero.on .star,
+    .hero.on .tick,
+    .hero.on .moon-glow-wrap{ animation:none !important; }
+  }
+</style>
+</head>
+<body>
+
+  <div class="page-label">Konsep · Belum diimplementasi</div>
+  <div class="page-title">"Night Dial" — bulan sabit sebagai tuner radio, fase bulan dihitung dari posisi astronomis nyata</div>
+
+  <div class="hero" id="hero" role="button" tabindex="0" aria-pressed="false">
+
+    <div class="onair-tag"><span class="onair-dot"></span>ON AIR</div>
+
+    <!-- starfield, fixed positions, mixed sizes/brightness for a more
+         natural sky rather than uniform dots -->
+    <div class="star" style="top:24px; left:30px; width:1.5px; height:1.5px; opacity:0.3;"></div>
+    <div class="star" style="top:48px; left:56px; width:1px; height:1px; opacity:0.22;"></div>
+    <div class="star" style="top:18px; left:96px; width:1px; height:1px; opacity:0.4;"></div>
+    <div class="star" style="top:66px; left:22px; width:1px; height:1px; opacity:0.28;"></div>
+    <div class="star" style="top:38px; left:130px; width:1.5px; height:1.5px; opacity:0.18;"></div>
+    <div class="star" style="top:14px; left:230px; width:1px; height:1px; opacity:0.3;"></div>
+    <div class="star" style="top:34px; left:290px; width:2px; height:2px; opacity:0.45;"></div>
+    <div class="star" style="top:66px; left:326px; width:1px; height:1px; opacity:0.25;"></div>
+    <div class="star" style="top:22px; left:360px; width:1.5px; height:1.5px; opacity:0.35;"></div>
+    <div class="star" style="top:88px; left:350px; width:1px; height:1px; opacity:0.2;"></div>
+    <div class="star" style="top:92px; left:44px; width:1px; height:1px; opacity:0.32;"></div>
+    <div class="star" style="top:12px; left:160px; width:1px; height:1px; opacity:0.2;"></div>
+    <div class="star" style="top:108px; left:16px; width:1px; height:1px; opacity:0.24;"></div>
+    <div class="star" style="top:100px; left:390px; width:1.5px; height:1.5px; opacity:0.3;"></div>
+
+    <svg class="dial-svg" viewBox="0 0 172 172" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <radialGradient id="litGradCool" cx="36%" cy="32%" r="72%">
+          <stop offset="0%" stop-color="#FDFBF6"/>
+          <stop offset="55%" stop-color="var(--moon-light)"/>
+          <stop offset="100%" stop-color="#C9C4BA"/>
+        </radialGradient>
+        <radialGradient id="litGradWarm" cx="36%" cy="32%" r="72%">
+          <stop offset="0%" stop-color="#FFE3A8"/>
+          <stop offset="55%" stop-color="var(--moon-glow)"/>
+          <stop offset="100%" stop-color="#C77E1E"/>
+        </radialGradient>
+
+        <!-- The only shaping this moon gets: a soft blur on the lit shape's
+             own edge. There is no separate dark disc drawn at all — the
+             unlit hemisphere is simply the card's own background showing
+             through, so it disappears into it completely. Only the light
+             itself is rendered. -->
+        <filter id="softEdge" x="-30%" y="-30%" width="160%" height="160%">
+          <feGaussianBlur stdDeviation="0.85"/>
+        </filter>
+      </defs>
+
+      <!-- Whole sphere, grouped so a tiny libration wobble (real moons
+           rock slightly as they orbit, revealing a sliver more or less of
+           their limb) can be applied to every layer at once from JS,
+           without disturbing the terminator math which stays in its own
+           coordinate space. -->
+      <g id="moonGroup" class="moon-group">
+
+        <!-- Astronomically-derived lit terminator, two colour states
+             cross-faded. Nothing else in the disc is drawn: no dark base
+             circle, no craters — the shadowed side is just absent, reading
+             as pure night rather than a stamped-on sphere. -->
+        <g class="moon-glow-wrap">
+          <path id="moonLitCool" class="moon-lit-cool" filter="url(#softEdge)"/>
+          <path id="moonLitWarm" class="moon-lit-warm" filter="url(#softEdge)"/>
+        </g>
+      </g>
+
+      <!-- Tuner arc: frequency ticks beneath the moon -->
+      <g transform="translate(86,150)">
+        <line class="tick"        x1="-64" y1="0" x2="-64" y2="-10" transform="rotate(-40)"/>
+        <line class="tick"        x1="-48" y1="0" x2="-48" y2="-10" transform="rotate(-28)"/>
+        <line class="tick"        x1="-32" y1="0" x2="-32" y2="-10" transform="rotate(-16)"/>
+        <line class="tick"        x1="-16" y1="0" x2="-16" y2="-10" transform="rotate(-4)"/>
+        <line class="tick tuned"  x1="0"   y1="0" x2="0"   y2="-15" transform="rotate(0)"/>
+        <line class="tick"        x1="16"  y1="0" x2="16"  y2="-10" transform="rotate(4)"/>
+        <line class="tick"        x1="32"  y1="0" x2="32"  y2="-10" transform="rotate(16)"/>
+        <line class="tick"        x1="48"  y1="0" x2="48"  y2="-10" transform="rotate(28)"/>
+        <line class="tick"        x1="64"  y1="0" x2="64"  y2="-10" transform="rotate(40)"/>
+      </g>
+
+      <text class="freq-label" x="30" y="168" text-anchor="middle">88</text>
+      <text class="freq-label tuned" x="86" y="170" text-anchor="middle" font-size="10">96.4</text>
+      <text class="freq-label" x="142" y="168" text-anchor="middle">104</text>
+    </svg>
+
+    <div class="hero-name">Radio Mode</div>
+    <div class="hero-sub" id="heroSub">Klik untuk aktifkan radio</div>
+  </div>
+
+  <div class="toggle-hint">Ketuk kartu untuk toggle — saat "on", bulan mempercepat waktu dan benar-benar melintasi satu siklus sinodis (≈29,53 hari) secara halus, bukan animasi goyang generik</div>
+
+  <div class="compare">
+    <h3>Ide di balik konsep ini</h3>
+    <ul>
+      <li><b>Fase bulan nyata.</b> Saat kartu diam, bulan menampilkan fase bulan hari ini yang sesungguhnya — dihitung dari usia bulan sejak epoch bulan baru (6 Jan 2000, 18:14 UTC) dibagi periode sinodis 29,530588853 hari, formula standar astronomi amatir.</li>
+      <li><b>Terminator matematis, bukan gambar statis.</b> Garis batas gelap-terang (terminator) digambar sebagai path SVG dua-busur: busur luar r tetap, busur dalam rx = r·cos(θ) mengikuti sudut fase θ = 2π·fase — ini persis cara ilustrasi fase bulan yang akurat dibuat, bukan crescent yang di-hardcode.</li>
+      <li><b>Time-lapse saat "ON AIR".</b> Alih-alih efek goyang (wobble) yang terasa murahan, bulan benar-benar "menjalankan waktu" — satu siklus purnama-ke-purnama disimulasikan mulus dalam ±42 detik lewat requestAnimationFrame, dengan easing halus saat mulai/berhenti.</li>
+      <li><b>Cross-fade warna, bukan swap warna.</b> Transisi dari cahaya bulan netral ke glow amber "on air" memakai dua layer gradient yang saling crossfade opacity — halus di setiap frame, tanpa lompatan warna.</li>
+      <li><b>Elemen lain dikecilkan supaya tidak rebutan spotlight dengan bulan.</b> Label fase &amp; persentase iluminasi dihapus (tidak penting untuk pengalaman), tag ON AIR sekarang benar-benar hilang (bukan cuma pudar) saat kartu "off", dan nama produk diperkecil serta diredupkan sedikit — supaya cahaya bulan tetap jadi satu-satunya fokus visual.</li>
+      <li><b>Tidak ada disc gelap, tidak ada tekstur.</b> Sisi bulan yang tidak tersinari sengaja tidak digambar sama sekali — tidak ada lingkaran dasar, tidak ada kawah, tidak ada noise. Yang dirender cuma bentuk cahayanya (path terminator), jadi bagian gelap otomatis menyatu 100% dengan background kartu; yang keliatan betul-betul cuma cahaya bulan, sesuai cara mata melihat bulan sabit di langit malam nyata.</li>
+      <li><b>Bentuk cahaya yang membulat, bukan bidang datar.</b> Gradient radial pada bagian terang (pusat lebih terang, tepi sedikit meredup) tetap dipertahankan supaya crescent terbaca sebagai potongan bola yang melengkung, bukan bulan sabit kertas yang rata.</li>
+      <li><b>Librasi halus.</b> Seluruh piringan digeser &amp; dirotasi 1–2 derajat mengikuti dua frekuensi yang tidak sinkron dengan siklus fase — meniru goyangan orbital nyata Bulan (libration), bukan wobble generik, dan otomatis nonaktif saat <code>prefers-reduced-motion</code>.</li>
+      <li>Tuner ticks, ON AIR tag, dan starfield dipertahankan dari konsep asli — animasi tetap <b>transform/opacity/filter/d-path only</b>, tidak ada reflow yang mengganggu stabilitas layout.</li>
+    </ul>
+  </div>
+
+<script>
+  const hero = document.getElementById('hero');
+  const sub = document.getElementById('heroSub');
+  const litCool = document.getElementById('moonLitCool');
+  const litWarm = document.getElementById('moonLitWarm');
+  const moonGroup = document.getElementById('moonGroup');
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const CX = 86, CY = 66, R = 40;
+  const SYNODIC_DAYS = 29.530588853;
+  const KNOWN_NEW_MOON_UTC = Date.UTC(2000, 0, 6, 18, 14, 0);
+  const CYCLE_SECONDS = 42; // accelerated time-lapse duration for one full synodic month
+
+  // ── Astronomy: real moon phase fraction (0 = new, 0.5 = full) ──
+  function realPhase(date){
+    const days = (date.getTime() - KNOWN_NEW_MOON_UTC) / 86400000;
+    let p = (days % SYNODIC_DAYS) / SYNODIC_DAYS;
+    if (p < 0) p += 1;
+    return p;
+  }
+
+  // ── Geometry: terminator path via two-arc construction ──
+  // rx = r*cos(theta) gives the ellipse half-width of the terminator curve;
+  // sweep flags flip which side is illuminated as the phase crosses quarters.
+  function moonPathD(phase){
+    const theta = phase * 2 * Math.PI;
+    const rx = Math.abs(R * Math.cos(theta));
+    const outerSweep = phase < 0.5 ? 1 : 0;
+    const innerSweep = (phase < 0.25 || phase > 0.75) ? outerSweep : (outerSweep ? 0 : 1);
+    return `M ${CX} ${CY - R} A ${R} ${R} 0 0 ${outerSweep} ${CX} ${CY + R} A ${rx} ${R} 0 0 ${innerSweep} ${CX} ${CY - R} Z`;
+  }
+
+  // ── Libration: real moons rock slightly as they orbit, so a hair more
+  // or less of the limb tips into view over the month. Two independent,
+  // non-matching frequencies (not locked to the phase cycle itself) keep
+  // it reading as a slow physical drift rather than a synced wobble loop.
+  function render(phase){
+    const d = moonPathD(phase);
+    litCool.setAttribute('d', d);
+    litWarm.setAttribute('d', d);
+
+    if (moonGroup && !reduceMotion){
+      const t = phase * 2 * Math.PI;
+      const lon = Math.sin(t * 1.0) * 1.6;
+      const lat = Math.sin(t * 0.63 + 1.1) * 1.1;
+      const dx = Math.sin(t * 1.0) * 1.3;
+      const dy = Math.cos(t * 0.63) * 0.9;
+      moonGroup.style.transform = `translate(${dx.toFixed(2)}px, ${dy.toFixed(2)}px) rotate(${(lon + lat).toFixed(2)}deg)`;
+    }
+  }
+
+  let currentPhase = realPhase(new Date());
+  render(currentPhase);
+
+  // ── Animation state machine: continuous cycle while "on", eased tween back to real phase when "off" ──
+  let mode = 'idle';       // 'idle' | 'cycling' | 'tweening'
+  let rafId = null;
+  let cycleStartTs = null;
+  let cycleStartPhase = 0;
+  let tweenStartTs = null;
+  let tweenStartPhase = 0;
+  let tweenTargetPhase = 0;
+  const TWEEN_MS = 900;
+
+  function easeInOutCubic(t){
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
+
+  function shortestDelta(from, to){
+    let d = to - from;
+    d = ((d % 1) + 1.5) % 1 - 0.5;
+    return d;
+  }
+
+  function stepCycle(ts){
+    if (mode !== 'cycling') return;
+    if (cycleStartTs === null) cycleStartTs = ts;
+    const elapsed = (ts - cycleStartTs) / 1000;
+    currentPhase = (cycleStartPhase + elapsed / CYCLE_SECONDS) % 1;
+    render(currentPhase);
+    rafId = requestAnimationFrame(stepCycle);
+  }
+
+  function stepTween(ts){
+    if (mode !== 'tweening') return;
+    if (tweenStartTs === null) tweenStartTs = ts;
+    const t = Math.min(1, (ts - tweenStartTs) / TWEEN_MS);
+    const eased = easeInOutCubic(t);
+    currentPhase = (tweenStartPhase + shortestDelta(tweenStartPhase, tweenTargetPhase) * eased + 1) % 1;
+    render(currentPhase);
+    if (t < 1){
+      rafId = requestAnimationFrame(stepTween);
+    } else {
+      mode = 'idle';
+    }
+  }
+
+  function goCycling(){
+    cancelAnimationFrame(rafId);
+    mode = 'cycling';
+    cycleStartTs = null;
+    cycleStartPhase = currentPhase;
+    rafId = requestAnimationFrame(stepCycle);
+  }
+
+  function goTweenToReal(){
+    cancelAnimationFrame(rafId);
+    mode = 'tweening';
+    tweenStartTs = null;
+    tweenStartPhase = currentPhase;
+    tweenTargetPhase = realPhase(new Date());
+    rafId = requestAnimationFrame(stepTween);
+  }
+
+  let isOn = false;
+  let loadingTimeout;
+
+  function setState(on){
+    isOn = on;
+    hero.classList.toggle('on', on);
+    hero.setAttribute('aria-pressed', on);
+    clearTimeout(loadingTimeout);
+    if (on){
+      sub.textContent = 'Menyetel frekuensi...';
+      loadingTimeout = setTimeout(() => {
+        if (isOn) sub.textContent = 'Dengarkan tanpa batas';
+      }, 1200);
+      goCycling();
+    } else {
+      sub.textContent = 'Klik untuk aktifkan radio';
+      goTweenToReal();
+    }
+  }
+
+  hero.addEventListener('click', () => setState(!isOn));
+  hero.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); setState(!isOn); }
+  });
+
+  // ── Occasional shooting star: random position, random angle, random
+  // timing — a quick comet-like streak that crosses the card every so
+  // often, independent of the on/off toggle since it's just ambient sky,
+  // not part of the radio state. Small and fast on purpose, so it reads
+  // as something happening far in the background rather than a
+  // foreground effect competing with the moon.
+  function spawnShootingStar(){
+    const star = document.createElement('div');
+    star.className = 'shooting-star fire';
+
+    const startTop = 6 + Math.random() * 70;      // upper band of the card
+    const startLeft = 10 + Math.random() * 300;    // across most of the width
+    const angle = 16 + Math.random() * 26;         // shallow downward diagonal
+    const flip = Math.random() < 0.5 ? 1 : -1;     // travel left-to-right or right-to-left
+    const tailLen = 40 + Math.random() * 34;
+    const dist = 80 + Math.random() * 90;
+    const dur = 600 + Math.random() * 420;
+
+    star.style.top = startTop + 'px';
+    star.style.left = startLeft + 'px';
+    star.style.width = tailLen + 'px';
+    star.style.setProperty('--ang', (flip * angle) + 'deg');
+    star.style.setProperty('--dist', (flip * dist) + 'px');
+    star.style.animationDuration = dur.toFixed(0) + 'ms';
+
+    hero.appendChild(star);
+    star.addEventListener('animationend', () => star.remove());
+  }
+
+  function scheduleShootingStar(){
+    const delay = 3500 + Math.random() * 8000; // roughly every 3.5–11.5s
+    setTimeout(() => {
+      spawnShootingStar();
+      scheduleShootingStar();
+    }, delay);
+  }
+
+  if (!reduceMotion) scheduleShootingStar();
+</script>
+
+</body>
+</html>

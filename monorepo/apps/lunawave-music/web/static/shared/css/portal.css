@@ -1,0 +1,163 @@
+/* ══ LunaWave portal.css v2 ══ */
+
+#portal-screen {
+  position: fixed; inset: 0;
+  background: radial-gradient(circle at top right, rgba(var(--accent-rgb), 0.08) 0%, transparent 40%),
+              radial-gradient(circle at bottom left, rgba(var(--accent-rgb), 0.05) 0%, transparent 40%),
+              var(--bg-primary);
+  display: none; align-items: center; justify-content: center;
+  z-index: 9000; padding: var(--s6);
+}
+#portal-screen.portal-active { display: flex; }
+#app.portal-active { display: none !important; }
+
+.portal-card {
+  width: 100%; max-width: 360px;
+  background: var(--bg-surface);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--r-xl);
+  padding: 40px 32px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+  display: flex; flex-direction: column; gap: var(--s2);
+}
+
+.portal-title {
+  font-size: 28px; font-weight: 800;
+  color: var(--text-1); letter-spacing: -0.5px;
+  margin-bottom: 6px; text-align: center;
+}
+.portal-subtitle {
+  font-size: var(--t-sm); color: var(--text-3);
+  margin-bottom: var(--s8); text-align: center; line-height: 1.5;
+}
+
+.portal-options { display: flex; flex-direction: column; gap: var(--s3); }
+
+.portal-btn {
+  width: 100%; background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--r-md); padding: 16px;
+  color: var(--text-1); cursor: pointer; text-align: left;
+  font-family: var(--font);
+  display: flex; align-items: center; gap: 16px;
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  position: relative; overflow: hidden;
+}
+.portal-btn::before {
+  content: ''; position: absolute; inset: 0; opacity: 0;
+  transition: opacity 0.3s ease; z-index: 0;
+}
+.portal-btn:hover {
+  transform: translateY(-4px);
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+}
+
+.portal-btn.admin:hover::before {
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.1), transparent);
+  opacity: 1;
+}
+.portal-btn.client:hover::before {
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.1), transparent);
+  opacity: 1;
+}
+
+.portal-icon {
+  width: 44px; height: 44px;
+  background: var(--accent-alpha);
+  border-radius: var(--r-sm);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--accent); font-size: 22px; flex-shrink: 0;
+  z-index: 1; transition: transform 0.3s ease;
+}
+.portal-btn:hover .portal-icon { transform: scale(1.1); }
+.portal-btn.client .portal-icon { background: var(--accent-alpha); color: var(--accent); }
+
+.portal-btn-content { z-index: 1; display: flex; flex-direction: column; }
+
+.portal-btn-title {
+  display: block; font-size: 16px;
+  font-weight: 700; color: var(--text-1); margin-bottom: 4px;
+}
+.portal-btn-desc { display: block; font-size: 13px; color: var(--text-3); line-height: 1.4; }
+
+.portal-admin-wrapper { display: flex; flex-direction: column; gap: var(--s3); }
+
+.portal-login-form {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--r-md); padding: 20px;
+  display: flex; flex-direction: column; gap: 16px;
+  animation: slideDown 0.3s ease forwards;
+}
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.portal-login-form.hidden { display: none; }
+
+.login-input-group input {
+  width: 100%; background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--r-sm); padding: 14px 16px;
+  color: var(--text-1); font-size: 14px;
+  font-family: var(--font); outline: none;
+  caret-color: var(--accent);
+  transition: all 0.2s ease;
+}
+.login-input-group input:focus {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 0 0 3px var(--accent-alpha);
+}
+.login-input-group input::placeholder { color: var(--text-3); }
+
+#admin-submit-btn {
+  width: 100%; background: var(--accent); border: none;
+  border-radius: var(--r-sm); padding: 14px;
+  color: var(--bg-primary); font-size: 15px;
+  font-weight: 700; font-family: var(--font);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 14px var(--accent-alpha);
+}
+#admin-submit-btn:hover {
+  background: var(--accent-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px var(--accent-alpha);
+}
+
+.login-error { font-size: var(--t-xs); color: var(--red); text-align: center; min-height: 16px; }
+
+/* ══ Setup Screen (Initial Setup, T-B9/T-B10) ══
+   Mirror persis #portal-screen show/hide -- reuse .portal-card/.portal-title
+   dkk berarti tidak perlu rule visual terpisah untuk field Username/Password,
+   cuma butuh: (1) rule tampil/sembunyi screen-nya sendiri (T-B9 belum
+   menambah ini di index.html, portal-active di-toggle lewat JS di T-B11.2),
+   dan (2) submit button (nama id beda dari #admin-submit-btn). Field Confirm
+   Password otomatis konsisten di 3 breakpoint (mobile/tablet/desktop) karena
+   portal.css sendiri tidak punya override per-breakpoint apapun (lihat
+   platform/*.css -- tidak ada selector "portal" di sana), jadi tidak ada
+   breakpoint terpisah yang perlu disentuh. */
+#setup-screen {
+  position: fixed; inset: 0;
+  background: var(--bg-primary);
+  display: none; align-items: center; justify-content: center;
+  z-index: 9000; padding: var(--s6);
+}
+#setup-screen.portal-active { display: flex; }
+
+#setup-submit-btn {
+  width: 100%; background: var(--accent); border: none;
+  border-radius: var(--r-sm); padding: 12px;
+  color: #090A0D; font-size: var(--t-md);
+  font-weight: var(--w-semibold); font-family: var(--font);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+#setup-submit-btn:hover { background: var(--accent-hover); }
+#setup-submit-btn:disabled {
+  background: var(--bg-elevated); color: var(--text-3); cursor: not-allowed;
+}

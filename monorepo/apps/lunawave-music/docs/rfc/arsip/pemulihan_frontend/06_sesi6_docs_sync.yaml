@@ -1,0 +1,74 @@
+# 06_sesi6_docs_sync.yaml
+# Sesi 6 — Sinkronisasi dokumentasi & PATCHLOG penutup (F11.1-F11.3 dari
+# RFC asli). Dikerjakan TERAKHIR, setelah sesi 1, 2, 4 selesai dan stabil.
+# TIDAK bergantung pada sesi 5 (masih BLOCKED, tidak dieksekusi).
+
+session: 6
+parallel_ok: false
+risk: low
+depends_on: [1, 2, 4]
+
+tasks:
+  - id: S6.1
+    title: "F11.1 — Update docs/architecture/frontend.md supaya cocok struktur terbaru"
+    files:
+      - path: "docs/architecture/frontend.md"
+        action: edit
+        spesifikasi: >
+          Cek ulang peta modul di dokumen ini terhadap struktur nyata
+          web/static/pages/ + web/static/shared/js/ pasca sesi 1-4. Field
+          yang WAJIB dicek:
+          1. Path index.html dan admin-logs.html sudah mengarah ke
+             pages/app/index.html dan pages/admin-logs/admin-logs.html
+             (bukan lagi path lama static/index.html, static/admin-logs.html)
+             — kalau dokumen masih pakai path lama, ini bukti dokumen belum
+             pernah disinkronkan sejak migrasi sesi 8, update sekarang.
+          2. Tambahkan paragraf exception playback-sync<->visualizer dari
+             S4.1 (kalau belum ada — S4.1 seharusnya sudah menambahkannya,
+             sesi ini cuma verifikasi bukan duplikasi).
+          3. Import graph di dokumen (kalau ada diagram/daftar) diupdate
+             mengikuti hasil pembersihan sesi 2 (37+5+12 unused import/var
+             sudah dihapus, jangan sampai dokumen masih menyebut modul yang
+             sudah tidak ada relasinya).
+    verifikasi:
+      - "python automation/verify_docs.py --json -> PASS"
+
+  - id: S6.2
+    title: "F11.2 — Cek DEPRECATED_ALIAS (harus tetap nol)"
+    command: "grep -rn DEPRECATED_ALIAS web/static/"
+    hasil_diharapkan: "0 hasil (sudah nol sejak sebelum siklus ini; task ini cuma re-konfirmasi tidak ada regresi baru dari sesi 1/2/4)"
+    jika_ada_hasil: "STOP — laporkan ke user, jangan hapus sendiri tanpa tahu konteksnya (bisa jadi alias baru sengaja ditambahkan di luar siklus ini)"
+
+  - id: S6.3
+    title: "F11.3 — Generate file index & tulis entry PATCHLOG penutup siklus"
+    command: "python automation/generate_file_index.py"
+    patchlog_cmd: |
+      python automation/patchlog.py add \
+        --type Cleanup --area Frontend --priority Medium \
+        --title "Penutup siklus perbaikan frontend pasca PATCH-223 (sesi 1-4, 6)" \
+        --reason "Rangkuman siklus perbaikan frontend: .gitignore hilang, 2 test stale, 70 eslint warning, investigasi circular-dependencies" \
+        --files "docs/architecture/frontend.md,docs/PATCHLOG.md" \
+        --root-cause "Technical debt terakumulasi pasca migrasi struktur pages/ di sesi 6-8 sebelumnya: tooling (gitignore), test drift, lint warning, dan dependency graph belum pernah diaudit ulang" \
+        --solution "Sesi 1: gitignore + 2 test fix. Sesi 2: 0 eslint warning (37 import unused, 5 dead-code/false-positive, 12 catch/arrow-param, 7 case-declaration). Sesi 3: regenerate baseline visual regression + hapus 4 snapshot orphan. Sesi 4: dokumentasi 1 exception sadar (playback-sync<->visualizer) + laporan investigasi 65 edge sisa untuk keputusan RFC terpisah (sesi 5, masih BLOCKED). Sesi 6: sinkronisasi docs." \
+        --tests "eslint 0/0, depcruise 65 warning terdokumentasi (bukan 0, lihat sesi 4), doctor.py 5/5, verify_docs.py PASS, verify_security.py PASS, pytest semua pass" \
+        --breaking No --risk Low --status Merged \
+        --related PATCH-2026-07-24-223 \
+        --notes "Sesi 5 (render/events + circular-dependencies arsitektural, 83 warning gabungan) TETAP BLOCKED menunggu RFC dan approval eksplisit. Definisi 'selesai' siklus ini TIDAK termasuk 0 circular-dependencies warning — itu keputusan sadar, bukan kelalaian."
+    verifikasi:
+      - "python automation/doctor.py -> 5/5 PASS, skor 100/100"
+      - "entry PATCHLOG penutup tercatat, terpisah dari entry per-task S1-S4"
+
+verifikasi_sesi_selesai_dan_seluruh_siklus:
+  - "python automation/verify_docs.py --json -> PASS"
+  - "python automation/doctor.py -> 5/5 PASS, skor 100/100"
+  - "grep -r DEPRECATED_ALIAS web/static/ -> 0 hasil"
+  - "npx eslint . -> 0 error, 0 warning"
+  - "npx depcruise ... -> 0 error; 65 warning circular-dependencies + 4 no-render-imports-events + 14 no-events-imports-render, SEMUA dengan keputusan tertulis (S4.1 exception + S4.2/S5 laporan RFC pending) — BUKAN 0, dan itu benar sesuai definisi_selesai_global di 00_INDEX.yaml"
+  - "pytest tests/unit tests/integration -> semua pass"
+  - "npx playwright test tests/frontend/visual/ -> 3/3 pass"
+  - "Total entry PATCHLOG baru dari seluruh siklus: 3 (sesi 1) + 1 (sesi 2) + 1 (sesi 3) + 2 (sesi 4) + 1 (sesi 6 penutup) = 8 entry"
+
+checkpoint_cmd_final: >
+  zip -rq checkpoints/lunawave-SIKLUS-SELESAI.zip . -x ".git/*" -x "*__pycache__*"
+  -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+  -x "*.DS_Store" -x "checkpoints/lunawave-S*.zip"

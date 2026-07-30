@@ -1,0 +1,313 @@
+# 02_fase2_admin_logs_split.yaml
+# Fase 2 -- Temuan I. Risiko rendah-sedang, independen dari fase 3 (J).
+# Estimasi: ~45-60 menit (lebih besar dari fase 1 karena 5 file baru + wiring).
+
+fase: 2
+temuan: I
+parallel_ok: true
+risk: low-medium
+depends_on: []
+
+konteks_terverifikasi:
+  file_asal: "web/static/pages/admin-logs/admin-logs.js"
+  baris_total: 878
+  test_coverage: "TIDAK ADA test khusus admin-logs.js (dicek: tidak ada file tests/frontend/**/admin-logs*.test.js). Sesuai catatan PATCH-2026-07-26-240: 'pages/* (admin-logs.js, main.js, client.js, chat.js) masih 0% coverage'. Verifikasi fase ini karena itu BUKAN pytest/vitest hijau, melainkan: (a) eslint bersih, (b) depcruise tidak menambah circular-dependency baru, (c) manual smoke check module resolution (lihat `verifikasi` per task)."
+  referensi_file_html: "web/static/pages/admin-logs/admin-logs.html baris 1072 -- <script type=\"module\" src=\"/static/pages/admin-logs/admin-logs.js\"> TIDAK DIUBAH sama sekali di fase ini (proposal §4.I: 1 entrypoint via re-export/thin-orchestrator, sama seperti pola ws.js RFC #1 file 06)."
+
+koreksi_terhadap_klaim_proposal:
+  - klaim_proposal: >
+      "4 domain nyaris tidak saling panggil sama sekali (baru diverifikasi
+      saat eksekusi...)" -- proposal §4.I menyiratkan coupling minimal,
+      beda dari ws.js (RFC #1) yang punya 1 dispatch table terpusat.
+  - hasil_verifikasi_nyata: >
+      SALAH SEBAGIAN -- coupling-nya LEBIH BANYAK dari yang diklaim, dan
+      bentuknya PERSIS seperti ws.js RFC #1: `connectWs()` (rencana masuk
+      admin-ws-transport.js) adalah 1 dispatch table (`ws.onmessage`)
+      yang meneruskan pesan ke SEMUA 3 domain lain:
+        1. `data.type === "log_batch"` -> panggil `appendLogBatch()` (log-tail.js)
+        2. `data.type === "chat_message"` -> panggil `handleIncomingChat()` (admin-chat-panel.js)
+        3. `data.type === "chat_history"` -> panggil `renderChatHistory()` (admin-chat-panel.js)
+      Selain itu ditemukan 3 coupling lain yang proposal tidak sebutkan:
+        4. `renderActiveUsers()` (dashboard-stats.js, baris 438-501) bind
+           `click` listener yang memanggil `openChatPanel()`
+           (admin-chat-panel.js, baris 748) -- dashboard-stats butuh
+           import dari chat-panel.
+        5. `fetchStats()` (dashboard-stats.js) box.onclick untuk kategori
+           (baris 267-270) memanggil `fetchTail(true)` (admin-ws-transport.js)
+           -- dashboard-stats butuh import dari ws-transport.
+        6. `renderMatrix()` (dashboard-stats.js, baris 337) MENYUNTIK
+           `onclick="navigateToLiveTail('${cat}', '${lvl}')"` sebagai
+           STRING HTML MENTAH (bukan addEventListener) -- karena ini
+           inline-onclick di HTML yang dirender dinamis, `navigateToLiveTail`
+           (log-tail.js) HARUS tetap bisa dipanggil dari global scope
+           (`window.navigateToLiveTail = navigateToLiveTail`) atau matrix
+           cell ini tidak akan berfungsi lagi setelah modul ES dipisah
+           (ES module top-level function TIDAK otomatis masuk ke
+           `window`/global scope seperti script classic).
+        7. `getCategoryColor`/`CATEGORY_COLORS` (baris 55-74) TIDAK
+           disebut proposal sama sekali di daftar 5 fungsi log-tail.js,
+           padahal fisiknya ada persis di dekat escapeHtml/getLevelIcon.
+           Verifikasi pemakaian (`grep -n "getCategoryColor"`): SATU-
+           SATUNYA caller adalah `fetchStats()` baris 288 (catStatsList
+           rendering) -- itu domain dashboard-stats, BUKAN log-tail.
+           Kesalahan penempatan fisik proposal harus dikoreksi: kedua
+           simbol ini pindah ke dashboard-stats.js, bukan log-tail.js.
+        8. Variabel top-level `ws` (baris 49, `let ws = null`) dipakai
+           LANGSUNG (`ws.send(...)`, `ws.readyState`) oleh SEMUA domain:
+           `connectWs`/`fallbackToPolling` (ws-transport, pemilik alami),
+           `openChatPanel`/`dashChatForm` submit handler (chat-panel,
+           baris 769 & 791), dan `window.beforeunload` handler (baris
+           708, orchestrator-level, bukan domain manapun). Ini state
+           bersama yang tidak bisa "dipecah" -- harus tetap 1 pemilik.
+  - keputusan_desain_koreksi: >
+      Untuk menjaga tiap modul domain BENAR-BENAR tidak saling import
+      satu sama lain (prinsip inti proposal §4.I: modul thin/tidak
+      saling kenal), logika DISPATCH pesan WS (poin 1-3 di atas) dan
+      WIRING lintas-domain (poin 4-6) dipindah ke `admin-logs.js` (thin
+      orchestrator) itu sendiri, BUKAN ditinggal di dalam
+      `admin-ws-transport.js`. Konkretnya: `admin-ws-transport.js`
+      HANYA mengekspos `connectWs(onMessage)` yang menerima callback
+      dispatcher sebagai parameter (bukan hardcode logic pindah-pindah
+      domain di dalamnya) dan `sendOverWs(payload)` sebagai satu-satunya
+      cara domain lain mengirim pesan (menggantikan akses langsung ke
+      variabel modul `ws`). `admin-logs.js` yang menyusun dispatcher
+      dan memanggil `window.navigateToLiveTail = navigateToLiveTail`.
+      Ini pola yang SAMA seperti core insight RFC #1 soal ws.js/events
+      hub -- sengaja dihindari di sini supaya Temuan I tidak mengulang
+      masalah yang sama di skala lebih kecil.
+
+desain_final_4_modul:
+  - file: "web/static/pages/admin-logs/log-tail.js"
+    isi: "createLogLineElement, appendLogBatch, formatFields, getLevelIcon, escapeHtml, navigateToLiveTail"
+    catatan: "navigateToLiveTail TIDAK export biasa saja -- juga di-assign ke window.navigateToLiveTail oleh admin-logs.js (orchestrator) karena dipanggil dari inline onclick string di renderMatrix (dashboard-stats.js)."
+  - file: "web/static/pages/admin-logs/dashboard-stats.js"
+    isi: "fetchStats, renderMatrix, renderSystemDashboard, renderActiveUsers, parseUserAgent, getPageName, formatDuration, getCategoryColor, CATEGORY_COLORS (2 simbol TERAKHIR ini KOREKSI terhadap proposal, lihat di atas)"
+    import_dibutuhkan: "openChatPanel dari admin-chat-panel.js (dipanggil dari renderActiveUsers' click handler); fetchTail dari admin-ws-transport.js (dipanggil dari fetchStats' box.onclick kategori)"
+  - file: "web/static/pages/admin-logs/admin-ws-transport.js"
+    isi: "connectWs (direvisi terima parameter onMessage callback), fallbackToPolling, fetchTail, fetchHealth, sendOverWs (BARU -- wrapper ws.send yang menggantikan akses langsung modul lain ke variabel ws)"
+    catatan: "Modul ini yang memegang variabel `ws`/`isPolling`/`pollTimer` sebagai module-level state (bukan lagi variabel global admin-logs.js). connectWs TIDAK LAGI hardcode dispatch ke appendLogBatch/handleIncomingChat/renderChatHistory -- itu jadi tanggung jawab callback onMessage yang disusun admin-logs.js."
+  - file: "web/static/pages/admin-logs/admin-chat-panel.js"
+    isi: "updateBadge, openChatPanel, createMsgEl, renderChatHistory, handleIncomingChat, formatTime"
+    import_dibutuhkan: "sendOverWs dari admin-ws-transport.js (menggantikan akses langsung ws.send di openChatPanel dan dashChatForm submit handler)"
+
+tasks:
+  - id: I.1
+    title: "Buat log-tail.js -- pindahkan 6 fungsi domain log-tail"
+    files:
+      - path: "web/static/pages/admin-logs/log-tail.js"
+        action: create
+        deskripsi: >
+          Pindahkan BODY PERSIS (tanpa modifikasi logic) dari fungsi:
+          escapeHtml (baris 77-85), formatFields (87-97), getLevelIcon
+          (99-108), createLogLineElement (110-208), appendLogBatch
+          (210-244, PERLU akses `logContainer`, `autoScrollCheckbox`,
+          `seenLogs` -- 3 DOM ref/state ini juga pindah ke file ini
+          sebagai module-level const/let karena cuma dipakai domain
+          log-tail), navigateToLiveTail (baris 41-47, PERLU akses
+          `filterCategory`, `filterLevel` DOM ref -- ikut pindah).
+          Semua 6 fungsi di-export. Header file baru: docstring pendek
+          menjelaskan domain (append/render baris log individual +
+          navigasi filter dari matrix cell), BUKAN docstring lama yang
+          sudah basi ("Fetches initial log history and listens to live
+          tailing") -- itu penyebab awal god-file ini (lihat root cause
+          proposal §4.I).
+        verifikasi_isi: "grep -c 'function\\|=>' pada file baru harus mencakup persis 6 nama fungsi di atas, tidak lebih tidak kurang."
+    verifikasi:
+      - "node --check web/static/pages/admin-logs/log-tail.js  # syntax check ES module"
+      - "npx eslint web/static/pages/admin-logs/log-tail.js"
+
+  - id: I.2
+    title: "Buat dashboard-stats.js -- pindahkan 9 fungsi/const domain dashboard (termasuk 2 koreksi getCategoryColor/CATEGORY_COLORS)"
+    files:
+      - path: "web/static/pages/admin-logs/dashboard-stats.js"
+        action: create
+        deskripsi: >
+          Pindahkan: CATEGORY_COLORS + getCategoryColor (baris 55-75,
+          KOREKSI proposal -- domain sebenarnya dashboard bukan log-tail),
+          fetchStats (246-311, PERLU akses globalStatsGrid/levelStatsList/
+          catStatsList/filterCategory DOM ref), renderMatrix (313-346),
+          formatDuration (348-358), parseUserAgent (360-379), getPageName
+          (381-387), renderSystemDashboard (389-436), renderActiveUsers
+          (438-501). TAMBAHKAN di baris paling atas file:
+          `import { openChatPanel } from "./admin-chat-panel.js";` dan
+          `import { fetchTail } from "./admin-ws-transport.js";` --
+          dipakai oleh renderActiveUsers' click handler dan fetchStats'
+          box.onclick kategori (lihat koreksi_terhadap_klaim_proposal
+          poin 4 & 5 di atas). fetchStats TIDAK memanggil navigateToLiveTail
+          langsung (itu string HTML di renderMatrix, lihat task I.5).
+    verifikasi:
+      - "node --check web/static/pages/admin-logs/dashboard-stats.js"
+      - "npx eslint web/static/pages/admin-logs/dashboard-stats.js"
+      - "grep -n 'import' web/static/pages/admin-logs/dashboard-stats.js -> harus ada persis 2 baris import (openChatPanel, fetchTail), tidak boleh import dari log-tail.js (kalau ada, berarti coupling belum benar dipisah ke orchestrator)."
+
+  - id: I.3
+    title: "Buat admin-ws-transport.js -- pindahkan 4 fungsi + tambah sendOverWs, HAPUS hardcode dispatch dari connectWs"
+    files:
+      - path: "web/static/pages/admin-logs/admin-ws-transport.js"
+        action: create
+        deskripsi: >
+          Pindahkan fetchTail (517-553, PERLU akses filterLevel/
+          filterCategory/filterSearch DOM ref), fetchHealth (555-569),
+          fallbackToPolling (571-579), connectWs (581-655) -- TAPI
+          connectWs DIREVISI: ganti signature jadi
+          `export function connectWs(onMessage)`. Isi `ws.onmessage`
+          (baris 608-649) diganti jadi cuma:
+          ```
+          ws.onmessage = (evt) => {
+              try {
+                  const data = JSON.parse(evt.data);
+                  onMessage(data);
+              } catch (e) {
+                  console.error("WS parse error:", e);
+              }
+          };
+          ```
+          Logic dispatch per data.type (auth_status/error/log_batch/
+          chat_message/chat_history, baris 612-645) PINDAH ke
+          admin-logs.js (task I.5) sebagai fungsi `onMessage` yang
+          di-inject. `fallbackToPolling()` TETAP dipanggil dari dalam
+          modul ini sendiri (baris 620,623,653 -- itu murni transport
+          concern, bukan dispatch ke domain lain). TAMBAHKAN fungsi baru:
+          `export function sendOverWs(payload) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload)); }`
+          -- menggantikan akses langsung modul lain ke variabel `ws`
+          (lihat koreksi poin 8). `ws`, `isPolling`, `pollTimer` jadi
+          module-level `let` di file ini (BUKAN lagi dieksport -- akses
+          dari luar HANYA lewat connectWs/sendOverWs/fetchTail/fetchHealth).
+        verifikasi_dispatch_hilang: "grep -n 'appendLogBatch\\|handleIncomingChat\\|renderChatHistory' web/static/pages/admin-logs/admin-ws-transport.js -> HARUS KOSONG (0 match) -- kalau ada, berarti dispatch belum benar dipindah ke orchestrator."
+    verifikasi:
+      - "node --check web/static/pages/admin-logs/admin-ws-transport.js"
+      - "npx eslint web/static/pages/admin-logs/admin-ws-transport.js"
+
+  - id: I.4
+    title: "Buat admin-chat-panel.js -- pindahkan 6 fungsi domain chat, ganti akses ws langsung dengan sendOverWs"
+    files:
+      - path: "web/static/pages/admin-logs/admin-chat-panel.js"
+        action: create
+        deskripsi: >
+          Pindahkan updateBadge (731-746), openChatPanel (748-778),
+          formatTime (805-813), createMsgEl (815-842), renderChatHistory
+          (844-850), handleIncomingChat (852-862) beserta module-level
+          state: activeChatUid, unreadCounts, dashChatPanel/dashChatClose/
+          dashChatMessages/dashChatForm/dashChatInput/dashChatTargetIp DOM
+          ref (baris 722-729), DAN event listener binding dashChatClose
+          'click' (780-783) + dashChatForm 'submit' (785-803). TAMBAHKAN
+          import: `import { sendOverWs } from "./admin-ws-transport.js";`
+          -- ganti SEMUA `ws.send(JSON.stringify({...}))` langsung
+          (baris 769-774 di openChatPanel, baris 791-800 di submit
+          handler) jadi `sendOverWs({...})` (parameter object, bukan
+          string -- sendOverWs yang urus JSON.stringify, lihat task I.3).
+          JANGAN import `ws`/`ws.readyState` langsung di file ini sama
+          sekali -- itu justru mengulang coupling lama yang mau
+          dihilangkan.
+    verifikasi:
+      - "node --check web/static/pages/admin-logs/admin-chat-panel.js"
+      - "npx eslint web/static/pages/admin-logs/admin-chat-panel.js"
+      - "grep -n '\\bws\\.' web/static/pages/admin-logs/admin-chat-panel.js -> HARUS KOSONG (0 match), semua kirim WS wajib lewat sendOverWs()."
+
+  - id: I.5
+    title: "Tulis ulang admin-logs.js jadi thin orchestrator: import 4 modul, susun dispatcher onMessage, wire event listener sisa (tab switch, download, filter button, beforeunload)"
+    files:
+      - path: "web/static/pages/admin-logs/admin-logs.js"
+        action: edit
+        deskripsi: >
+          Ganti SELURUH isi file (878 baris) jadi orchestrator tipis.
+          Bagian yang TETAP di file ini (bukan pindah ke modul manapun,
+          karena murni page-level wiring, bukan 1 domain spesifik):
+          UI element const untuk tab switching (baris 12-28 sebagian --
+          hanya yang dipakai tab logic, elemen spesifik-domain ikut
+          pindah ke modulnya masing2), tabBtns click listener (30-38),
+          btnDownload click handler (663-702, ini domain "download log
+          as text" -- proposal tidak menyebut modul terpisah untuknya;
+          KEPUTUSAN: biarkan di orchestrator karena cuma 1 handler kecil
+          berdiri sendiri, tidak cukup besar untuk modul ke-5 -- catat
+          keputusan ini di PATCHLOG notes), btnFilter click (704-706),
+          window.beforeunload (708-717, pakai sendOverWs + ws.readyState
+          check -- TAPI karena readyState tidak diekspos, ganti jadi
+          panggil fungsi baru `disconnectWs()` yang perlu ditambahkan ke
+          admin-ws-transport.js task I.3 kalau belum -- CEK ULANG saat
+          eksekusi, task I.3 di atas belum eksplisit menyebut ini,
+          tambahkan sebagai perbaikan kecil saat menulis I.5), pemanggilan
+          init (fetchHealth/fetchStats/fetchTail/connectWs + 2
+          setInterval, baris 864-870), dan baris `export {}` penanda
+          modul TypeScript (878).
+
+          Import semua 4 modul:
+          ```js
+          import { appendLogBatch, navigateToLiveTail } from "./log-tail.js";
+          import { fetchStats, renderMatrix } from "./dashboard-stats.js";
+          import { connectWs, fallbackToPolling, fetchTail, fetchHealth } from "./admin-ws-transport.js";
+          import { handleIncomingChat, renderChatHistory } from "./admin-chat-panel.js";
+          ```
+          (dashboard-stats.js sendiri sudah import openChatPanel/fetchTail
+          secara internal -- orchestrator tidak perlu re-import itu untuk
+          diteruskan, ES module resolusinya independen per file.)
+
+          Susun dispatcher untuk connectWs:
+          ```js
+          function handleWsMessage(data) {
+              if (data.type === "auth_status") {
+                  if (data.data && data.data.success) {
+                      sendOverWs({ type: "cmd", action: "log_tail", data: { action: "subscribe" } });
+                  } else {
+                      fallbackToPolling();
+                  }
+              } else if (data.type === "error" && data.data && data.data.includes("Akses ditolak")) {
+                  fallbackToPolling();
+              } else if (data.type === "log_batch" && data.logs) {
+                  const filtered = data.logs.filter(/* ...logic filter sama seperti baris 631-636 asli... */);
+                  if (filtered.length > 0) appendLogBatch(filtered, false);
+              } else if (data.type === "chat_message") {
+                  handleIncomingChat(data.data);
+              } else if (data.type === "chat_history") {
+                  renderChatHistory(data.data);
+              }
+          }
+          connectWs(handleWsMessage);
+          window.navigateToLiveTail = navigateToLiveTail;
+          ```
+          CATATAN PENTING: filter client-side di dalam log_batch branch
+          (baris 627-636 file asli) butuh akses filterLevel/filterCategory/
+          filterSearch DOM ref DAN sendOverWs untuk kirim subscribe --
+          import sendOverWs juga dari admin-ws-transport.js di orchestrator
+          ini. `window.navigateToLiveTail = navigateToLiveTail;` WAJIB ada
+          persis seperti contoh di atas -- ini yang membuat inline
+          onclick di renderMatrix (dashboard-stats.js) tetap berfungsi.
+        catatan_risiko: >
+          Task ini yang PALING BERISIKO di fase 2 karena menyusun ulang
+          logic dispatch dari 1 file jadi orchestrator baru (bukan
+          copy-paste murni seperti I.1-I.4). WAJIB manual smoke-test: buka
+          admin-logs.html di browser (atau headless via playwright kalau
+          tersedia -- lihat playwright.config.js di root repo), cek log
+          tailing tetap muncul, cek klik cell matrix (Live Tail navigasi)
+          tetap jalan, cek chat panel buka/kirim pesan tetap jalan.
+    verifikasi:
+      - "node --check web/static/pages/admin-logs/admin-logs.js"
+      - "npx eslint web/static/pages/admin-logs/admin-logs.js web/static/pages/admin-logs/*.js"
+      - "npx depcruise web/static/pages/admin-logs -T json > /tmp/depcruise-after-I.json && cat /tmp/depcruise-after-I.json  # cek TIDAK ADA cycle baru antar 4 modul: log-tail.js dan dashboard-stats.js dan admin-chat-panel.js TIDAK BOLEH saling import satu sama lain, hanya admin-ws-transport.js yang boleh diimport dashboard-stats.js/admin-chat-panel.js, dan hanya admin-logs.js (orchestrator) yang import ke-4nya."
+      - "npx playwright test --grep admin-logs 2>&1 || echo 'CATATAN: kalau tidak ada test playwright existing untuk admin-logs, jalankan manual smoke test sesuai catatan_risiko di atas dan dokumentasikan hasilnya di PATCHLOG notes'"
+
+patchlog_group: "I.1-I.5 satu entry gabungan setelah I.5 selesai -- 4 modul baru tidak berguna/tidak valid kalau orchestrator (I.5) belum menyambungkannya; splitting ini cuma benar kalau seluruh 5 task selesai dalam 1 pass."
+
+patchlog_cmd: |
+  python automation/patchlog.py add \
+    --type Refactor --area Frontend --priority Medium \
+    --title "Split admin-logs.js jadi 4 modul domain (log-tail, dashboard-stats, ws-transport, chat-panel)" \
+    --reason "admin-logs.js 878 baris mencampur 4 domain tak-terkait (log tailing, dashboard stats, WS transport, chat admin) -- docstring header sudah basi dibanding isi file (proposal_god_file_splitting.md Temuan I)" \
+    --files "web/static/pages/admin-logs/admin-logs.js,web/static/pages/admin-logs/log-tail.js,web/static/pages/admin-logs/dashboard-stats.js,web/static/pages/admin-logs/admin-ws-transport.js,web/static/pages/admin-logs/admin-chat-panel.js" \
+    --symbols "connectWs(),sendOverWs(),handleWsMessage()" \
+    --root-cause "Fitur ditambah berkali-kali (dashboard stats, lalu chat admin) ke file yang sama karena sudah 'ada di situ', tanpa sinyal otomatis yang menandai titik file ini sudah bukan lagi 'log tailing' murni" \
+    --solution "Split by domain jadi 4 modul + 1 thin orchestrator. Koreksi 2 temuan tambahan di luar proposal asli: getCategoryColor/CATEGORY_COLORS pindah ke dashboard-stats.js (bukan log-tail.js), dan dispatch logic WS dipindah ke orchestrator (bukan hardcode di ws-transport) supaya modul domain benar-benar tidak saling import satu sama lain -- lihat koreksi_terhadap_klaim_proposal di 02_fase2_admin_logs_split.yaml" \
+    --tests "node --check semua 5 file -> OK; eslint semua 5 file -> 0 error; depcruise web/static/pages/admin-logs -> tidak ada cycle baru antar 4 modul domain; manual smoke test browser (log tail, matrix navigasi, chat panel) -> berfungsi (TIDAK ADA test otomatis existing, 0% coverage sebelum patch ini, dicatat sebagai kandidat PATCH lanjutan sama seperti catatan di PATCH-2026-07-26-240)" \
+    --breaking No --risk Medium --status Merged \
+    --related PATCH-2026-07-26-240
+checkpoint_cmd: >
+  zip -rq checkpoints/lunawave-I.zip . -x ".git/*" -x "*__pycache__*"
+  -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+  -x "*.DS_Store" -x "checkpoints/*"
+
+verifikasi_fase_selesai:
+  - "npx eslint web/static/pages/admin-logs/ -> 0 error"
+  - "wc -l web/static/pages/admin-logs/admin-logs.js -> jauh lebih kecil dari 878 (thin orchestrator, perkiraan <150 baris)"
+  - "npx depcruise web/static/pages/admin-logs -T json -> tidak ada cycle di antara log-tail.js/dashboard-stats.js/admin-chat-panel.js"
+  - "1 entry baru muncul di docs/PATCHLOG.md"
+  - "Manual/smoke verification hasil browser didokumentasikan di notes PATCHLOG (bukan diasumsikan lulus tanpa dicoba, karena 0% automated coverage untuk file ini)"

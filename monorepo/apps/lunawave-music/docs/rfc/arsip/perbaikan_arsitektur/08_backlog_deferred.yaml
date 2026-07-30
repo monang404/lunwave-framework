@@ -1,0 +1,138 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 08 — Backlog / item yang SENGAJA TIDAK dieksekusi dalam plan ini.
+# TIDAK ADA task_id dieksekusi di file ini. Ini murni catatan supaya
+# temuan yang keluar dari scope tidak hilang begitu saja.
+# =============================================================================
+
+meta:
+  purpose: >
+    Menyimpan semua item yang keluar dari scope file 01-07 (baik karena
+    proposal sendiri menunda -- Temuan H -- maupun karena keputusan
+    pembatasan scope d3/d6 di 00_index_and_decisions.yaml, maupun temuan
+    baru yang muncul saat audit kode langsung).
+  status: "DEFERRED — bukan bagian eksekusi plan ini"
+
+backlog_items:
+
+  - id: BL-01
+    title: "Temuan H — audit ukuran index.html (48K) & admin-logs.*(36K+36K)"
+    proposal_ref: "§4.H"
+    reason_deferred: >
+      Proposal eksplisit menyatakan ini butuh RFC terpisah dan
+      persetujuan eksplisit sebelum index.html disentuh lebih jauh
+      (preseden docs/rfc/arsip/frontend_refactor/), dan tidak boleh
+      berjalan bersamaan dengan refactor besar lain (governance:
+      "jangan 2 refactor besar sekaligus"). File 07 (command-bus DI)
+      sudah merupakan refactor berdampak luas untuk siklus eksekusi ini.
+    next_step_if_resumed: >
+      Buat RFC baru terpisah SETELAH file 01-07 selesai & PATCHLOG-nya
+      tercatat. Langkah pertama RFC itu: `view` manual per section
+      index.html untuk memisahkan persentase markup natural vs.
+      <template>/<script> blocks yang seharusnya diekstrak, BARU putuskan
+      apakah componentize dibutuhkan.
+
+  - id: BL-02
+    title: "19 command playback + 6 command queue lain yang belum divalidasi skema"
+    proposal_ref: "§3.C (scope asli sebelum dipersempit ke 4 command, lihat keputusan d3)"
+    reason_deferred: >
+      Task 02 hanya memigrasi volume_set, set_speed, lyrics_offset,
+      set_sleep_timer untuk membatasi blast radius dan memvalidasi pola
+      ws_schemas.py dulu.
+    remaining_commands_playback: >
+      play_track, toggle_pause, next, prev, stop, seek, volume_up,
+      volume_down, set_mode, set_output, set_sponsorblock,
+      radio_randomize, set_crossfade, set_speed(sudah/lihat catatan),
+      set_loop, set_loudness_normalization -- VERIFIKASI ULANG daftar ini
+      terhadap isi ws_playback.py saat resume, karena ini snapshot hasil
+      audit saat plan dibuat, bukan jaminan tetap sama.
+    remaining_commands_queue: >
+      queue_select, queue_remove, queue_add, queue_reorder,
+      queue_replace(dipanggil internal, verifikasi apakah perlu skema
+      publik terpisah), radio-related queue commands di ws_queue.py --
+      verifikasi ulang daftar lengkap saat resume.
+    next_step_if_resumed: >
+      Buat dataclass baru per command dengan pola identik
+      ws_schemas.py yang sudah ada (task 02), migrasi bertahap
+      command-per-command seperti disarankan proposal, mulai dari yang
+      paling sering menerima input numerik/enum dari user.
+
+  - id: BL-03
+    title: "~60 deferred import tersisa (di luar 2 titik websocket.py yang sudah dibereskan task 03)"
+    proposal_ref: "§3.B"
+    reason_deferred: >
+      Task 03 (P03-T1) membangun tooling automation/import_audit.py dan
+      MENYELESAIKAN 2 titik konkret (websocket.py -> ws_cache/ws_chat).
+      Sisa ~60 titik di 25 file lain BELUM diklasifikasi & dieksekusi
+      migrasinya -- ini pekerjaan yang secara sengaja bertahap
+      (proposal §3.B: "audit ke-75 titik ini tidak dilakukan sekaligus").
+    next_step_if_resumed: >
+      Jalankan `python automation/import_audit.py --json` (dibuat di
+      task 03) untuk mendapat klasifikasi lengkap semua titik tersisa.
+      Untuk tiap titik berlabel SAFE_TO_PROMOTE: promosikan ke top-level
+      satu per satu, jalankan test suite penuh setelah tiap perubahan.
+      Untuk titik berlabel PATCHABILITY (seperti main.py's create_app
+      import): JANGAN diubah -- itu pola yang sah untuk test-patchability,
+      bukan bug. Untuk titik berlabel CIRCULAR sungguhan: butuh analisis
+      kasus-per-kasus seperti yang dilakukan proposal untuk
+      server/handlers/__init__.py (task 03), kemungkinan perlu
+      memecah/menata ulang modul yang jadi sumber circularity.
+
+  - id: BL-04
+    title: "Inventory lengkap globalThis.* selain pendingToggleTarget/toggleSentAt"
+    proposal_ref: "§4.F (scope asli lebih luas, dipersempit oleh keputusan d6)"
+    reason_deferred: >
+      Tidak ada bukti bug konkret (seperti FIX-PAUSE-RACE-01) untuk item
+      di bawah ini saat plan dibuat -- migrasi preventif tanpa root cause
+      menambah risiko regresi tanpa manfaat jelas.
+    inventory:
+      keep_as_is:
+        - path: "web/static/shared/js/services/auth.js, web/static/shared/js/ws/transport.js (pasca task 06)"
+          symbol: "globalThis.ws"
+          reason: "Referensi WebSocket instance aktif, dipakai lintas modul sebagai util akses cepat -- bukan domain state untuk di-render, wajar sebagai global tunggal (mirip singleton koneksi)."
+        - path: "web/static/shared/js/utils/cover-art.js"
+          symbol: "globalThis.safeStorage, globalThis.loadLazyCovers, globalThis.getCoverArt, globalThis.getCoverArtFast, globalThis.extractDominantColor, globalThis.cleanTrackTitle"
+          reason: "Lapisan abstraksi localStorage & util lazy-load gambar yang memang didesain sebagai util global lintas halaman (dipakai dari banyak halaman berbeda tanpa import eksplisit di beberapa kasus HTML inline script)."
+        - path: "web/static/shared/js/ws.js (lama) -> auth-messages.js (pasca task 06)"
+          symbol: "globalThis.ChatModule"
+          reason: "Module singleton chat yang disengaja, bukan state -- pola serupa dengan safeStorage."
+        - path: "berbagai file"
+          symbol: "globalThis.location, globalThis.matchMedia, globalThis.visualViewport, globalThis.AudioContext/webkitAudioContext"
+          reason: "Ini BUKAN custom global aplikasi -- ini Browser Web API bawaan, wajar diakses via globalThis, TIDAK relevan untuk migrasi ke store sama sekali."
+      migrate_candidate_future:
+        - path: "web/static/shared/js/events/transport-events.js, render/player.js"
+          symbol: "globalThis.isDraggingVol"
+          reason: "State koordinasi UI (drag slider volume) tersebar di 2+ file -- kandidat migrasi ke store._isDraggingVol kalau di masa depan ditemukan bug serupa FIX-PAUSE-RACE-01."
+        - path: "web/static/shared/js/events/progress-events.js, render/player.js"
+          symbol: "globalThis.isDraggingPb"
+          reason: "Sama seperti isDraggingVol, untuk progress bar seek."
+        - path: "web/static/shared/js/events/queue-events.js"
+          symbol: "globalThis.isDraggingQueue"
+          reason: "Sama polanya, untuk drag-reorder queue."
+        - path: "web/static/shared/js/audio/playback-sync.js"
+          symbol: "globalThis.audioBlocked, globalThis.audioUnlocked"
+          reason: "State autoplay-policy browser, dibaca/ditulis dari beberapa titik di file yang sama & ws.js lama -- kandidat migrasi tapi confined ke 1 file utama saat ini, risiko lebih rendah dari pendingToggleTarget yang sudah terbukti bug lintas-file."
+        - path: "web/static/shared/js/render/search.js"
+          symbol: "globalThis.pendingTrack"
+          reason: "State transient antara pemilihan track & modal aksi -- confined ke 2 file (search.js, action-modal-events.js), kandidat migrasi kalau modal aksi diperluas lebih jauh."
+        - path: "web/static/shared/js/render/discover-personalize.js"
+          symbol: "globalThis.pendingArtistDetail"
+          reason: "Pola serupa pendingTrack, confined ke 1 file."
+        - path: "web/static/shared/js/render/lyrics.js"
+          symbol: "globalThis.isScrollingLyrics"
+          reason: "Flag transient untuk suppress auto-scroll, confined ke 1 file."
+    next_step_if_resumed: >
+      Kalau ada bug konkret baru yang terhubung ke salah satu
+      migrate_candidate_future di atas, buat RFC kecil terpisah khusus
+      item itu (pola sama seperti file 05 di plan ini), JANGAN migrasi
+      semua sekaligus tanpa bukti bug per item.
+
+  - id: BL-05
+    title: "Frontend framework/tooling lain di luar scope (non-negotiable)"
+    proposal_ref: "§6"
+    reason_deferred: "Bukan backlog untuk dikerjakan -- ini batasan permanen, dicatat di sini supaya tidak terlupa saat resume pekerjaan manapun di atas."
+    constraints_permanent:
+      - "Tidak menambah framework JS (React, Vue, dll.) untuk seluruh solusi frontend di file 04/05/06 maupun pekerjaan lanjutannya."
+      - "Tidak mengganti aiohttp atau SQLite."
+      - "Validasi command (file 02 & BL-02) pakai dataclass stdlib, bukan Pydantic/library baru."

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lunawave-framework"
+version = "0.1.0"
+description = "Reusable application-framework pieces extracted from LunaWave Music (Phase 1: automation/dev-tooling; Phase 2: generic core kernel -- logging, security, observability, task utils; Phase 4: generic SQLite storage layer -- connection lifecycle, session/admin-account repositories)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "structlog==26.1.0",
+    "prometheus_client>=0.26.0",
+    "aiosqlite>=0.20.0",
+]
+
+[project.scripts]
+lunawave-doctor = "lunawave_framework.automation.doctor:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

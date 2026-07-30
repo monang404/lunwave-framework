@@ -1,0 +1,331 @@
+# 08_tahap2_event_bus_ws.yaml
+# Tahap 2 dari proposal_event_bus_frontend.md — hub ws.js (17 edge modul,
+# ~26 titik panggil render). Katalog di §3.4 proposal sengaja berupa
+# kerangka ("detail final saat tahapnya tiba") -- file ini adalah hasil
+# finalisasi tsb, disusun dari pembacaan langsung ws.js per 2026-07-25
+# (475 baris) setelah Tahap 1 selesai (PATCH-2026-07-25-232).
+
+tahap: 2
+proposal_acuan: "docs/rfc/pemulihan_frontend/proposal_event_bus_frontend.md"
+depends_on: ["Tahap 1 (PATCH-2026-07-25-232), depcruise baseline 48"]
+parallel_ok: false
+risk: sedang-tinggi
+butuh_konfirmasi_user_sebelum_mulai: true
+
+keputusan_ambigu_dikonfirmasi_user:
+  - item: "handleArtistDetail (render/discover-personalize.js)"
+    keputusan: "Render -> bus.emit"
+  - item: "applyRoleUI + logout (services/auth.js)"
+    keputusan: "Render -> bus.emit"
+
+catatan_precision: >
+  ws.js punya 26 titik panggil render nyata ke 13 modul (bukan 1 per
+  modul -- beberapa dipanggil 2x/lebih, mis. setPositionAnchor,
+  renderPlayerBar, showLogToast, showConnectionToast). 4 dari 13 modul
+  (player.js, now-playing.js, queue.js, toast.js) sudah punya
+  initXBusSubscriptions() dari Tahap 1 -- untuk modul ini task EXTEND
+  fungsi yang sudah ada, JANGAN buat fungsi init kedua. 9 modul lain
+  (discover-personalize, discover-search, discover-tab, full-state,
+  lyrics, radio-tab, search, settings-events, auth) belum punya bus
+  subscription sama sekali -- task CREATE fungsi init baru.
+  Tetap tidak menyentuh events/index.js (itu Tahap 3).
+
+tetap_direct_import_legitimate:
+  - "ws.js -> playback-sync.js (_resumeAndPlay, getOrInitAudio, syncBrowserAudio)  -- arah kontrol, sudah ditetapkan proposal §3.3"
+  - "full-state.js, services/auth.js -> ws.js (renderHeader)                        -- arah kontrol balik, analog wsSend"
+  - "discover-personalize.js, discover-tab.js, search.js, settings-events.js -> ws.js (wsSend)  -- arah kontrol, legitimate per §2"
+
+task:
+  - id: T2.1
+    title: "Extend initPlayerBusSubscriptions() di render/player.js (tambah 1 event baru, reuse 3 event lama)"
+    action: edit
+    file: "web/static/shared/js/render/player.js"
+    tambah_event_baru:
+      - "player:progress -> renderProgress"
+    reuse_event_lama:
+      - "player:clock-reset (sudah ada) -- dipakai ulang dari ws.js baris 243"
+      - "player:position (sudah ada)   -- dipakai ulang dari ws.js baris 274 & 316"
+      - "player:btn-changed (sudah ada) -- dipakai ulang dari ws.js baris 339"
+      - "player:bar-changed (sudah ada) -- dipakai ulang dari ws.js baris 398 & 410"
+    penggantian:
+      target_fungsi: initPlayerBusSubscriptions
+      tambah_baris: |
+        on("player:progress", renderProgress);
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/render/player.js"
+
+  - id: T2.2
+    title: "Extend initNowPlayingBusSubscriptions() di render/now-playing.js (1 event baru)"
+    action: edit
+    file: "web/static/shared/js/render/now-playing.js"
+    tambah_event_baru:
+      - "now-playing:sync-state-attr -> syncPlayerStateAttr"
+    reuse_event_lama:
+      - "now-playing:changed (sudah ada) -- dipakai ulang dari ws.js baris 345"
+    penggantian:
+      target_fungsi: initNowPlayingBusSubscriptions
+      tambah_baris: |
+        on("now-playing:sync-state-attr", syncPlayerStateAttr);
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/render/now-playing.js"
+
+  - id: T2.3
+    title: "Extend initToastBusSubscriptions() di render/toast.js (2 event baru)"
+    action: edit
+    file: "web/static/shared/js/render/toast.js"
+    tambah_event_baru:
+      - "toast:connection-show -> ({ text, type }) => showConnectionToast(text, type)"
+      - "toast:connection-hide -> hideConnectionToast"
+    reuse_event_lama:
+      - "toast:log (sudah ada) -- dipakai ulang dari ws.js baris 183, 370, 389, 392, 403, 407"
+    penggantian:
+      target_fungsi: initToastBusSubscriptions
+      tambah_baris: |
+        on("toast:connection-show", ({ text, type }) => showConnectionToast(text, type));
+        on("toast:connection-hide", hideConnectionToast);
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/render/toast.js"
+
+  - id: T2.4
+    title: "queue.js -- tidak perlu diedit"
+    action: none
+    detail: "renderQueue sudah punya queue:changed dari Tahap 1, dipakai ulang dari ws.js baris 346 tanpa perubahan pada queue.js."
+
+  - id: T2.5
+    title: "Buat init<Module>BusSubscriptions() baru di 9 modul yang belum punya"
+    action: create_function
+    detail: >
+      Satu fungsi baru per file, export, isinya cuma bus.on(...) memanggil
+      fungsi yang sudah ada di file itu -- JANGAN ubah isi fungsi render
+      yang sudah ada, sama seperti pola T1.2.
+    per_modul:
+      - file: "web/static/shared/js/render/radio-tab.js"
+        fungsi: initRadioTabBusSubscriptions
+        isi: |
+          export function initRadioTabBusSubscriptions() {
+              on("radio:changed", renderRadio);
+          }
+      - file: "web/static/shared/js/render/search.js"
+        fungsi: initSearchBusSubscriptions
+        isi: |
+          export function initSearchBusSubscriptions() {
+              on("search:results", renderSearchResults);
+              on("search:playing-state", updateSearchPlayingState);
+          }
+      - file: "web/static/shared/js/render/discover-tab.js"
+        fungsi: initDiscoverTabBusSubscriptions
+        isi: |
+          export function initDiscoverTabBusSubscriptions() {
+              on("discover:tab-changed", renderDiscoverTab);
+              on("discover:recent-changed", renderRecentRow);
+              on("discover:playing-state", updateDiscoverPlayingState);
+          }
+      - file: "web/static/shared/js/render/discover-personalize.js"
+        fungsi: initDiscoverPersonalizeBusSubscriptions
+        catatan: "Nama beda dari initDiscoverFilterEvents yang sudah ada (bukan bus, DOM event) -- jangan digabung."
+        isi: |
+          export function initDiscoverPersonalizeBusSubscriptions() {
+              on("discover:personalization-changed", renderDiscoverPersonalization);
+              on("discover:artist-detail", (data) => handleArtistDetail(data));
+          }
+      - file: "web/static/shared/js/render/discover-search.js"
+        fungsi: initDiscoverSearchBusSubscriptions
+        isi: |
+          export function initDiscoverSearchBusSubscriptions() {
+              on("discover:search-results", (results) => renderDiscoverSearchResults(results));
+              on("discover:search-error", handleDiscoverSearchError);
+          }
+      - file: "web/static/shared/js/render/full-state.js"
+        fungsi: initFullStateBusSubscriptions
+        isi: |
+          export function initFullStateBusSubscriptions() {
+              on("state:full", (data) => applyFullState(data));
+              on("state:full-render", renderFullState);
+          }
+      - file: "web/static/shared/js/render/lyrics.js"
+        fungsi: initLyricsBusSubscriptions
+        isi: |
+          export function initLyricsBusSubscriptions() {
+              on("lyrics:changed", renderLyrics);
+          }
+      - file: "web/static/shared/js/events/settings-events.js"
+        fungsi: initSettingsBusSubscriptions
+        catatan: "Nama beda dari initSettingsEvents yang sudah ada (DOM event listener, bukan bus) -- jangan digabung."
+        isi: |
+          export function initSettingsBusSubscriptions() {
+              on("settings:sheet-changed", renderSettingsSheet);
+          }
+      - file: "web/static/shared/js/services/auth.js"
+        fungsi: initAuthBusSubscriptions
+        isi: |
+          export function initAuthBusSubscriptions() {
+              on("auth:role-changed", applyRoleUI);
+              on("auth:logout", logout);
+          }
+    verifikasi:
+      - "node --input-type=module --check untuk tiap 9 file di atas"
+
+  - id: T2.6
+    title: "Daftarkan 9 init function baru di main.js (bootstrap)"
+    action: edit
+    file: "web/static/pages/app/main.js"
+    detail: "Tambah import + pemanggilan init<Module>BusSubscriptions() persis di bawah 5 baris pemanggilan Tahap 1 (baris 41-45 versi saat ini)."
+    verifikasi:
+      - "node --input-type=module --check < web/static/pages/app/main.js"
+
+  - id: T2.7
+    title: "ws.js -- ganti 26 titik panggil render jadi bus.emit, hapus 13 import render module"
+    action: edit
+    file: "web/static/shared/js/ws.js"
+    catatan_stop: >
+      Nomor baris di bawah hasil pembacaan langsung 2026-07-25. Kalau
+      sudah berubah sejak breakdown ini ditulis: STOP, laporkan, jangan
+      improvisasi cocokkan sendiri -- sama seperti aturan T1.
+    penggantian_per_baris:
+      - baris: 155
+        lama: "applyRoleUI();"
+        baru: 'bus.emit("auth:role-changed");'
+      - baris: 161
+        lama: "renderFullState();"
+        baru: 'bus.emit("state:full-render");'
+      - baris: 165
+        lama: "logout();"
+        baru: 'bus.emit("auth:logout");'
+      - baris: 194
+        lama: "applyFullState(msg.data);"
+        baru: 'bus.emit("state:full", msg.data);'
+      - baris: 243
+        lama: "resetAnchorClock();"
+        baru: 'bus.emit("player:clock-reset");'
+      - baris: 274
+        lama: "setPositionAnchor(msg.data.position);"
+        baru: 'bus.emit("player:position", msg.data.position);'
+      - baris: 316
+        lama: "setPositionAnchor(msg.data.position);"
+        baru: 'bus.emit("player:position", msg.data.position);'
+      - baris: 337
+        lama: "renderProgress();"
+        baru: 'bus.emit("player:progress");'
+      - baris: 339
+        lama: "renderPlayBtn();"
+        baru: 'bus.emit("player:btn-changed");'
+      - baris: 343
+        lama: "syncPlayerStateAttr();"
+        baru: 'bus.emit("now-playing:sync-state-attr");'
+      - baris: 345
+        lama: "renderNowPlaying();"
+        baru: 'bus.emit("now-playing:changed");'
+      - baris: 346
+        lama: "renderQueue();"
+        baru: 'bus.emit("queue:changed");'
+      - baris: 347
+        lama: "renderRadio();"
+        baru: 'bus.emit("radio:changed");'
+      - baris: 348
+        lama: "updateSearchPlayingState();"
+        baru: 'bus.emit("search:playing-state");'
+      - baris: 349
+        lama: "updateDiscoverPlayingState();"
+        baru: 'bus.emit("discover:playing-state");'
+      - baris: 361
+        lama: "renderLyrics();"
+        baru: 'bus.emit("lyrics:changed");'
+      - baris: 364
+        lama: "renderSearchResults(msg.data);"
+        baru: 'bus.emit("search:results", msg.data);'
+      - baris: 367
+        lama: "renderDiscoverSearchResults(msg.data);"
+        baru: 'bus.emit("discover:search-results", msg.data);'
+      - baris: 381
+        lama: "renderDiscoverTab();"
+        baru: 'bus.emit("discover:tab-changed");'
+      - baris: 382
+        lama: "renderRecentRow();"
+        baru: 'bus.emit("discover:recent-changed");'
+      - baris: 383
+        lama: "renderDiscoverPersonalization();"
+        baru: 'bus.emit("discover:personalization-changed");'
+      - baris: 386
+        lama: "handleArtistDetail(msg.data);"
+        baru: 'bus.emit("discover:artist-detail", msg.data);'
+      - baris: 393
+        lama: "handleDiscoverSearchError();"
+        baru: 'bus.emit("discover:search-error");'
+      - baris: 398
+        lama: "renderPlayerBar();"
+        baru: 'bus.emit("player:bar-changed");'
+      - baris: 399
+        lama: "renderSettingsSheet();"
+        baru: 'bus.emit("settings:sheet-changed");'
+      - baris: 410
+        lama: "renderPlayerBar();"
+        baru: 'bus.emit("player:bar-changed");'
+      - baris: 183
+        lama: 'showLogToast("Akun admin berhasil dibuat! Silakan login.");'
+        baru: 'bus.emit("toast:log", { message: "Akun admin berhasil dibuat! Silakan login." });'
+      - baris: 370
+        lama: 'showLogToast("Menerima data lagu! " + ...);'
+        baru: 'bus.emit("toast:log", { message: "Menerima data lagu! " + ... });'
+      - baris: 389
+        lama: "showLogToast(msg.data);"
+        baru: 'bus.emit("toast:log", { message: msg.data });'
+      - baris: 392
+        lama: '"Error: " + msg.data'
+        baru: "sama, hanya ganti showLogToast -> bus.emit toast:log"
+      - baris: "403, 407"
+        lama: "showLogToast(...) dibungkus typeof-guard"
+        baru: "ganti pemanggilan jadi bus.emit, HAPUS guard typeof (bus.emit aman kalau tidak ada listener, guard jadi tidak relevan)"
+      - baris: "30, 94"
+        lama: "showConnectionToast(...)"
+        baru: 'bus.emit("toast:connection-show", { text: ..., type: ... })'
+      - baris: 44
+        lama: "hideConnectionToast();"
+        baru: 'bus.emit("toast:connection-hide");'
+    hapus_import:
+      - "renderSettingsSheet dari events/settings-events.js"
+      - "handleArtistDetail, renderDiscoverPersonalization dari render/discover-personalize.js"
+      - "handleDiscoverSearchError, renderDiscoverSearchResults dari render/discover-search.js"
+      - "renderDiscoverTab, renderRecentRow, updateDiscoverPlayingState dari render/discover-tab.js"
+      - "applyFullState, renderFullState dari render/full-state.js"
+      - "renderLyrics dari render/lyrics.js"
+      - "renderNowPlaying, syncPlayerStateAttr dari render/now-playing.js"
+      - "renderPlayBtn, renderPlayerBar, renderProgress, resetAnchorClock, setPositionAnchor dari render/player.js"
+      - "renderQueue dari render/queue.js"
+      - "renderRadio dari render/radio-tab.js"
+      - "renderSearchResults, updateSearchPlayingState dari render/search.js"
+      - "applyRoleUI, logout dari services/auth.js"
+      - "hideConnectionToast, showConnectionToast, showLogToast dari render/toast.js"
+    tetap_import:
+      - "_resumeAndPlay, getOrInitAudio, syncBrowserAudio dari audio/playback-sync.js"
+      - "dom dari dom.js"
+      - "isPendingToggleActive, store dari store.js"
+    tambah_import:
+      - 'import { emit as bus } from "./bus.js";  // atau: import * as bus; sesuaikan gaya T1'
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/ws.js"
+      - "npx eslint web/static/shared/js/ws.js web/static/shared/js/render/*.js web/static/shared/js/events/settings-events.js web/static/shared/js/services/auth.js"
+      - "npx depcruise --config .dependency-cruiser.js web/static/shared/js > /tmp/depcruise_t2.txt -- catat angka circular-dependency, bandingkan ke baseline 48"
+
+  - id: T2.8
+    title: "Manual audio + realtime test di browser (WAJIB, bukan cuma automated check)"
+    action: manual_test
+    detail: >
+      Tidak cukup cuma audio seperti T1.4 -- Tahap 2 menyentuh SEMUA
+      jalur render reaktif WS (discover, search, lyrics, radio, toast,
+      auth, settings), jadi checklist manual harus mencakup semuanya:
+    checklist:
+      - "Play/pause/next/prev via /admin browser-mode -- posisi & tombol update"
+      - "Buka tab Discover -- data termuat, personalization/genre chips tampil"
+      - "Search lagu -- hasil muncul, klik lagu dari hasil search"
+      - "Buka Radio tab -- render normal"
+      - "Buka lyrics sheet saat lagu ada lirik -- sinkron scroll"
+      - "Login/logout admin -- applyRoleUI & UI toggle benar"
+      - "Download lagu -- progress toast & player bar update"
+      - "Cabut WiFi sebentar -- toast 'Koneksi terputus' muncul, reconnect toast hilang saat online lagi"
+    laporan: "Laporkan hasil tiap item eksplisit ke user, jangan asumsikan lolos."
+
+  - id: T2.9
+    title: "Patchlog + checkpoint"
+    action: patchlog_cmd
+    detail: "Cek dulu `python automation/patchlog.py latest --n 1 --json` untuk nomor patch berikutnya (harus > 232) sebelum menulis entry."
+    checkpoint_cmd: "zip checkpoint ke checkpoints/lunawave-T2-eventbus.zip"

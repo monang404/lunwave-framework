@@ -1,0 +1,125 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 01 — queue_select menonaktifkan Radio Mode
+# (temuan audit-lunawave-temuan.md #1)
+# Depends on: TIDAK ADA (independen)
+# Risiko: SEDANG (menyentuh alur playback/radio-mode) | Effort: KECIL-SEDANG
+# Bagian dari seri: docs/rfc/temuan_audit_2026_07_27/ — BACA 00_index_and_decisions.yaml
+# LEBIH DULU (berisi decisions/keputusan desain & deviation_protocol yang
+# berlaku untuk SEMUA file di seri ini, termasuk file ini).
+# =============================================================================
+
+phase:
+  id: T01
+  title: "queue_select menonaktifkan Radio Mode"
+  temuan_ref: 1
+  closes_temuan: [1]
+  depends_on: []
+
+tasks:
+  - task_id: P1-T1
+    title: "queue_select menonaktifkan Radio Mode, konsisten dgn _on_cmd_play_track"
+    temuan_ref: 1
+    severity_audit: "Tinggi"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - engine/playback/queue_controller.py
+      modify_tests:
+        - tests/unit/engine/playback/test_queue_controller.py
+    steps:
+      - >
+        `view` engine/playback/controller.py baris ~216-221
+        (_on_cmd_play_track) untuk konfirmasi pola persis yang akan
+        ditiru -- VERIFIKASI ULANG import yang dipakai di sana
+        (PlaybackMode, QueueUpdatedEvent) dan cara `self.bus.publish(...)`
+        dipanggil.
+      - >
+        `view` engine/playback/queue_controller.py method
+        `on_queue_select` (baris ~44-47 saat audit). Cek juga apakah
+        `c._queue_ops.queue_select(index)` sudah membungkus operasinya
+        sendiri dengan lock (`view` QueueOps.queue_select di
+        engine/playback/queue_ops.py) -- ini menentukan apakah blok baru
+        di bawah perlu `async with c._lock:` sendiri atau tidak (kalau
+        queue_select() DAN play_track() masing-masing sudah locking
+        internal yang aman dipanggil berurutan tanpa lock luar, JANGAN
+        tambah lock ganda yang berisiko deadlock -- ikuti pola
+        queue_controller.py yang sudah ada, yang TIDAK memakai lock
+        eksplisit sama sekali).
+      - >
+        Ubah `on_queue_select` menjadi:
+        ```python
+        async def on_queue_select(self, index: int):
+            c = self.controller
+            track = await c._queue_ops.queue_select(index)
+            if track:
+                if c.state.playback_mode == PlaybackMode.RADIO:
+                    await c.radio_mode.on_deactivated()
+                    c.state.playback_mode = PlaybackMode.QUEUE
+                    await c.bus.publish(QueueUpdatedEvent())
+                await c.play_track(track)
+        ```
+        Tambah import `QueueUpdatedEvent` di bagian atas file kalau
+        belum ada (cek dari mana _on_cmd_play_track mengimpornya --
+        kemungkinan `core.events` atau modul events serupa, VERIFIKASI
+        ULANG path importnya persis, jangan tebak).
+      - >
+        JANGAN ubah urutan: deactivate radio mode HARUS terjadi SEBELUM
+        `play_track(track)` dipanggil, sama seperti di
+        _on_cmd_play_track -- supaya radio_mode.on_deactivated() bisa
+        membersihkan state radio (mis. batalkan prefetch task) sebelum
+        track baru mulai diputar.
+      - >
+        Test baru di test_queue_controller.py, class `TestQueueSelect`
+        yang sudah ada: `test_select_from_radio_mode_deactivates_radio`
+        -- set `state.playback_mode = PlaybackMode.RADIO` lebih dulu,
+        isi `state.queue`, panggil `controller._on_queue_select(index)`,
+        assert (a) `state.playback_mode == PlaybackMode.QUEUE` setelah
+        selesai, (b) `radio_mode.on_deactivated` (mock/fake, cek
+        fixture `controller` di conftest apakah radio_mode sudah
+        fake/mock -- kalau belum, tambah spy sederhana) TERPANGGIL
+        tepat sekali, (c) track yang dipilih tetap benar diputar
+        seperti test existing.
+      - >
+        Test regresi: `test_select_plays_chosen_track_and_pops_preceding`
+        (sudah ada) tetap hijau tanpa perubahan -- pastikan default
+        `state.playback_mode` di fixture controller adalah QUEUE
+        (kalau memang default-nya begitu, test lama tidak perlu
+        disentuh sama sekali).
+    acceptance_criteria:
+      - "Memilih track dari daftar manual (queue_select) saat Radio Mode aktif langsung mematikan Radio Mode -- radio tidak lagi 'nyalip' balik ke antrean manual setelah track selesai."
+      - "Perilaku queue_select saat playback_mode sudah QUEUE tidak berubah sama sekali (tidak ada publish QueueUpdatedEvent ganda/tak perlu)."
+      - "Tidak ada regresi di test_queue_controller.py maupun test_controller.py existing."
+    tests:
+      run:
+        - "pytest tests/unit/engine/playback/test_queue_controller.py -q"
+        - "pytest tests/unit/engine/playback/test_controller.py -q"
+    patchlog:
+      type: bug_fix
+      area: "engine/playback"
+      title: "queue_select menonaktifkan Radio Mode, konsisten dengan _on_cmd_play_track"
+      reason: >
+        Memilih track manual dari antrean saat Radio Mode aktif tidak
+        mematikan Radio Mode (berbeda dari perilaku _on_cmd_play_track
+        untuk command CMD_PLAY_TRACK) -- akibatnya antrean manual macet
+        karena radio_mode.next() tetap dipanggil saat track berikutnya
+        selesai, radio "nyalip" balik walau user sudah pilih lagu lain.
+      root_cause: >
+        Saat QueueController diekstrak dari controller.py (roadmap
+        T2.3.1), langkah deactivate-radio-mode yang ada di
+        _on_cmd_play_track tidak ikut disalin ke on_queue_select --
+        logic drift akibat refactor, bukan desain yang disengaja.
+      solution: >
+        on_queue_select() sekarang menjalankan urutan yang sama dengan
+        _on_cmd_play_track: deteksi playback_mode == RADIO, panggil
+        radio_mode.on_deactivated(), set playback_mode = QUEUE, publish
+        QueueUpdatedEvent(), SEBELUM play_track().
+      files: "engine/playback/queue_controller.py, tests/unit/engine/playback/test_queue_controller.py"
+      notes: "Tidak menyentuh engine/playback/controller.py (locked)."
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/patchlog.py verify"
+  - "ruff check ."

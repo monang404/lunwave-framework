@@ -1,0 +1,210 @@
+# 07_tahap1_event_bus_playback_sync.yaml
+# Tahap 1 dari proposal_event_bus_frontend.md — hub audio/playback-sync.js
+# (11 edge). WAJIB proposal_event_bus_frontend.md sudah di-approve user
+# sebelum sesi ini dimulai (lihat §8 di proposal, poin 1 & 2).
+
+tahap: 1
+proposal_acuan: "docs/rfc/pemulihan_frontend/proposal_event_bus_frontend.md"
+parallel_ok: false
+risk: medium
+depends_on: []
+butuh_konfirmasi_user_sebelum_mulai: true
+
+catatan_precision: >
+  playback-sync.js punya 18 titik panggil render nyata (bukan 9 seperti
+  ringkasan §3.3 di proposal -- itu dikelompokkan per JENIS event, bukan
+  per baris). Daftar 18 titik ini hasil grep langsung ke kode per
+  2026-07-25, dipakai sebagai acuan presisi task ini. Kalau baris sudah
+  berubah sejak breakdown ini ditulis, STOP dan laporkan -- jangan
+  improvisasi cocokkan sendiri.
+
+task:
+  - id: T1.1
+    title: "Buat web/static/shared/js/bus.js"
+    action: create
+    isi: |
+      // bus.js -- pub/sub minimal untuk memutus circular dependency
+      // antara modul "bawah" (audio, ws) dan modul render.
+      // Lihat docs/rfc/pemulihan_frontend/proposal_event_bus_frontend.md §3.1
+      const listeners = new Map();
+
+      export function on(event, handler) {
+          if (!listeners.has(event)) listeners.set(event, new Set());
+          listeners.get(event).add(handler);
+      }
+
+      export function off(event, handler) {
+          listeners.get(event)?.delete(handler);
+      }
+
+      export function emit(event, payload) {
+          listeners.get(event)?.forEach((handler) => {
+              try {
+                  handler(payload);
+              } catch (e) {
+                  console.error(`[bus] handler untuk "${event}" gagal:`, e);
+              }
+          });
+      }
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/bus.js"
+
+  - id: T1.2
+    title: "Tambah fungsi subscribe di 5 modul render + panggil dari main.js"
+    action: edit
+    detail: >
+      Masing-masing file di bawah TIDAK punya fungsi init sama sekali saat
+      ini (murni export fungsi render polos) -- tambahkan SATU fungsi baru
+      per file, ekspor, isinya cuma bus.on(...) memanggil fungsi render
+      yang sudah ada di file itu. JANGAN ubah isi fungsi render yang sudah
+      ada.
+    files:
+      - path: "web/static/shared/js/render/player.js"
+        tambah_import: 'import { on } from "../bus.js";'
+        tambah_fungsi: |
+          export function initPlayerBusSubscriptions() {
+              on("player:btn-changed", renderPlayBtn);
+              on("player:bar-changed", renderPlayerBar);
+              on("player:clock-reset", resetAnchorClock);
+              on("player:clock-start", startProgressClock);
+              on("player:clock-stop", stopProgressClock);
+              on("player:position", (pos) => setPositionAnchor(pos));
+          }
+      - path: "web/static/shared/js/render/now-playing.js"
+        tambah_import: 'import { on } from "../bus.js";'
+        tambah_fungsi: |
+          export function initNowPlayingBusSubscriptions() {
+              on("now-playing:changed", renderNowPlaying);
+          }
+      - path: "web/static/shared/js/render/queue.js"
+        tambah_import: 'import { on } from "../bus.js";'
+        tambah_fungsi: |
+          export function initQueueBusSubscriptions() {
+              on("queue:changed", renderQueue);
+          }
+      - path: "web/static/shared/js/render/radio-hero-moon.js"
+        tambah_import: 'import { on } from "../bus.js";'
+        tambah_fungsi: |
+          export function initRadioHeroBusSubscriptions() {
+              on("radio-hero:anim", ({ on: animOn }) => setRadioHeroAnimState(animOn));
+          }
+        catatan: "nama parameter 'on' bentrok dengan import 'on' dari bus.js -- pakai destructure rename seperti contoh di atas, JANGAN shadow."
+      - path: "web/static/shared/js/render/toast.js"
+        tambah_import: 'import { on } from "../bus.js";'
+        tambah_fungsi: |
+          export function initToastBusSubscriptions() {
+              on("toast:log", ({ message }) => showLogToast(message));
+          }
+    wiring_bootstrap:
+      path: "web/static/pages/app/main.js"
+      detail: >
+        Tambahkan pemanggilan kelima fungsi init di atas, di titik yang
+        sama tempat initEvents()/initDOM() dipanggil saat ini (cari
+        urutan bootstrap yang ada, taruh SEBELUM initEvents() supaya
+        subscriber siap sebelum event pertama mungkin di-emit).
+    verifikasi:
+      - "node --input-type=module --check untuk tiap file yang diedit"
+      - "grep -n 'initPlayerBusSubscriptions\\|initNowPlayingBusSubscriptions\\|initQueueBusSubscriptions\\|initRadioHeroBusSubscriptions\\|initToastBusSubscriptions' web/static/pages/app/main.js -> 5 baris ketemu"
+
+  - id: T1.3
+    title: "Ganti 18 titik panggil render langsung di playback-sync.js jadi bus.emit"
+    action: edit
+    file: "web/static/shared/js/audio/playback-sync.js"
+    hapus_import: |
+      import { renderNowPlaying } from "../render/now-playing.js";
+      import { renderPlayBtn, renderPlayerBar, resetAnchorClock, setPositionAnchor, startProgressClock, stopProgressClock } from "../render/player.js";
+      import { renderQueue } from "../render/queue.js";
+      import { setRadioHeroAnimState } from "../render/radio-hero-moon.js";
+      import { showLogToast } from "../render/toast.js";
+    tambah_import: 'import { emit } from "../bus.js";'
+    catatan_wsSend: >
+      import { syncLocalLyrics, wsSend } from "../ws.js" TETAP ADA --
+      wsSend legitimate (command direction, lihat proposal §2), dan
+      syncLocalLyrics ikut TETAP diimpor langsung untuk tahap ini demi
+      membatasi blast radius (hanya ganti arah audio->render, bukan
+      audio->ws sekaligus di tahap yang sama) -- evaluasi syncLocalLyrics
+      dipindah bus atau tidak dilakukan di Tahap 2 (bersamaan ws.js),
+      BUKAN di sini.
+    penggantian_per_baris:
+      # baris hasil grep 2026-07-25, lihat catatan_precision di atas
+      - baris: 73
+        lama: 'showLogToast("⚠️ Audio stream info: " + errMsg);'
+        baru: 'emit("toast:log", { message: "⚠️ Audio stream info: " + errMsg });'
+      - baris: 80
+        lama: "setPositionAnchor(audio.currentTime);"
+        baru: 'emit("player:position", audio.currentTime);'
+      - baris: [98, 115, 455]
+        lama: 'if (typeof renderPlayBtn === "function") renderPlayBtn();'
+        baru: 'emit("player:btn-changed");'
+      - baris: [99, 116, 456, 482, 491]
+        lama: 'if (typeof renderNowPlaying === "function") renderNowPlaying();'
+        baru: 'emit("now-playing:changed");'
+      - baris: [114, 454]
+        lama: 'if (typeof resetAnchorClock === "function") resetAnchorClock();'
+        baru: 'emit("player:clock-reset");'
+      - baris: 190
+        lama: 'if (typeof startProgressClock === "function" && store.status === "PLAYING") startProgressClock();'
+        baru: 'if (store.status === "PLAYING") emit("player:clock-start");'
+      - baris: 193
+        lama: 'setRadioHeroAnimState(dom.radioToggleBtn.dataset.on === "true");'
+        baru: 'emit("radio-hero:anim", { on: dom.radioToggleBtn.dataset.on === "true" });'
+      - baris: 196
+        lama: 'if (typeof stopProgressClock === "function") stopProgressClock();'
+        baru: 'emit("player:clock-stop");'
+      - baris: 457
+        lama: 'if (typeof renderQueue === "function") renderQueue();'
+        baru: 'emit("queue:changed");'
+      - baris: [483, 492]
+        lama: 'if (typeof renderPlayerBar === "function") renderPlayerBar();'
+        baru: 'emit("player:bar-changed");'
+    peringatan: >
+      Pola "if (typeof X === 'function') X()" di kode lama itu guard
+      lama era non-module (jaga-jaga fungsi belum ke-load). Di ES module
+      guard itu tidak relevan lagi (import gagal = error saat load, bukan
+      undefined diam-diam) -- boleh dihapus bersamaan saat mengganti ke
+      emit(), TAPI JANGAN hapus guard di baris yang TIDAK ada di daftar
+      penggantian_per_baris di atas (bukan scope tahap ini).
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/audio/playback-sync.js"
+      - "grep -n 'renderPlayBtn(\\|renderPlayerBar(\\|renderNowPlaying(\\|renderQueue(\\|setRadioHeroAnimState(\\|showLogToast(\\|resetAnchorClock(\\|startProgressClock(\\|stopProgressClock(\\|setPositionAnchor(' web/static/shared/js/audio/playback-sync.js -> HARUS 0 hasil"
+
+  - id: T1.4
+    title: "Verifikasi menyeluruh + regenerate depcruise"
+    verifikasi:
+      - "npx depcruise --config .dependency-cruiser.js web/static/shared/js web/static/pages -T json > /tmp/depcruise_after_t1.json"
+      - "bandingkan jumlah circular-dependencies sebelum (65 warning, baseline 04_sesi4) vs sesudah -- HARUS turun, laporkan angka persisnya, JANGAN asumsikan 0"
+      - "npx vitest run (4 test file yang ada) -> semua tetap hijau"
+      - "npx eslint web/static/shared/js/bus.js web/static/shared/js/audio/playback-sync.js web/static/shared/js/render/player.js web/static/shared/js/render/now-playing.js web/static/shared/js/render/queue.js web/static/shared/js/render/radio-hero-moon.js web/static/shared/js/render/toast.js web/static/pages/app/main.js -> 0 error"
+      - "MANUAL: jalankan server, buka /admin, audio_output=browser, klik Play -- suara harus tetap terdengar normal (regresi jalur audio real-time, sama seperti yang dites manual di PATCH-2026-07-25-231). JANGAN anggap task selesai kalau ini belum ditest manual oleh user."
+    stop_jika: "vitest merah, eslint error, atau audio manual test gagal -- JANGAN lanjut ke T1.5"
+
+  - id: T1.5
+    title: "PATCHLOG + checkpoint"
+    patchlog_cmd: |
+      python automation/patchlog.py add \
+        --type Refactor --area Frontend --priority Medium \
+        --title "Tahap 1 event bus: putus circular-dependency audio/playback-sync.js -> render/*" \
+        --reason "Eksekusi Tahap 1 dari docs/rfc/pemulihan_frontend/proposal_event_bus_frontend.md, hub audio/playback-sync.js (11 edge, hub circular-dependency terbesar ke-3)" \
+        --files "web/static/shared/js/bus.js,web/static/shared/js/audio/playback-sync.js,web/static/shared/js/render/player.js,web/static/shared/js/render/now-playing.js,web/static/shared/js/render/queue.js,web/static/shared/js/render/radio-hero-moon.js,web/static/shared/js/render/toast.js,web/static/pages/app/main.js" \
+        --root-cause "audio/playback-sync.js memanggil 18 titik fungsi render di 5 modul render/* secara langsung, menghasilkan circular-dependency (modul render tsb juga mengimpor balik playback-sync.js untuk fungsi kontrol seperti getOrInitAudio)" \
+        --solution "Tambah bus.js (pub/sub minimal), playback-sync.js emit event alih-alih memanggil fungsi render langsung, 5 modul render subscribe via fungsi init baru yang dipanggil dari main.js saat bootstrap" \
+        --tests "vitest hijau, eslint 0 error, depcruise circular-dependencies turun (lihat angka persis di laporan sesi), manual audio playback test /admin browser-mode OK" \
+        --breaking No --risk Medium --status Merged \
+        --related PATCH-2026-07-25-231
+    checkpoint_cmd: >
+      zip -rq checkpoints/lunawave-T1-eventbus.zip . -x ".git/*" -x "*__pycache__*"
+      -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+      -x "*.DS_Store" -x "checkpoints/*"
+
+larangan_eksplisit:
+  - "JANGAN sentuh ws.js atau events/index.js di tahap ini -- itu Tahap 2 & 3, sesi terpisah, butuh konfirmasi terpisah."
+  - "JANGAN pindahkan wsSend atau syncLocalLyrics ke bus di tahap ini (lihat catatan_wsSend di T1.3)."
+  - "JANGAN hapus guard 'typeof X === function' di baris yang tidak ada di daftar T1.3 -- di luar scope."
+  - "JANGAN lanjut ke Tahap 2 tanpa laporan T1.4 (angka depcruise sebelum/sesudah) ditunjukkan dulu ke user dan dapat konfirmasi eksplisit 'lanjut'."
+
+verifikasi_tahap_selesai:
+  - "bus.js ada dan lolos syntax check"
+  - "playback-sync.js tidak lagi import apapun dari render/player.js, render/now-playing.js, render/queue.js, render/radio-hero-moon.js, render/toast.js"
+  - "1 entry baru di docs/PATCHLOG.md (T1)"
+  - "Angka circular-dependencies di depcruise turun dari baseline 65 (dilaporkan persis, bukan diasumsikan 0 -- lihat proposal §3.5 soal target realistis)"
+  - "Manual test audio browser-mode dikonfirmasi OK oleh user"

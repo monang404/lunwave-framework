@@ -1,0 +1,285 @@
+/* ═══════════════════════════════════════════
+   radio-hero.css — "Night Dial" (radio_toggle_redesign)
+   Sumber: docs/rfc/radio_toggle.md, mockup lunawave-hero-creative-v8.html
+   Skeleton dibangun bertahap sesi 2 (R2.1..R2.4). File ini BELUM dipakai
+   di index.html manapun sampai sesi 4 (R4.1, gate governance-locked).
+   ═══════════════════════════════════════════ */
+
+/* ── Font self-host (R1.1) — subset only, tidak ada CDN ── */
+@font-face {
+  font-family: 'Fraunces';
+  font-style: italic;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/static/media/fonts/fraunces/fraunces-latin-500-italic.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/static/media/fonts/space-grotesk/space-grotesk-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/static/media/fonts/space-grotesk/space-grotesk-latin-500-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/static/media/fonts/space-grotesk/space-grotesk-latin-600-normal.woff2') format('woff2');
+}
+
+/* ── Token scoped ke .radio-hero (bukan :root global) ──
+   Hanya variable yang BELUM ada di tokens.css (RFC §5.5 poin 2).
+   --moon-glow, --text-1/--text-2/--r-full SENGAJA tidak didefinisikan
+   ulang di sini — reuse var(--accent)/var(--text-1)/var(--text-2)/
+   var(--r-full) dari tokens.css langsung di tiap rule (sesi 2+). */
+.radio-hero {
+  --void: #0B0B10;
+  --void-2: #141222;
+  --moon-light: #F4EFE6;
+  --indigo-deep: #211C36;
+  --static-grey: #4B505C;
+  --font-display: 'Fraunces', var(--font);
+  --font-mono: 'Space Grotesk', var(--font);
+}
+
+/* ══ R2.1 — Container + starfield + shooting-star ══
+   height: 322px WAJIB fixed — ini menutup root cause bug ukuran on/off
+   beda (RFC §2, §4, §6 poin 4).
+
+   HOTFIX (real-device report, screenshot on/off): height:322px saja
+   TERNYATA tidak cukup. .radio-hero adalah flex item di dalam .tab-panel
+   (nav.css: display:flex; flex-direction:column; height:100%). #content-
+   area yang scroll (app-shell.css: flex:1; overflow-y:scroll), BUKAN
+   .tab-panel itself — .tab-panel sendiri height:100% tetap (fixed relatif
+   ke #content-area) dan tanpa overflow sendiri. Begitu "All Stations"
+   terisi (radio ON) dan total tinggi children .tab-panel (hero + list)
+   melebihi height:100% itu, flexbox mengecilkan children sesuai
+   flex-shrink (default: 1) SEBELUM #content-area sempat scroll — .radio-
+   hero ikut diperas sampai ke sliver kecil (~50px, cocok dengan screenshot
+   "Radio On"). height:322px tanpa flex-shrink:0 tidak melindungi dari ini
+   karena flex-basis boleh tetap dipaksa mengecil oleh algoritma shrink.
+   Fix: flex-shrink:0 (+ min-height:322px sebagai backstop) supaya
+   .radio-hero tidak pernah ikut diperas — biarkan #content-area yang
+   scroll menangani overflow, sesuai desain aslinya. Diverifikasi lewat
+   Playwright headless: tanpa fix, tinggi jatuh 322px→50px saat daftar
+   station terisi (mobile 400px & desktop 1366px viewport); dengan fix,
+   tetap 322px baik saat kosong maupun terisi. */
+.radio-hero {
+  width: 100%;
+  height: 322px;
+  min-height: 322px;
+  flex-shrink: 0;
+  border-radius: 24px;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  background:
+    radial-gradient(ellipse 140% 90% at 50% -10%, rgba(33, 28, 54, 0.9) 0%, transparent 55%),
+    linear-gradient(180deg, #0F0D17 0%, #0A0910 60%, var(--void) 100%);
+  transition: background 0.6s cubic-bezier(.2, .8, .2, 1), border-color 0.6s ease, box-shadow 0.6s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 22px 20px 26px;
+}
+.radio-hero.on {
+  border-color: rgba(242, 181, 68, 0.16);
+  box-shadow: 0 20px 60px -20px rgba(242, 181, 68, 0.18), inset 0 0 60px rgba(242, 181, 68, 0.03);
+}
+
+/* faint starfield */
+.radio-hero .star {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  background: var(--text-2);
+  border-radius: 50%;
+  opacity: 0.35;
+}
+.radio-hero.on .star { animation: twinkle 3.4s ease-in-out infinite; }
+@keyframes twinkle {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.7; }
+}
+
+/* ── Occasional shooting star: thin comet-like streak, spawned/removed
+     from JS at random moments. transform/opacity only. ── */
+.radio-hero .shooting-star {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 1px;
+  border-radius: 2px;
+  background: linear-gradient(90deg,
+    rgba(245, 243, 239, 0) 0%,
+    rgba(220, 224, 235, 0.45) 55%,
+    rgba(255, 255, 255, 0.9) 100%);
+  opacity: 0;
+  transform-origin: 100% 50%;
+  pointer-events: none;
+  filter: drop-shadow(0 0 1.5px rgba(255, 255, 255, 0.55));
+}
+.radio-hero .shooting-star.fire {
+  animation-name: shootingStarMove;
+  animation-timing-function: cubic-bezier(.13, .66, .35, 1);
+  animation-fill-mode: forwards;
+}
+@keyframes shootingStarMove {
+  0% { opacity: 0; transform: rotate(var(--ang)) translateX(0); }
+  9% { opacity: 0.9; }
+  72% { opacity: 0.7; }
+  100% { opacity: 0; transform: rotate(var(--ang)) translateX(var(--dist)); }
+}
+
+/* ══ R2.2 — Moon SVG + tuner ticks + freq-label ══
+   Seluruh animasi transform/opacity/filter only (RFC §4 tabel) — tidak ada
+   width/height/margin/padding di keyframes manapun (guard reflow). */
+.radio-hero .dial-svg {
+  width: 172px;
+  height: 172px;
+  display: block;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.radio-hero .moon-lit-cool {
+  fill: url(#litGradCool);
+  opacity: 1;
+  transition: opacity 0.7s ease;
+}
+.radio-hero .moon-lit-warm {
+  fill: url(#litGradWarm);
+  opacity: 0;
+  transition: opacity 0.7s ease;
+}
+.radio-hero.on .moon-lit-cool { opacity: 0; }
+.radio-hero.on .moon-lit-warm { opacity: 1; }
+
+.radio-hero .moon-group {
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: transform;
+}
+.radio-hero .moon-glow-wrap { transition: filter 0.6s ease; }
+.radio-hero.on .moon-glow-wrap { animation: moonBreathe 5s ease-in-out infinite; }
+@keyframes moonBreathe {
+  0%, 100% { filter: drop-shadow(0 0 8px rgba(242, 181, 68, 0.22)); }
+  50% { filter: drop-shadow(0 0 20px rgba(242, 181, 68, 0.48)); }
+}
+
+.radio-hero .tick {
+  stroke: var(--static-grey);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: stroke 0.5s ease;
+}
+.radio-hero.on .tick { stroke: rgba(242, 181, 68, 0.55); }
+.radio-hero.on .tick { animation: tickPulse 1s ease-in-out infinite alternate; }
+.radio-hero .tick.tuned { stroke: var(--static-grey); }
+.radio-hero.on .tick.tuned { stroke: var(--accent); animation: none; }
+
+.radio-hero .tick:nth-child(1) { animation-delay: .05s; animation-duration: .7s; }
+.radio-hero .tick:nth-child(2) { animation-delay: .2s; animation-duration: .55s; }
+.radio-hero .tick:nth-child(3) { animation-delay: .1s; animation-duration: .8s; }
+.radio-hero .tick:nth-child(4) { animation-delay: .3s; animation-duration: .6s; }
+.radio-hero .tick:nth-child(6) { animation-delay: .3s; animation-duration: .6s; }
+.radio-hero .tick:nth-child(7) { animation-delay: .1s; animation-duration: .8s; }
+.radio-hero .tick:nth-child(8) { animation-delay: .2s; animation-duration: .55s; }
+.radio-hero .tick:nth-child(9) { animation-delay: .05s; animation-duration: .7s; }
+
+@keyframes tickPulse {
+  0% { transform: scaleY(0.7); }
+  100% { transform: scaleY(1.35); }
+}
+
+.radio-hero .freq-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  fill: var(--text-3);
+  letter-spacing: 0.5px;
+}
+.radio-hero .freq-label.tuned { fill: var(--text-2); }
+.radio-hero.on .freq-label.tuned { fill: var(--accent); }
+
+/* ══ R2.3 — Badge status (Radio On/Off) + hero-name + hero-sub ══
+   DEVIASI dari mockup (R-D2): badge SELALU visible di kedua state, tidak
+   fully-hidden saat off. Dua <span> exclusive lewat CSS class .radio-hero.on
+   saja — TIDAK ada textContent JS untuk badge (murni CSS file, RFC §6). */
+.radio-hero .radio-status-badge {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1.6px;
+  padding: 5px 10px 5px 8px;
+  border-radius: var(--r-full);
+  z-index: 2;
+  color: var(--text-3);
+  border: 1px solid var(--border-2);
+  transition: color 0.5s ease, border-color 0.5s ease;
+}
+.radio-hero.on .radio-status-badge {
+  color: var(--accent);
+  border-color: rgba(242, 181, 68, 0.35);
+}
+
+.radio-hero .badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--static-grey);
+  transition: background 0.5s ease;
+}
+.radio-hero.on .badge-dot {
+  background: var(--accent);
+  animation: badgeDotPulse 1.6s ease-in-out infinite;
+}
+@keyframes badgeDotPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(242, 181, 68, 0.5); }
+  50% { box-shadow: 0 0 0 5px rgba(242, 181, 68, 0); }
+}
+
+/* Dua span teks exclusive murni via CSS — bukan textContent JS (R-D2) */
+.radio-hero .badge-text-on { display: none; }
+.radio-hero .badge-text-off { display: inline; }
+.radio-hero.on .badge-text-on { display: inline; }
+.radio-hero.on .badge-text-off { display: none; }
+
+.radio-hero .hero-name {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  color: var(--text-2);
+  margin-top: 10px;
+}
+
+.radio-hero .hero-sub {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.8px;
+  color: var(--text-3);
+  margin-top: 5px;
+  min-height: 14px;
+  text-transform: uppercase;
+  transition: color 0.5s ease;
+}
+.radio-hero.on .hero-sub { color: rgba(242, 181, 68, 0.7); }

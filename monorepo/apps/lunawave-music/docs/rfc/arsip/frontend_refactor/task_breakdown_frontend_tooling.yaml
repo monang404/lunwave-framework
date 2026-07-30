@@ -1,0 +1,539 @@
+# task_breakdown_frontend_tooling.yaml
+# v1 — 2026-07-23
+# Fitur: frontend_tooling_and_restructure
+# Sumber keputusan: docs/adr/0011-frontend-tooling-governance.md (ADR, final,
+#   tidak ada open question) + docs/rfc/web_structure_audit/audit_dan_visi_struktur_web.md
+#
+# STATUS: final — seluruh keputusan produk sudah diputuskan di ADR-0011.
+# Satu-satunya persetujuan manusia yang masih diperlukan: gate file
+# governance-locked (index.html), lihat sesi 8.
+#
+# ATURAN EKSEKUSI UNTUK AGENT:
+# 1. Ikuti `execution_order` di akhir file secara sekuensial per sesi. Task
+#    dalam satu `session` dengan `parallel_ok: true` boleh dikerjakan tidak
+#    berurutan relatif satu sama lain (asal depends_on terpenuhi) — tapi
+#    tetap tidak boleh melompati sesi.
+# 2. Jangan eksekusi task dengan `locked: true` tanpa berhenti dan meminta
+#    konfirmasi eksplisit dari user PERSIS sebelum task itu.
+#    `web/static/index.html` (nanti `pages/app/index.html`) ada di
+#    AI_CONTEXT.md sebagai file yang tidak boleh disentuh tanpa izin.
+# 3. Setiap file yang dipindah WAJIB backward-compat alias sampai seluruh
+#    caller-nya juga bermigrasi (aturan project, lihat AI_CONTEXT.md).
+# 4. Setelah tiap task: jalankan `post_commands`, cek `dod` semua true, lalu
+#    prepend entry `docs/PATCHLOG.md` (ID: PATCH-YYYY-MM-DD-NNN) kecuali
+#    task punya `patchlog: skip`. Task bertanda `patchlog_group` ditulis
+#    SATU entry gabungan untuk seluruh anggota grup tsb.
+# 5. Sesi dengan `parallel_ok: false` ("dedicated") wajib dikerjakan
+#    sendirian tanpa task lain disisipkan di sesi yang sama.
+# 6. Sebelum sesi 8 (gate index.html), WAJIB grep ulang seluruh selector/ID
+#    yang dipakai file JS terhadap index.html — kode bisa berubah sejak
+#    ADR/RFC ini ditulis.
+# 7. `docs/architecture/frontend.md` WAJIB diperbarui pada sesi yang sama
+#    dengan perubahan struktur yang membuatnya menyimpang dari isi dokumen
+#    itu (lihat sesi 9 & 11) — dokumen prosa dan struktur nyata tidak boleh
+#    berbeda.
+
+meta:
+  source_adr: "docs/adr/0011-frontend-tooling-governance.md"
+  source_rfc:
+    - "docs/rfc/frontend_tooling/proposal_frontend_tooling.md"
+    - "docs/rfc/web_structure_audit/audit_dan_visi_struktur_web.md"
+  locked_files_global:
+    - web/static/index.html   # AI_CONTEXT.md: tidak boleh disentuh tanpa izin eksplisit
+  conventions:
+    patchlog_id_format: "PATCH-YYYY-MM-DD-NNN"
+    lint_cmd: "npx eslint ."
+    test_cmd: "npx vitest run"
+    typecheck_cmd: "npx tsc --checkJs --noEmit --allowJs web/static/js/**/*.js"
+
+# ---------------------------------------------------------------------------
+# MANIFEST PEMINDAHAN FILE (lama -> baru)
+# Dipakai sebagai referensi tunggal oleh semua task `move_*` di bawah.
+# Tidak dieksekusi langsung — task individual yang mengeksekusi baris ini.
+# ---------------------------------------------------------------------------
+file_manifest:
+  shared_js:
+    - { from: "web/static/js/store.js",           to: "web/static/shared/js/store.js" }
+    - { from: "web/static/js/dom.js",              to: "web/static/shared/js/dom.js" }
+    - { from: "web/static/js/ws.js",                to: "web/static/shared/js/ws.js" }
+    - { from: "web/static/js/config.js",           to: "web/static/shared/js/config.js" }
+    - { from: "web/static/js/portal.js",           to: "web/static/shared/js/portal.js" }
+    - { from: "web/static/js/audio/*",             to: "web/static/shared/js/audio/*" }
+    - { from: "web/static/js/events/*",            to: "web/static/shared/js/events/*" }
+    - { from: "web/static/js/platform/*",          to: "web/static/shared/js/platform/*" }
+    - { from: "web/static/js/render/*",            to: "web/static/shared/js/render/*" }
+    - { from: "web/static/js/services/*",          to: "web/static/shared/js/services/*" }
+    - { from: "web/static/js/utils/*",              to: "web/static/shared/js/utils/*" }
+  shared_css:
+    - { from: "web/static/css/tokens.css",         to: "web/static/shared/css/tokens.css" }
+    - { from: "web/static/css/portal.css",         to: "web/static/shared/css/portal.css" }
+    - { from: "web/static/css/base/*",             to: "web/static/shared/css/base/*" }
+    - { from: "web/static/css/layout/*",           to: "web/static/shared/css/layout/*" }
+    - { from: "web/static/css/components/*",       to: "web/static/shared/css/components/*" }
+    - { from: "web/static/css/platform/*",         to: "web/static/shared/css/platform/*" }
+    - { from: "web/static/css/vendor/tabler-icons.min.css", to: "web/static/shared/css/vendor/tabler-icons.min.css" }
+  pages_client:
+    - { from: "web/static/client.html",            to: "web/static/pages/client/client.html" }
+    - { from: "web/static/js/client.js",           to: "web/static/pages/client/client.js" }
+    - { from: "web/static/js/chat.js",             to: "web/static/pages/client/chat.js" }
+    - { from: "web/static/css/components/chat.css", to: "web/static/pages/client/chat.css" }
+  pages_admin_logs:
+    - { from: "web/static/admin-logs.html",        to: "web/static/pages/admin-logs/admin-logs.html" }
+    - { from: "web/static/js/admin-logs.js",       to: "web/static/pages/admin-logs/admin-logs.js" }
+  pages_app_LOCKED:
+    - { from: "web/static/index.html",             to: "web/static/pages/app/index.html", locked: true }
+    - { from: "web/static/js/main.js",             to: "web/static/pages/app/main.js" }
+  media:
+    - { from: "web/asset/logos/lunawave_master.png", to: "DELETE (tidak dipakai, lihat audit §1.3) — dikonfirmasi dulu, bukan langsung dihapus" }
+    - { from: "web/static/icons/*",                 to: "web/static/media/icons/*" }
+    - { from: "web/static/fonts/fraunces/*",        to: "web/static/media/fonts/fraunces/*" }
+    - { from: "web/static/fonts/space-grotesk/*",   to: "web/static/media/fonts/space-grotesk/*" }
+    - { from: "web/static/css/vendor/fonts/*",       to: "web/static/media/fonts/vendor/*" }
+  unchanged:
+    - "web/static/manifest.json"
+    - "web/static/sw.js"
+
+# ---------------------------------------------------------------------------
+# PETA SESI
+# ---------------------------------------------------------------------------
+sessions:
+  - session: 1
+    label: "ESLint flat config (ADR-0011 §1)"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Tidak menyentuh file locked, tidak memindah file apapun. Murni
+      menambah lapisan deteksi baru di atas kode yang sudah ada.
+    patchlog_group: "1 entry gabungan untuk F1.1..F1.2"
+    tasks: [F1.1, F1.2]
+
+  - session: 2
+    label: "Audit & hapus aset mati + persiapan folder media/"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Verifikasi ulang lunawave_master.png benar tidak dipakai (re-grep,
+      jangan andalkan audit lama saja), lalu siapkan struktur folder
+      media/ untuk menampung icons/fonts. Tidak menyentuh HTML manapun.
+    tasks: [F2.1, F2.2]
+
+  - session: 3
+    label: "Satukan font vendor + webfont ke media/fonts/"
+    parallel_ok: false
+    risk: low
+    rationale: >
+      DEDICATED. Menyentuh path @font-face di beberapa file CSS sekaligus
+      (tokens.css / base/typography.css / vendor/tabler-icons.min.css) —
+      dikerjakan dalam satu sesi supaya tidak ada state "sebagian pindah".
+    patchlog_group: "1 entry gabungan untuk F3.1..F3.3"
+    tasks: [F3.1, F3.2, F3.3]
+
+  - session: 4
+    label: "Test coverage store.js & ws.js (ADR-0011 §2 prioritas)"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED. File paling banyak dependent, wajib punya jaring pengaman
+      SEBELUM dipindah/dimigrasi di sesi-sesi berikutnya.
+    tasks: [F4.1, F4.2]
+
+  - session: 5
+    label: "Restrukturisasi client.html -> pages/client/"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED. client.html TIDAK locked, tapi tetap satu sesi tersendiri
+      karena mengubah path semua <script>/<link> di dalamnya sekaligus.
+    patchlog_group: "1 entry gabungan untuk F5.1..F5.3"
+    tasks: [F5.1, F5.2, F5.3]
+
+  - session: 6
+    label: "Restrukturisasi admin-logs.html -> pages/admin-logs/"
+    parallel_ok: false
+    risk: low
+    rationale: >
+      DEDICATED tapi ringan — hanya 1 file JS + 1 HTML, risiko rendah
+      karena admin-logs.html tidak berbagi banyak dependency dengan halaman
+      lain.
+    tasks: [F6.1]
+
+  - session: 7
+    label: "Visual regression baseline (ADR-0011 §7)"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Independen dari migrasi ES module — bisa jalan kapan saja. Baseline
+      screenshot diambil SEBELUM sesi 8 (migrasi index.html) supaya ada
+      pembanding "sebelum" yang valid.
+    tasks: [F7.1, F7.2]
+
+  - session: 8
+    label: "GATE — pages/app/, ES Modules, JSDoc di index.html"
+    parallel_ok: false
+    risk: gate
+    rationale: >
+      DEDICATED, WAJIB APPROVAL EKSPLISIT. index.html governance-locked.
+      Satu sesi ini mencakup SEMUA perubahan index.html yang dibutuhkan
+      (pindah ke pages/app/, ubah <script> jadi type="module" mengikuti
+      urutan leaf-first ADR-0011 §2, tambah JSDoc/@ts-check bersamaan per
+      file sesuai ADR-0011 §6) — supaya file locked ini cuma dibuka SATU
+      kali untuk seluruh rangkaian perubahan, bukan berkali-kali di sesi
+      terpisah.
+    tasks: [F8.1, F8.2, F8.3, F8.4, F8.5, F8.6, F8.7]
+
+  - session: 9
+    label: "dependency-cruiser rules (ADR-0011 §3, §5)"
+    parallel_ok: false
+    risk: medium
+    rationale: >
+      DEDICATED. Baru bisa efektif setelah sesi 8 selesai (butuh import/
+      export asli untuk di-scan). Rule dirumuskan dari doktrin
+      docs/architecture/frontend.md yang sudah ada (State Flow Frontend).
+    tasks: [F9.1, F9.2]
+
+  - session: 10
+    label: "Visual regression — verifikasi pasca migrasi"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Bandingkan screenshot pasca sesi 8 dengan baseline sesi 7. Kalau ada
+      selisih tak terduga, kembali ke sesi 8 — jangan tambal di sesi ini.
+    tasks: [F10.1]
+
+  - session: 11
+    label: "Sinkronisasi dokumentasi & cleanup penutup"
+    parallel_ok: true
+    risk: low
+    rationale: >
+      Update docs/architecture/frontend.md supaya cocok dengan struktur
+      nyata pasca migrasi (aturan 7 di header file ini), hapus alias
+      backward-compat yang sudah tidak dipakai caller manapun, regenerasi
+      index/patchlog penutup.
+    patchlog_group: "PATCHLOG TERPISAH untuk sesi 11 (dokumentasi, bukan fitur)"
+    tasks: [F11.1, F11.2, F11.3]
+
+# ---------------------------------------------------------------------------
+tasks:
+
+  # ---------- SESI 1 ----------
+  - id: F1.1
+    title: "Tambah eslint.config.js (flat config)"
+    depends_on: []
+    locked: false
+    files: ["eslint.config.js (baru)"]
+    steps:
+      - "buat eslint.config.js: env browser + es2021, rule no-undef: error, no-unused-vars: warn"
+      - "jalankan npx eslint . di seluruh web/static/js/, catat semua warning tanpa fix dulu"
+    post_commands: ["npx eslint . --format json"]
+    dod: ["eslint.config.js ada dan bisa dijalankan tanpa crash", "daftar warning awal didokumentasikan sebagai baseline"]
+    patchlog: skip
+
+  - id: F1.2
+    title: "Integrasi ESLint ke pre-commit + CI"
+    depends_on: [F1.1]
+    locked: false
+    files: [".pre-commit-config.yaml", ".github/workflows/ci.yml"]
+    steps:
+      - "tambah hook eslint baru di .pre-commit-config.yaml"
+      - "tambah step 'npx eslint .' baru di .github/workflows/ci.yml"
+    post_commands: ["pre-commit run eslint --all-files"]
+    dod: ["CI gagal kalau ada error baru (bukan warning existing)"]
+
+  # ---------- SESI 2 ----------
+  - id: F2.1
+    title: "Verifikasi ulang lunawave_master.png benar tidak terpakai"
+    depends_on: []
+    locked: false
+    files: []
+    steps:
+      - "grep -rn lunawave_master --include='*.html' --include='*.css' --include='*.js' --include='*.py' --include='*.json' --include='*.md' ."
+      - "kalau nol hasil: hapus web/asset/logos/lunawave_master.png dan folder web/asset/ jika sudah kosong"
+      - "kalau ada hasil: batalkan penghapusan, catat di PATCHLOG kenapa dipertahankan"
+    post_commands: ["git status"]
+    dod: ["file dihapus DAN nol referensi tersisa, ATAU dipertahankan dengan alasan tercatat"]
+
+  - id: F2.2
+    title: "Siapkan struktur folder web/static/media/"
+    depends_on: [F2.1]
+    locked: false
+    files: []
+    steps:
+      - "buat web/static/media/{icons,fonts}/ kosong dulu (isi dipindah di sesi 3 & 8)"
+    post_commands: []
+    dod: ["struktur folder ada, belum ada file dipindah ke sini (menunggu sesi terkait)"]
+    patchlog: skip
+
+  # ---------- SESI 3 ----------
+  - id: F3.1
+    title: "Pindah fonts/fraunces, fonts/space-grotesk -> media/fonts/"
+    depends_on: [F2.2]
+    locked: false
+    files: ["web/static/fonts/*", "web/static/media/fonts/*"]
+    steps:
+      - "git mv web/static/fonts/fraunces web/static/media/fonts/fraunces"
+      - "git mv web/static/fonts/space-grotesk web/static/media/fonts/space-grotesk"
+    post_commands: []
+    dod: ["file fisik pindah, belum update referensi (task berikutnya)"]
+
+  - id: F3.2
+    title: "Pindah css/vendor/fonts (tabler-icons) -> media/fonts/vendor/"
+    depends_on: [F3.1]
+    locked: false
+    files: ["web/static/css/vendor/fonts/*", "web/static/media/fonts/vendor/*"]
+    steps:
+      - "git mv web/static/css/vendor/fonts web/static/media/fonts/vendor"
+    post_commands: []
+    dod: ["file fisik pindah"]
+
+  - id: F3.3
+    title: "Update semua path @font-face yang terdampak"
+    depends_on: [F3.2]
+    locked: false
+    files:
+      - "web/static/css/base/typography.css"
+      - "web/static/css/vendor/tabler-icons.min.css"
+      - "web/static/css/tokens.css"
+    steps:
+      - "grep -rn \"fonts/fraunces\\|fonts/space-grotesk\\|vendor/fonts\" web/static/css/"
+      - "update tiap src: url(...) ke path media/fonts/ yang baru"
+      - "buka index.html, client.html, admin-logs.html di browser lokal, pastikan font ter-render (visual check manual, BUKAN edit HTML)"
+    post_commands: ["npx eslint . ", "grep -rn 'fonts/' web/static/css/ | grep -v media/fonts"]
+    dod: ["nol referensi path font lama tersisa", "font ter-render benar di ketiga halaman (screenshot manual)"]
+
+  # ---------- SESI 4 ----------
+  - id: F4.1
+    title: "Test store.js: get/set state, subscribe/notify"
+    depends_on: []
+    locked: false
+    files: ["tests/frontend/store.test.js"]
+    steps:
+      - "cek store.test.js yang sudah ada, identifikasi gap coverage (mis. edge case reset state, multiple subscriber)"
+      - "tambah test case untuk gap yang ditemukan"
+    post_commands: ["npx vitest run tests/frontend/store.test.js"]
+    dod: ["semua public method store.js punya minimal 1 test", "vitest run hijau"]
+
+  - id: F4.2
+    title: "Test ws.js: routing pesan masuk, reconnect logic"
+    depends_on: []
+    locked: false
+    files: ["tests/frontend/ws-routing.test.js"]
+    steps:
+      - "cek ws-routing.test.js yang sudah ada, tambah test untuk reconnect & error path (belum tercakup)"
+    post_commands: ["npx vitest run tests/frontend/ws-routing.test.js"]
+    dod: ["jalur reconnect dan error punya test eksplisit", "vitest run hijau"]
+
+  # ---------- SESI 5 ----------
+  - id: F5.1
+    title: "Pindah client.html + client.js + chat.js ke pages/client/"
+    depends_on: [F4.1, F4.2]
+    locked: false
+    files:
+      - "web/static/client.html"
+      - "web/static/js/client.js"
+      - "web/static/js/chat.js"
+      - "web/static/pages/client/*"
+    steps:
+      - "git mv sesuai file_manifest.pages_client"
+      - "update <script src> di client.html ke path baru (masih relatif ke /static/, sesuaikan)"
+    post_commands: ["grep -n '<script' web/static/pages/client/client.html"]
+    dod: ["client.html ter-load tanpa 404 di devtools network tab"]
+
+  - id: F5.2
+    title: "Pindah components/chat.css ke pages/client/chat.css"
+    depends_on: [F5.1]
+    locked: false
+    files: ["web/static/css/components/chat.css", "web/static/pages/client/chat.css"]
+    steps:
+      - "git mv, update <link> di client.html"
+    post_commands: []
+    dod: ["chat.css ter-load, styling chat tidak berubah visual"]
+
+  - id: F5.3
+    title: "Update server/handlers/http.py path serve client.html"
+    depends_on: [F5.1]
+    locked: false
+    files: ["server/handlers/http.py"]
+    steps:
+      - "update STATIC_DIR / 'client.html' jadi STATIC_DIR / 'pages/client/client.html'"
+    post_commands: ["pytest tests/unit -k http"]
+    dod: ["route client tetap 200 OK", "test backend terkait tetap hijau"]
+
+  # ---------- SESI 6 ----------
+  - id: F6.1
+    title: "Pindah admin-logs.html + admin-logs.js ke pages/admin-logs/, update log_dashboard.py"
+    depends_on: []
+    locked: false
+    files:
+      - "web/static/admin-logs.html"
+      - "web/static/js/admin-logs.js"
+      - "server/handlers/log_dashboard.py"
+    steps:
+      - "git mv sesuai file_manifest.pages_admin_logs"
+      - "update <script src> di admin-logs.html"
+      - "update STATIC_DIR / 'admin-logs.html' di log_dashboard.py"
+    post_commands: ["pytest tests/unit -k log_dashboard"]
+    dod: ["dashboard log tetap accessible & fungsional"]
+
+  # ---------- SESI 7 ----------
+  - id: F7.1
+    title: "Setup Playwright screenshot diff"
+    depends_on: []
+    locked: false
+    files: ["tests/frontend/visual/*, playwright.config.js (baru)"]
+    steps:
+      - "install @playwright/test sebagai devDependency"
+      - "buat config dasar, target 3 komponen: radio hero, player bar, now-playing panel"
+    post_commands: ["npx playwright install --with-deps"]
+    dod: ["playwright bisa jalan lokal tanpa error"]
+
+  - id: F7.2
+    title: "Ambil baseline screenshot SEBELUM sesi 8"
+    depends_on: [F7.1]
+    locked: false
+    files: ["tests/frontend/__screenshots__/*"]
+    steps:
+      - "jalankan capture untuk radio hero (on & off state), player bar (playing/paused), now-playing (judul pendek & panjang)"
+    post_commands: ["npx playwright test --update-snapshots"]
+    dod: ["baseline tersimpan di repo, direview manual sebelum commit"]
+
+  # ---------- SESI 8 (GATE) ----------
+  - id: F8.1
+    title: "[APPROVAL WAJIB] Konfirmasi eksplisit sebelum sentuh index.html"
+    depends_on: [F3.3, F5.3, F6.1, F7.2]
+    locked: true
+    files: ["web/static/index.html"]
+    steps:
+      - "STOP. Tampilkan ringkasan seluruh perubahan yang akan terjadi pada index.html di sesi ini ke user"
+      - "tunggu konfirmasi eksplisit sebelum lanjut ke F8.2"
+    post_commands: []
+    dod: ["user sudah approve eksplisit, tercatat di PATCHLOG"]
+    patchlog: skip
+
+  - id: F8.2
+    title: "Pindah index.html + main.js ke pages/app/"
+    depends_on: [F8.1]
+    locked: true
+    files: ["web/static/index.html", "web/static/js/main.js", "web/static/pages/app/*"]
+    steps: ["git mv sesuai file_manifest.pages_app_LOCKED", "update server/handlers/http.py path serve index.html"]
+    post_commands: ["pytest tests/unit -k http"]
+    dod: ["index.html tetap ter-serve dari route yang sama"]
+
+  - id: F8.3
+    title: "Pindah shared JS (store, dom, ws, config, portal, audio/events/platform/render/services/utils)"
+    depends_on: [F8.2]
+    locked: true
+    files: ["file_manifest.shared_js (seluruh baris)"]
+    steps: ["git mv seluruh baris shared_js sesuai manifest", "update seluruh <script src> di pages/app/index.html DAN pages/client/client.html (keduanya pakai shared modules)"]
+    post_commands: ["grep -rn 'src=\"/static/js/' web/static/pages/"]
+    dod: ["nol path lama tersisa di kedua HTML", "app & client tetap jalan tanpa console error"]
+
+  - id: F8.4
+    title: "Pindah shared CSS (tokens, base, layout, components, platform, portal, vendor)"
+    depends_on: [F8.3]
+    locked: true
+    files: ["file_manifest.shared_css (seluruh baris)"]
+    steps: ["git mv seluruh baris shared_css sesuai manifest", "update seluruh <link href> terdampak di ketiga HTML"]
+    post_commands: ["grep -rn 'href=\"/static/css/' web/static/pages/"]
+    dod: ["nol path lama tersisa", "visual tidak berubah (bandingkan manual dengan sesi 7 baseline)"]
+
+  - id: F8.5
+    title: "Migrasi ES Module leaf-first: utils -> config/dom -> store/ws -> render/events -> audio/platform -> main.js"
+    depends_on: [F8.4]
+    locked: true
+    files: ["seluruh file di shared/js/ dan pages/app/main.js"]
+    steps:
+      - "urutan wajib mengikuti ADR-0011 §2: utils/* dulu, lalu config.js+dom.js, lalu store.js+ws.js, lalu render/*+events/*, lalu audio/*+platform/*+portal.js, terakhir main.js"
+      - "per file: tambah export/import eksplisit, pertahankan backward-compat alias sampai semua caller pindah"
+      - "ubah <script src> terkait jadi <script type=\"module\" src>"
+    post_commands: ["npx vitest run", "npx eslint ."]
+    dod: ["vitest tetap hijau setelah tiap file dimigrasi", "tidak ada file yang dilewati urutannya"]
+
+  - id: F8.6
+    title: "Tambah JSDoc + @ts-check bersamaan per file (ADR-0011 §6)"
+    depends_on: [F8.5]
+    locked: true
+    files: ["sama seperti F8.5"]
+    steps:
+      - "tambah // @ts-check di baris pertama tiap file yang sudah jadi ES module"
+      - "tambah JSDoc annotation untuk function signature publik"
+    post_commands: ["npx tsc --checkJs --noEmit --allowJs web/static/shared/js/**/*.js"]
+    dod: ["tsc --checkJs tidak melaporkan error baru (warning existing boleh dicatat sebagai follow-up)"]
+
+  - id: F8.7
+    title: "Regresi penuh pasca sesi 8"
+    depends_on: [F8.6]
+    locked: false
+    files: []
+    steps: ["buka ketiga halaman (app/client/admin-logs) di browser, cek console kosong dari error", "jalankan full test suite backend + frontend"]
+    post_commands: ["npx vitest run", "pytest"]
+    dod: ["semua test hijau", "nol console error di 3 halaman"]
+
+  # ---------- SESI 9 ----------
+  - id: F9.1
+    title: "Tulis .dependency-cruiser.js berdasarkan State Flow Frontend"
+    depends_on: [F8.7]
+    locked: false
+    files: [".dependency-cruiser.js (baru)"]
+    steps:
+      - "terjemahkan docs/architecture/frontend.md 'State Flow Frontend' jadi rule: render/* tidak boleh import events/* langsung, events/* tidak boleh import render/* langsung, hanya ws.js boleh WS send/receive, utils/* harus tetap leaf"
+    post_commands: ["npx dependency-cruiser --validate web/static/shared/js"]
+    dod: ["rule terpasang dan bisa dijalankan tanpa error konfigurasi"]
+
+  - id: F9.2
+    title: "Integrasi dependency-cruiser ke CI"
+    depends_on: [F9.1]
+    locked: false
+    files: [".github/workflows/ci.yml"]
+    steps: ["tambah step validasi dependency-cruiser di CI"]
+    post_commands: ["npx dependency-cruiser --validate web/static/shared/js"]
+    dod: ["CI gagal kalau ada pelanggaran boundary baru"]
+
+  # ---------- SESI 10 ----------
+  - id: F10.1
+    title: "Bandingkan screenshot pasca migrasi dengan baseline sesi 7"
+    depends_on: [F9.2, F7.2]
+    locked: false
+    files: []
+    steps: ["jalankan playwright test terhadap baseline", "kalau ada selisih tak terduga, kembali ke F8.x terkait, jangan tambal di sini"]
+    post_commands: ["npx playwright test"]
+    dod: ["nol selisih visual tak terduga, atau selisih terdokumentasi sebagai perubahan disengaja"]
+
+  # ---------- SESI 11 ----------
+  - id: F11.1
+    title: "Update docs/architecture/frontend.md sesuai struktur nyata"
+    depends_on: [F10.1]
+    locked: false
+    files: ["docs/architecture/frontend.md"]
+    steps: ["update peta modul & diagram state flow supaya cocok dengan struktur pages/+shared/+media/ yang baru"]
+    post_commands: ["python automation/verify_docs.py --json"]
+    dod: ["verify_docs.py tidak melaporkan dokumen usang"]
+
+  - id: F11.2
+    title: "Hapus backward-compat alias yang sudah tidak dipakai caller manapun"
+    depends_on: [F11.1]
+    locked: false
+    files: []
+    steps: ["grep seluruh alias yang ditambahkan selama migrasi, konfirmasi nol caller tersisa yang pakai path lama, baru hapus"]
+    post_commands: ["grep -rn 'DEPRECATED_ALIAS' web/static/"]
+    dod: ["nol alias tersisa yang benar-benar tidak dipakai"]
+
+  - id: F11.3
+    title: "Regenerasi file index & entry PATCHLOG penutup"
+    depends_on: [F11.2]
+    locked: false
+    files: ["docs/PATCHLOG.md"]
+    steps: ["python automation/generate_file_index.py", "python automation/patchlog.py --new"]
+    post_commands: ["python automation/verify_structure.py --json"]
+    dod: ["verify_structure.py hijau", "PATCHLOG mencatat ringkasan seluruh 11 sesi"]
+
+# ---------------------------------------------------------------------------
+execution_order:
+  - [1, 2]     # bisa paralel, tidak saling bergantung
+  - [3]
+  - [4]
+  - [5, 6]     # bisa paralel setelah 3&4 selesai
+  - [7]        # baseline visual, harus sebelum sesi 8
+  - [8]        # GATE — wajib approval eksplisit
+  - [9]
+  - [10]
+  - [11]

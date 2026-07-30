@@ -1,0 +1,484 @@
+%YAML 1.1
+---
+# =============================================================================
+# File 04 — Fase 4: Cleanup & konsistensi
+# (proposal §4.1, §4.3, §4.4, §4.5, §4.8, §5.1 — Prioritas Menengah + 1 Rendah)
+# Depends on: 02_fase2_validasi_dan_rate_limiting.yaml (urutan pengerjaan
+# saja, lihat dependency_graph di 00_index_and_decisions.yaml -- tidak ada
+# dependency KODE yang keras antar file ini dengan file 02)
+# Risiko: RENDAH (tiap task independen & additive/cleanup murni)
+# Effort: RENDAH per task, SEDANG total
+# =============================================================================
+
+phase:
+  id: P04
+  title: "verify_token dead code, EXPLORE_QUOTA, batas volume, overwrite download, crossfade, unused import sapuan"
+  proposal_ref: ["§4.1", "§4.3", "§4.4", "§4.5", "§4.8", "§5.1"]
+  closes_temuan: [7, 9, 10, 11, 14, 16]
+  depends_on: ["02_fase2_validasi_dan_rate_limiting.yaml"]
+
+tasks:
+  # ---------------------------------------------------------------------
+  - task_id: P04-T1
+    title: "verify_token(): hapus dead code (default) ATAU pakai nyata -- lihat decision point"
+    proposal_ref: "§4.1"
+    depends_on: []
+    touches_locked_files: false
+    decision_point: >
+      Task ini punya 2 opsi eksekusi -- eksekutor WAJIB memilih Opsi A
+      KECUALI ditemukan kebutuhan konkret untuk perbandingan token
+      raw-vs-hash di luar session_repo saat eksekusi (mis. API key
+      header custom yang sedang dikembangkan bersamaan -- tidak ada
+      bukti ini ada saat proposal ditulis). Opsi A adalah default aman
+      karena verify_token() TERBUKTI tidak dipakai di mana pun saat
+      audit (grep menyeluruh).
+    files:
+      modify:
+        - core/security.py
+      create:
+        - tests/unit/core/test_no_dead_exports.py
+    steps:
+      - >
+        `grep -rn "verify_token" --include=*.py .` dari root repo untuk
+        memastikan ULANG tidak ada pemanggil baru yang muncul sejak audit
+        (kemungkinan kecil, tapi WAJIB dicek sebelum menghapus apa pun).
+      - >
+        OPSI A (default): Hapus fungsi `verify_token()` dari
+        core/security.py sepenuhnya (termasuk docstring-nya). Hapus juga
+        referensinya di docstring module (baris "Verify a raw session
+        token against a stored SHA-256 digest" di bagian Responsibilities
+        module docstring, VERIFIKASI ULANG baris).
+      - >
+        Tambah test `test_no_dead_exports.py`: grep terprogram (subprocess
+        atau ast) yang memastikan setiap fungsi public di `core/security.py`
+        (nama tanpa underscore awalan) dipanggil minimal 1 kali di luar
+        file itu sendiri (di seluruh repo termasuk tests/) -- test ini
+        JADI PAGAR supaya dead code serupa tidak lolos lagi di masa
+        depan. Kalau ada exception yang sah (mis. fungsi memang
+        disiapkan untuk dipakai modul lain yang belum ditulis), daftarkan
+        di allowlist eksplisit dalam test dengan komentar alasannya.
+    acceptance_criteria:
+      - "core/security.py tidak lagi mengekspor fungsi yang tidak dipanggil di mana pun dalam repo (dibuktikan test_no_dead_exports.py)."
+      - "Semua test existing yang menyentuh core/security.py tetap hijau (verify_password, hash_token, hash_password tidak berubah)."
+    tests:
+      run:
+        - "pytest tests/unit/core/test_no_dead_exports.py -q"
+        - "pytest tests/unit/core/test_security.py -q"
+    patchlog:
+      type: cleanup
+      area: "core"
+      title: "Hapus verify_token() dead code"
+      reason: >
+        verify_token() dibuat (constant-time compare token vs hash) tapi
+        tidak pernah dipanggil -- verifikasi sesi aktual memakai lookup
+        SQL berdasarkan hash di persistence/session_repo.py, bukan
+        fungsi ini.
+      root_cause: >
+        Fungsi ditambahkan mengantisipasi pola pemakaian yang tidak
+        pernah terealisasi; tidak ada test atau caller yang menjaga
+        fungsi ini tetap terpakai.
+      solution: >
+        Dihapus. test_no_dead_exports.py ditambahkan sebagai pagar
+        otomatis supaya dead code serupa terdeteksi di CI/doctor.py ke
+        depannya.
+      files: "core/security.py, tests/unit/core/test_no_dead_exports.py"
+      notes: "Tidak menyentuh file locked."
+
+  # ---------------------------------------------------------------------
+  - task_id: P04-T2
+    title: "Audit EXPLORE_QUOTA: bug fungsional radio atau memang dead code murni?"
+    proposal_ref: "§4.3"
+    depends_on: []
+    touches_locked_files: false
+    investigation_first: >
+      Task ini WAJIB dimulai dengan investigasi (langkah 1-2) SEBELUM
+      memutuskan apakah ini cleanup murni atau bug fix fungsional. Jangan
+      lompat ke langkah cleanup tanpa membaca hasil investigasi.
+    files:
+      modify:
+        - engine/radio/artist_selector.py
+      create:
+        - tests/unit/engine/radio/test_artist_selector_explore_quota.py
+    steps:
+      - >
+        `view` engine/radio/radio_config.py baris di sekitar `EXPLORE_QUOTA
+        = 1` (baris 32 saat audit) -- baca komentar/docstring di
+        sekitarnya untuk memahami APA yang seharusnya dikontrol konstanta
+        ini (kemungkinan: rasio artis "explore" vs "familiar" yang
+        dipilih radio per sesi/putaran).
+      - >
+        `view` engine/radio/artist_selector.py, cari SEMUA logika terkait
+        pemilihan artis "explore" (kemungkinan istilah seperti
+        `explore`, `familiar`, `discovery` di nama variabel/fungsi).
+        Tentukan: apakah ada logika yang SEHARUSNYA memakai EXPLORE_QUOTA
+        (mis. `slice`/`sample` sejumlah N artis explore) tapi memakai
+        angka hardcode lain atau logika berbeda sama sekali? ATAU apakah
+        import ini sisa dari refactor lama yang fungsinya sudah
+        dipindah/dihapus total (tidak ada logika explore-quota yang
+        hilang)?
+      - >
+        HASIL A -- kalau ditemukan logika yang seharusnya memakai
+        EXPLORE_QUOTA tapi tidak: ESKALASI. JANGAN diperbaiki diam-diam
+        di task cleanup ini -- catat temuan detail (baris, fungsi, apa
+        yang seharusnya terjadi vs apa yang terjadi sekarang) sebagai
+        BUG BARU di docs/PATCHLOG.md dan berhenti di sini. Ini keluar
+        dari scope "cleanup dead import" dan butuh keputusan produk
+        (apakah rasio explore/familiar radio memang harus berubah
+        perilakunya -- itu keputusan yang butuh persetujuan pemilik
+        project, bukan keputusan teknis eksekutor).
+      - >
+        HASIL B -- kalau TERKONFIRMASI EXPLORE_QUOTA murni sisa import
+        tak terpakai (tidak ada logika yang hilang, radio explore/familiar
+        sudah berjalan lewat mekanisme lain yang tidak butuh konstanta
+        ini): hapus baris import `EXPLORE_QUOTA` dari
+        artist_selector.py. JANGAN hapus `EXPLORE_QUOTA` dari
+        radio_config.py itu sendiri kalau ada kemungkinan dipakai modul
+        lain (grep ulang dulu, `grep -rn "EXPLORE_QUOTA"`).
+      - >
+        Tambah test `test_artist_selector_explore_quota.py` yang
+        mendokumentasikan hasil investigasi: assert perilaku radio
+        explore/familiar SAAT INI (apa pun mekanismenya) sesuai ekspektasi
+        yang berlaku, supaya regresi di masa depan pada area ini
+        terdeteksi test, bukan cuma grep.
+    acceptance_criteria:
+      - "Kalau HASIL A (bug fungsional): PATCHLOG entry baru dibuat mencatat temuan, TIDAK ada perubahan kode fungsional radio dalam task ini, keputusan diserahkan ke pemilik project."
+      - "Kalau HASIL B (dead code murni): import EXPLORE_QUOTA di artist_selector.py terhapus, tidak ada import tak terpakai lain yang tersisa terkait ini."
+    tests:
+      run:
+        - "pytest tests/unit/engine/radio -q"
+        - "pytest tests/unit/engine/radio/test_artist_selector_explore_quota.py -q"
+    patchlog:
+      type: cleanup_or_bug_investigation
+      area: "engine/radio"
+      title: "EXPLORE_QUOTA: audit dead import radio"
+      reason: >
+        EXPLORE_QUOTA diimpor di artist_selector.py tapi tidak dipakai --
+        audit awal tidak bisa memastikan apakah ini cleanup murni atau
+        gejala perilaku radio explore/familiar yang tidak sesuai desain.
+      root_cause: "Ditentukan saat investigasi -- lihat field investigation_first di atas."
+      solution: "Ditentukan saat investigasi -- HASIL A (eskalasi) atau HASIL B (cleanup import)."
+      files: "engine/radio/artist_selector.py, tests/unit/engine/radio/test_artist_selector_explore_quota.py"
+      notes: "Tidak menyentuh file locked. WAJIB catat HASIL A/B yang dipilih di notes PATCHLOG."
+
+  # ---------------------------------------------------------------------
+  - task_id: P04-T3
+    title: "Satukan batas volume: MAX_VOLUME=100 sebagai satu sumber kebenaran"
+    proposal_ref: "§4.4"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - engine/volume_service.py
+        - server/handlers/websocket.py
+      create:
+        - tests/unit/engine/test_volume_service_max.py
+    steps:
+      - >
+        `view` engine/volume_service.py baris 42, 46, 51 (VERIFIKASI
+        ULANG) -- konfirmasi 3 titik `min(150, ...)`/`max(0, min(150,
+        int(vol)))` yang perlu diseragamkan.
+      - >
+        Tambah konstanta modul `MAX_VOLUME = 100` di
+        engine/volume_service.py (dekat import/di atas class). Ganti
+        SEMUA literal `150` di file itu (3 titik) jadi `MAX_VOLUME`.
+      - >
+        Cek apakah server perlu mengekspos `MAX_VOLUME` ini ke frontend
+        supaya slider HTML `max="100"` di
+        `web/static/pages/app/index.html:219` tidak lagi angka hardcode
+        terpisah yang kebetulan sama. Kalau repo SUDAH punya mekanisme
+        config-ke-frontend (cek apakah ada endpoint config/settings yang
+        di-fetch frontend saat load, mis. `/api/config` atau sejenisnya
+        -- grep `server/handlers` untuk pola ini), tambahkan MAX_VOLUME
+        ke situ dan render slider `max` dari nilai itu di JS
+        (BUKAN mengubah HTML statis -- set `volSlider.max` via JS saat
+        render awal, cek pola render existing di
+        `web/static/shared/js/render/player.js`). Kalau TIDAK ada
+        mekanisme seperti itu, JANGAN membangun satu untuk task ini
+        (di luar scope) -- cukup tinggalkan HTML `max="100"` apa adanya
+        (sudah benar secara nilai, hanya bukan sumber kebenaran tunggal
+        secara arsitektur) dan catat ini sebagai batasan di PATCHLOG
+        notes.
+      - >
+        Test: volume_service dengan input 200 -> hasil ter-clamp ke 100
+        (bukan 150 lagi). Test volume_up() berulang dari 95 -> tidak
+        pernah melewati 100.
+    acceptance_criteria:
+      - "engine/volume_service.py tidak lagi punya literal 150 di jalur clamp volume -- satu konstanta MAX_VOLUME=100 dipakai konsisten."
+      - "Tidak ada jalur (command WS apa pun) yang bisa membuat volume MPV aktual melebihi 100 setelah perubahan ini."
+    tests:
+      run:
+        - "pytest tests/unit/engine/test_volume_service_max.py -q"
+        - "pytest tests/unit/engine/test_volume_service.py -q"
+    patchlog:
+      type: bug_fix
+      area: "engine"
+      title: "Batas volume backend diselaraskan dengan UI (100, bukan 150)"
+      reason: >
+        UI membatasi slider volume ke 100%, tapi backend
+        (volume_service.py) mengizinkan clamp hingga 150 -- inkonsistensi
+        yang bisa dieksploitasi lewat command WS langsung (bypass UI)
+        untuk memutar audio di volume yang tidak pernah dimaksudkan
+        pengguna.
+      root_cause: >
+        Dua sumber kebenaran terpisah untuk batas volume yang sama:
+        angka hardcode di HTML (100) dan literal terpisah di
+        volume_service.py (150), tidak pernah disinkronkan.
+      solution: >
+        MAX_VOLUME=100 sebagai konstanta tunggal di volume_service.py.
+        Sinkronisasi ke frontend dilakukan HANYA jika mekanisme
+        config-ke-frontend sudah ada di repo (lihat notes untuk hasil
+        investigasi ini).
+      files: "engine/volume_service.py, tests/unit/engine/test_volume_service_max.py"
+      notes: "Tidak menyentuh file locked. Catat di sini apakah sinkronisasi ke frontend dilakukan atau ditinggalkan sebagai batasan (lihat langkah 3)."
+
+  # ---------------------------------------------------------------------
+  - task_id: P04-T4
+    title: "Konfirmasi sebelum overwrite file download yang sudah ada"
+    proposal_ref: "§4.5"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - server/handlers/ws_download.py
+      create:
+        - tests/unit/server/handlers/test_ws_download_overwrite.py
+    steps:
+      - >
+        `view` server/handlers/ws_download.py, fungsi
+        `handle_download_command`, blok `if action == "download":`
+        (baris ~38-42 saat audit -- VERIFIKASI ULANG). Saat ini langsung
+        `await command_bus.execute(CMD_DOWNLOAD, track)` tanpa mengecek
+        apakah file untuk track ini sudah pernah didownload.
+      - >
+        SEBELUM memanggil `command_bus.execute(CMD_DOWNLOAD, ...)`, cek
+        `db_track = await tracks.get_track(track.video_id)` (pola sama
+        seperti dipakai di blok `delete_download` beberapa baris di
+        bawahnya) -- kalau `db_track` ada DAN `db_track.local_path` ada
+        DAN file itu benar-benar masih ada di disk
+        (`os.path.exists(db_track.local_path)`), JANGAN langsung
+        eksekusi CMD_DOWNLOAD. Sebagai gantinya, kirim event baru ke
+        client: `ws.send_str(json.dumps({"type": "download_conflict",
+        "data": {"video_id": track.video_id, "local_path":
+        db_track.local_path}}))` dan `return`.
+      - >
+        Tambah action WS baru `"download_confirm_overwrite"` di dispatch
+        table `DOWNLOAD_CMDS` (cek definisi set/tuple `DOWNLOAD_CMDS` di
+        `server/handlers/websocket.py`, tambahkan string baru ke situ)
+        yang, ketika dipanggil, LANGSUNG mengeksekusi CMD_DOWNLOAD tanpa
+        pengecekan konflik lagi (karena ini SUDAH konfirmasi eksplisit
+        dari client/user).
+      - >
+        JANGAN implementasikan UI/frontend untuk dialog konfirmasi ini
+        dalam task backend ini -- itu di luar scope task (kalau
+        diperlukan, jadi task frontend terpisah; task ini hanya
+        menyediakan kontrak event `download_conflict` yang bisa dipakai
+        frontend nanti). Catat ini eksplisit di PATCHLOG notes sebagai
+        "backend-only, frontend dialog belum diimplementasikan".
+      - >
+        Test: download track yang `local_path`-nya SUDAH ada di disk
+        (mock `os.path.exists` True) -> assert event `download_conflict`
+        terkirim, CMD_DOWNLOAD TIDAK terpanggil. Test kedua: track yang
+        belum pernah didownload (get_track return None) -> CMD_DOWNLOAD
+        terpanggil seperti biasa (regresi check, perilaku existing
+        dipertahankan). Test ketiga: action
+        `download_confirm_overwrite` -> CMD_DOWNLOAD terpanggil langsung
+        tanpa cek konflik.
+    acceptance_criteria:
+      - "Download track yang file lokalnya sudah ada di disk TIDAK langsung menimpa -- mengirim event download_conflict dan menunggu konfirmasi eksplisit."
+      - "Download track baru (belum pernah ada) tidak terpengaruh -- berjalan seperti sebelumnya tanpa langkah ekstra."
+      - "Action download_confirm_overwrite tersedia sebagai jalur eksplisit untuk menimpa setelah user setuju."
+    tests:
+      run:
+        - "pytest tests/unit/server/handlers/test_ws_download_overwrite.py -q"
+        - "pytest tests/unit/server/handlers/test_ws_download.py -q"
+        - "pytest tests/integration/test_download_flow.py -q"
+    patchlog:
+      type: bug_fix
+      area: "server/handlers"
+      title: "Konfirmasi sebelum overwrite file download yang sudah ada"
+      reason: >
+        Download otomatis menimpa file lama tanpa konfirmasi, berisiko
+        kehilangan file yang sudah ada (mis. hasil edit manual pengguna
+        pada file audio) tanpa peringatan.
+      root_cause: >
+        handle_download_command() langsung mengeksekusi CMD_DOWNLOAD
+        begitu diminta, tanpa mengecek apakah local_path tujuan sudah
+        terisi.
+      solution: >
+        Cek keberadaan file sebelum eksekusi; kalau konflik, kirim event
+        download_conflict dan tunggu action eksplisit
+        download_confirm_overwrite dari client. Backend-only dalam task
+        ini -- dialog konfirmasi di frontend adalah pekerjaan terpisah.
+      files: "server/handlers/ws_download.py, server/handlers/websocket.py, tests/unit/server/handlers/test_ws_download_overwrite.py"
+      notes: "Tidak menyentuh file locked (websocket.py hanya tambah 1 string ke set DOWNLOAD_CMDS, bukan logika baru). Frontend dialog BELUM diimplementasikan -- backlog terpisah."
+
+  # ---------------------------------------------------------------------
+  - task_id: P04-T5
+    title: "Crossfade: restore volume eksplisit saat proses terputus"
+    proposal_ref: "§4.8"
+    depends_on: []
+    touches_locked_files: false
+    files:
+      modify:
+        - engine/playback/crossfade.py
+      create:
+        - tests/unit/engine/playback/test_crossfade_interrupted.py
+    steps:
+      - >
+        `view` engine/playback/crossfade.py fungsi `apply_crossfade_in`
+        dan `apply_crossfade_out` (baris 24-40 saat audit -- VERIFIKASI
+        ULANG). Kedua fungsi punya loop yang `break` ketika
+        `state.status not in (PLAYING, LOADING)`, tapi tidak
+        mengembalikan volume MPV ke nilai target setelah break.
+      - >
+        Di `apply_crossfade_in`: setelah loop (baik selesai normal maupun
+        `break` di tengah), tambah:
+        `else:` TIDAK dipakai (Python for-else tidak cocok untuk kasus
+        break eksplisit di sini) -- gunakan flag boolean
+        `interrupted = False` di-set `True` sebelum `break`, lalu SETELAH
+        loop: `if interrupted: await mpv.set_volume(state.volume)`
+        (kembalikan ke volume target penuh, BUKAN 0, karena crossfade-in
+        yang terinterupsi berarti track ini akan terus diputar/dijeda
+        pada volume normal, bukan volume fade parsial).
+      - >
+        Di `apply_crossfade_out`: pola serupa dengan flag `interrupted`.
+        Kalau terinterupsi (status bukan lagi PLAYING/LOADING di
+        tengah fade-out), JANGAN paksa `set_volume(0)` di akhir (baris
+        existing `if state.status in (PLAYING, LOADING): set_volume(0)`
+        sudah benar untuk kasus TIDAK terinterupsi -- fade-out selesai
+        natural). Untuk kasus terinterupsi, kembalikan ke
+        `state.volume` (nilai target sebelum fade dimulai) SAMA seperti
+        crossfade_in, dengan alasan yang sama: state pemutaran berikutnya
+        harus mulai dari volume yang benar, bukan sisa fade parsial.
+      - >
+        Tambah docstring singkat di kedua fungsi menjelaskan kontrak
+        baru: "Jika terinterupsi (status berubah di tengah proses),
+        volume MPV dikembalikan ke state.volume secara eksplisit,
+        supaya pemutaran berikutnya tidak mewarisi volume fade parsial
+        yang salah."
+      - >
+        Test `apply_crossfade_in` diinterupsi di tengah (mock
+        `state.status` berubah ke STOPPED setelah beberapa iterasi
+        `asyncio.sleep` -- pakai teknik mocking yang sama dipakai
+        `tests/unit/engine/playback/test_crossfade.py` existing kalau
+        ada) -> assert `mpv.set_volume` dipanggil TERAKHIR KALI dengan
+        `state.volume` (nilai penuh), bukan nilai parsial terakhir dari
+        loop. Test yang sama untuk `apply_crossfade_out` diinterupsi.
+        Test regresi: crossfade SELESAI NORMAL (tidak diinterupsi) --
+        perilaku akhir (`mpv.set_volume` dipanggil dengan urutan nilai
+        ramping penuh, diakhiri 0 untuk fade-out) TIDAK berubah dari
+        sebelumnya.
+    acceptance_criteria:
+      - "Crossfade yang diinterupsi (status berubah di tengah proses) selalu diakhiri dengan mpv.set_volume(state.volume) sebagai panggilan terakhir, bukan volume parsial."
+      - "Crossfade yang selesai normal (tidak diinterupsi) tidak berubah perilakunya sama sekali -- test existing test_crossfade.py tetap hijau tanpa modifikasi."
+    tests:
+      run:
+        - "pytest tests/unit/engine/playback/test_crossfade_interrupted.py -q"
+        - "pytest tests/unit/engine/playback/test_crossfade.py -q"
+    patchlog:
+      type: bug_fix
+      area: "engine/playback"
+      title: "Crossfade: volume dikembalikan eksplisit saat proses terputus"
+      reason: >
+        Crossfade yang terinterupsi (mis. user menekan stop/pause di
+        tengah fade) meninggalkan volume MPV di nilai ramping parsial,
+        bukan volume yang seharusnya -- pemutaran berikutnya mewarisi
+        volume yang salah sampai ada perubahan volume eksplisit lain.
+      root_cause: >
+        Loop ramping volume di apply_crossfade_in/out hanya `break` saat
+        terinterupsi tanpa langkah eksplisit mengembalikan volume ke
+        nilai target/final yang benar.
+      solution: >
+        Flag `interrupted` dilacak di kedua fungsi; jika loop terputus,
+        mpv.set_volume(state.volume) dipanggil eksplisit sebagai langkah
+        korektif terakhir sebelum fungsi selesai.
+      files: "engine/playback/crossfade.py, tests/unit/engine/playback/test_crossfade_interrupted.py"
+      notes: "Tidak menyentuh file locked."
+
+  # ---------------------------------------------------------------------
+  - task_id: P04-T6
+    title: "Sapuan unused import / wildcard import (ruff F401/F403/F841)"
+    proposal_ref: "§5.1"
+    depends_on: ["P04-T1", "P04-T2"]
+    touches_locked_files: false
+    files:
+      modify: []  # ditentukan dinamis oleh hasil linter, lihat langkah 1-2
+    steps:
+      - >
+        Konfirmasi tooling linter yang sudah dipakai repo: `view`
+        `pyproject.toml` untuk konfigurasi `ruff`/`flake8`/dll yang sudah
+        ada. Kalau `ruff` sudah jadi dependency dev, jalankan
+        `ruff check --select F401,F403,F841 .` dari root repo. Kalau
+        belum ada ruff di environment, `pip install ruff
+        --break-system-packages` HANYA untuk keperluan cek ini (tidak
+        perlu ditambahkan ke requirements kecuali repo memang mau
+        mengadopsinya permanen -- itu keputusan terpisah di luar scope
+        task ini).
+      - >
+        Review OUTPUT linter SATU PER SATU secara manual -- JANGAN
+        auto-fix massal (`ruff check --fix`) tanpa review, karena
+        beberapa wildcard import di repo ini SENGAJA dipakai untuk
+        re-export (lihat contoh `server/middleware/__init__.py:33-35`
+        yang me-re-export `traffic_middleware` dari submodule -- ini pola
+        SAH, bukan bug). Untuk tiap temuan F401 (unused import), F403
+        (wildcard import), F841 (unused variable): klasifikasikan sebagai
+        (a) benar-benar tidak terpakai -> hapus, atau (b) re-export/pola
+        sengaja -> biarkan, tambahkan `# noqa: F401` dengan komentar
+        alasan singkat kalau linter akan terus menandainya di CI masa
+        depan.
+      - >
+        JANGAN masukkan file yang SUDAH ditangani task lain di fase ini
+        (P04-T1 core/security.py, P04-T2 engine/radio/artist_selector.py)
+        ke dalam sapuan ini lagi -- keduanya sudah dibereskan di task
+        masing-masing dengan investigasi lebih dalam, bukan cuma
+        auto-cleanup generik.
+      - >
+        Kelompokkan perubahan per area (mis. 1 commit/PATCHLOG entry
+        untuk `engine/`, 1 untuk `server/`, 1 untuk `web/static/` kalau
+        linter JS terpisah tersedia) SUPAYA diff tetap tertelusuri --
+        JANGAN satu commit raksasa lintas seluruh repo tanpa pengelompokan,
+        konsisten dengan governance "1 fase = 1 PATCHLOG entry, tidak
+        digabung lintas file/fase" -- tapi karena ini SATU task_id,
+        boleh 1 PATCHLOG entry untuk keseluruhan task ini asalkan
+        deskripsi mencantumkan daftar file yang tersentuh.
+      - >
+        Setelah tiap kelompok perubahan: jalankan test suite penuh area
+        terkait (`pytest tests/unit/<area> -q`) untuk memastikan
+        penghapusan import tidak diam-diam menghapus sesuatu yang
+        ternyata dipakai lewat efek samping import (mis. registrasi
+        route/command via decorator saat modul di-import).
+    acceptance_criteria:
+      - "ruff check --select F401,F403,F841 (atau linter setara) bersih di seluruh file yang disentuh task ini, KECUALI baris yang eksplisit diberi noqa dengan alasan tercatat."
+      - "Full test suite (pytest -q) tetap hijau setelah seluruh sapuan -- tidak ada import yang ternyata dibutuhkan untuk efek samping (registrasi decorator dll.) terhapus tanpa sadar."
+    tests:
+      run:
+        - "ruff check --select F401,F403,F841 ."
+        - "pytest -q"
+    patchlog:
+      type: cleanup
+      area: "lintas repo (lihat files.modify di entry PATCHLOG aktual)"
+      title: "Sapuan unused import & wildcard import"
+      reason: >
+        Banyak unused import, atribut mati, dan wildcard import yang
+        menyulitkan maintenance tersebar di repo, di luar 2 kasus yang
+        sudah ditangani lebih dalam di P04-T1 dan P04-T2.
+      root_cause: >
+        Tidak ada gate linter (F401/F403/F841) yang ditegakkan konsisten
+        di CI/doctor.py selama ini.
+      solution: >
+        Review manual per temuan linter, hapus yang benar-benar tidak
+        terpakai, tandai eksplisit (noqa + alasan) untuk wildcard
+        import/re-export yang sengaja. Direkomendasikan menambahkan
+        ruff check --select F401,F403,F841 ke automation/doctor.py
+        sebagai gate permanen (keputusan terpisah, TIDAK dieksekusi
+        otomatis di task ini kecuali pemilik project menyetujui).
+      files: "TENTUKAN saat eksekusi berdasarkan hasil linter -- catat daftar lengkap di PATCHLOG entry aktual."
+      notes: >
+        Tidak menyentuh file locked. Task ini SENGAJA tidak
+        mendaftar files.modify statis karena scope ditentukan hasil
+        linter saat eksekusi, bukan direncanakan di muka.
+
+post_phase_commands:
+  - "python automation/doctor.py"
+  - "python automation/generate_file_index.py"
+  - "python automation/generate_report.py"

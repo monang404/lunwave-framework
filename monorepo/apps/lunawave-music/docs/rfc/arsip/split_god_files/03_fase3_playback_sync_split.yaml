@@ -1,0 +1,269 @@
+# 03_fase3_playback_sync_split.yaml
+# Fase 3 -- Temuan J. Risiko rendah-sedang, independen dari fase 2 (I).
+# WAJIB baca 00_INDEX.yaml > koreksi_dan_temuan_tambahan sebelum mulai --
+# re-export list di sini LEBIH BESAR dari yang disebut proposal asli.
+
+fase: 3
+temuan: J
+parallel_ok: true
+risk: low-medium
+depends_on: []
+
+konteks_terverifikasi:
+  file_asal: "web/static/shared/js/audio/playback-sync.js"
+  baris_total: 499
+  caller_eksternal_terverifikasi: >
+    Dijalankan `grep -rn "from.*playback-sync" web/ tests/` -- 17 file
+    mengimpor total 11 nama BERBEDA langsung dari playback-sync.js:
+      - unlockBrowserAudio: platform/touch.js, events/click-delegation-events.js,
+        events/keyboard-shortcut-events.js, events/settings-events.js,
+        events/transport-events.js, events/index.js, events/action-modal-events.js,
+        events/queue-events.js, pages/client/client.js
+      - getOrInitAudio: services/auth.js, ws.js, render/full-state.js,
+        render/player.js, events/settings-events.js, events/transport-events.js,
+        events/progress-events.js, pages/client/client.js
+      - resetLastLoadedVideoId: services/auth.js
+      - analyser, dataArray: audio/visualizer.js (import langsung, TIDAK
+        disebut proposal sama sekali -- lihat koreksi di 00_INDEX.yaml)
+      - _resumeAndPlay: ws.js
+      - syncBrowserAudio: ws.js, render/full-state.js,
+        events/transport-events.js, events/index.js, pages/client/client.js
+      - updateMediaSession: render/full-state.js
+      - _fadeIntervals: render/player.js, events/transport-events.js
+      - activeAudioIndex: render/player.js
+      - initAudio: pages/app/main.js, pages/client/client.js
+    Test yang import langsung dari path ini (perlu tetap resolve pasca
+    split): tests/frontend/audio/playback-sync.test.js,
+    tests/frontend/ws-routing.test.js, tests/frontend/services/auth.test.js,
+    tests/frontend/pause-race.test.js, tests/frontend/render/full-state.test.js,
+    tests/frontend/events/queue-events.test.js,
+    tests/frontend/events/keyboard-shortcut-events.test.js,
+    tests/frontend/events/transport-events.test.js,
+    tests/frontend/events/progress-events.test.js,
+    tests/frontend/events/click-delegation-events.test.js,
+    tests/frontend/events/settings-events.test.js,
+    tests/frontend/events/action-modal-events.test.js,
+    tests/frontend/events/index.test.js.
+  konsekuensi: >
+    SEMUA 11 nama di atas WAJIB tetap bisa diimpor dari
+    `playback-sync.js` lewat re-export (proposal §4.J sudah benar soal
+    prinsipnya, cuma daftarnya tidak lengkap -- cuma sebut 4 dari 11).
+    Kalau salah satu tertinggal, akan ada `SyntaxError: The requested
+    module does not provide an export named 'X'` di runtime browser
+    ATAU test vitest yang langsung gagal saat import.
+
+keputusan_desain_tambahan_analyser_dataArray:
+  masalah: >
+    `analyser`, `dataArray` (export let, baris 20-21), dan fungsi privat
+    `_initAnalyser(ctx)` (baris 32-49) BUKAN bagian dari 3 concern yang
+    disebutkan desain proposal §4.J (audio-pool+unlock, sync inti,
+    MediaSession). Ketiganya tentang Web Audio API AnalyserNode untuk
+    visualizer (dipakai `audio/visualizer.js`).
+  hasil_verifikasi_nyata: >
+    `grep -rn "_initAnalyser" web/` DIJALANKAN (bukan cuma direncanakan)
+    saat menyusun RFC ini: `_initAnalyser` TIDAK dipanggil dari mana pun
+    di seluruh codebase -- 3 match yang ada semuanya cuma KOMENTAR
+    (playback-sync.js baris 26, 32 [definisi fungsi itu sendiri], dan
+    2 komentar di visualizer.js baris 6 & 60 yang MENJELASKAN kenapa
+    fungsi ini sengaja tidak dipanggil -- lihat baris 218 di
+    playback-sync.js: "PATCH-AUDIO-FIX: _initAnalyser() SENGAJA tidak
+    dipanggil di sini", karena createMediaElementSource membisukan
+    stream yang di-redirect cross-origin). KESIMPULAN: `_initAnalyser`
+    adalah DEAD CODE terverifikasi, bukan asumsi. `analyser`/`dataArray`
+    tetap dipakai (di-import visualizer.js) tapi SELALU tetap `null`
+    di runtime produksi saat ini karena `_initAnalyser` yang seharusnya
+    mengisinya tidak pernah dipanggil.
+  keputusan: >
+    `analyser`, `dataArray`, `_initAnalyser` (dead code) TETAP dipindah
+    ke `audio-pool.js` apa adanya (fungsi TIDAK dihapus di RFC ini --
+    menghapus dead code adalah keputusan terpisah, DI LUAR SCOPE Temuan
+    J yang murni soal split-by-concern, bukan cleanup logic. Kalau mau
+    dihapus, itu PATCHLOG/task terpisah, catat sebagai temuan tambahan
+    di luar dokumen seperti pola RFC #1). `analyser`/`dataArray` tetap
+    diekspor ulang dari playback-sync.js supaya `audio/visualizer.js`
+    (`import { analyser, dataArray } from "./playback-sync.js"`) tidak
+    perlu diubah sama sekali.
+  temuan_tambahan_cross_module_updateMediaSessionState: >
+    Ditemukan saat verifikasi (bukan diasumsikan): `initAudioPool()`
+    (baris 58-114, domain audio-pool.js) memasang event listener
+    'pause'/'play' pada tiap elemen audio yang memanggil
+    `_updateMediaSessionState("paused")` / `_updateMediaSessionState("playing")`
+    (baris 82, 98) -- fungsi itu privat di desain media-session.js (task
+    J.2). Ini coupling silang yang tidak disebut proposal §4.J sama
+    sekali. KEPUTUSAN: `_updateMediaSessionState` diekspor (bukan privat)
+    dari media-session.js, dan audio-pool.js
+    `import { _updateMediaSessionState } from "./media-session.js";`.
+    Ini circular import KEDUA di split ini (audio-pool.js <-> media-session.js,
+    selain audio-pool.js <-> playback-sync.js yang sudah dibahas di J.1)
+    -- sama-sama aman karena kedua pemanggilan terjadi di dalam function
+    body (event listener callback), bukan saat top-level module
+    evaluation, tapi wajib tercatat eksplisit supaya task J.1/J.2 tidak
+    lupa menambahkan import ini.
+
+desain_final_3_modul:
+  - file: "web/static/shared/js/audio/audio-pool.js"
+    isi: "audioPool (const, TIDAK diekspor di desain lama -- cek ulang apakah ada caller eksternal ke audioPool langsung sebelum diputuskan tetap privat), getOrInitAudio, initAudioPool, unlockBrowserAudio, _showTapToPlayBanner, _hideTapToPlayBanner, _fadeVolume, analyser, dataArray, _initAnalyser (3 terakhir: koreksi desain di atas), _resumeAndPlay, audioUnlocked/_unlocking/audioCtx (module-level state, privat)"
+  - file: "web/static/shared/js/audio/media-session.js"
+    isi: "updateMediaSession, _updateMediaSessionState, _lastMediaSessionVideoId (state privat)"
+  - file: "web/static/shared/js/audio/playback-sync.js"
+    isi: "THIN -- import dari 2 modul di atas + syncBrowserAudio (baris 273-398, concern inti: baca store, putuskan audio mana yang harus play/pause/seek), resetLastLoadedVideoId, activeAudioIndex, _fadeIntervals, _lastLoadedVideoId (state ini TETAP di playback-sync.js karena syncBrowserAudio yang paling banyak baca/tulisnya, BUKAN pindah ke audio-pool.js -- proposal §4.J tidak eksplisit soal ini, keputusan diambil karena _lastLoadedVideoId/_fadeIntervals/activeAudioIndex adalah STATE SINKRONISASI, bukan state pool audio elemen itu sendiri), initAudio, CROSSFADE_DURATION (const), plus RE-EXPORT semua 11 nama dari daftar caller_eksternal_terverifikasi di atas."
+
+tasks:
+  - id: J.1
+    title: "Buat audio-pool.js -- pindahkan pool management + analyser/Web Audio graph + unlock + fade + tap-to-play banner"
+    files:
+      - path: "web/static/shared/js/audio/audio-pool.js"
+        action: create
+        deskripsi: >
+          Pindahkan BODY PERSIS: audioPool const (baris 7), analyser/
+          dataArray let + _initAnalyser (19-49), getOrInitAudio (54-56),
+          initAudioPool + pemanggilannya `initAudioPool();` (58-115),
+          globalThis.audioBlocked = false (118), _showTapToPlayBanner/
+          _hideTapToPlayBanner (120-153), _resumeAndPlay (155-170),
+          unlockBrowserAudio (192-246), _fadeVolume (248-271). Import
+          yang dibutuhkan file baru ini: `initVisualizer,
+          resumeVisualizerLoop, startFakeBeatLoop` dari "./visualizer.js",
+          `emit` dari "../bus.js", `isPendingToggleActive,
+          markPendingToggle, store` dari "../store.js",
+          `syncLocalLyrics, wsSend` dari "../ws.js", DAN
+          `_updateMediaSessionState` dari "./media-session.js" (dipakai
+          di dalam `initAudioPool()`'s 'pause'/'play' listener, baris 82
+          & 98 -- lihat temuan_tambahan_cross_module_updateMediaSessionState
+          di atas; ini artinya task J.2 harus mengekspor fungsi ini,
+          bukan biarkan privat). PERHATIAN:
+          unlockBrowserAudio memanggil `syncBrowserAudio` (baris 194, 205,
+          232, 241) yang TETAP tinggal di playback-sync.js -- ini
+          circular reference kalau audio-pool.js import syncBrowserAudio
+          dari playback-sync.js DAN playback-sync.js import
+          unlockBrowserAudio dari audio-pool.js. SELESAIKAN dengan:
+          `unlockBrowserAudio` menerima syncBrowserAudio TIDAK lewat
+          import statis di top, melainkan playback-sync.js yang
+          menyuntikkan lewat cara lain -- ATAU (lebih sederhana, DIPILIH
+          di sini) audio-pool.js tetap `import { syncBrowserAudio } from
+          "./playback-sync.js"` dan playback-sync.js `import {
+          unlockBrowserAudio, ... } from "./audio-pool.js"` -- ES module
+          MENDUKUNG circular import antar 2 file selama tidak dipakai
+          di top-level module-evaluation time (di sini keduanya cuma
+          dipanggil di dalam function body, bukan saat modul di-load),
+          jadi AMAN, TAPI WAJIB diverifikasi dengan smoke test (task J.4)
+          karena ini titik paling rawan di seluruh split J.
+          document.addEventListener('visibilitychange', ...) (172-190)
+          JUGA pindah ke sini (butuh getOrInitAudio + _resumeAndPlay,
+          domain audio-pool) -- TAPI baris di dalamnya memanggil
+          `resumeVisualizerLoop`/`setRadioHeroAnimState`/`dom.radioToggleBtn`
+          (184) dan `store.status`/`emit` (176-188) yang lintas concern;
+          verifikasi ulang saat eksekusi apakah listener ini lebih pas
+          di orchestrator level (playback-sync.js) daripada audio-pool.js
+          murni -- CATAT keputusan final di PATCHLOG notes kalau berbeda
+          dari sini.
+    verifikasi:
+      - "node --check web/static/shared/js/audio/audio-pool.js"
+      - "npx eslint web/static/shared/js/audio/audio-pool.js"
+
+  - id: J.2
+    title: "Buat media-session.js -- pindahkan Media Session API (independen total, concern paling terisolasi)"
+    files:
+      - path: "web/static/shared/js/audio/media-session.js"
+        action: create
+        deskripsi: >
+          Pindahkan BODY PERSIS: _updateMediaSessionState (406-411,
+          UBAH jadi `export function` -- BUKAN privat seperti nama
+          awalannya menyiratkan, karena audio-pool.js butuh
+          mengimpornya, lihat temuan_tambahan_cross_module_updateMediaSessionState
+          di atas), _lastMediaSessionVideoId let (413), updateMediaSession
+          (415-499). Import dibutuhkan: `store, markPendingToggle` dari
+          "../store.js", `emit` dari "../bus.js", `wsSend` dari "../ws.js",
+          `unlockBrowserAudio` dari "./audio-pool.js" (dipakai di
+          `_optimisticToggle`, baris 450-451), `syncBrowserAudio` dari
+          "./playback-sync.js" (dicek fungsi ini dipakai di baris 450
+          hanya lewat `typeof syncBrowserAudio === "function"` guard --
+          TETAP wajib diimport supaya guard itu valid, bukan selalu
+          false). Modul ini PALING TERISOLASI dari 3 modul (tidak ada
+          module lain yang bergantung baliknya kecuali playback-sync.js
+          thin re-export), cocok dikerjakan lebih dulu dari J.1 kalau
+          mau minimalkan risiko circular-import sementara J.1 masih
+          dikerjakan.
+    verifikasi:
+      - "node --check web/static/shared/js/audio/media-session.js"
+      - "npx eslint web/static/shared/js/audio/media-session.js"
+
+  - id: J.3
+    title: "Tulis ulang playback-sync.js jadi thin: syncBrowserAudio + state sinkronisasi + re-export 11 nama"
+    files:
+      - path: "web/static/shared/js/audio/playback-sync.js"
+        action: edit
+        deskripsi: >
+          Ganti SELURUH isi file (499 baris) jadi:
+          1. Import dari audio-pool.js: getOrInitAudio, unlockBrowserAudio,
+             _resumeAndPlay, _fadeVolume, analyser, dataArray (analyser/
+             dataArray diimpor HANYA untuk di-re-export, lihat poin 3).
+          2. Import dari media-session.js: TIDAK PERLU (playback-sync.js
+             tidak memanggil updateMediaSession secara internal -- cek
+             ulang: grep "updateMediaSession" di isi asli file, kalau
+             ternyata dipanggil dari dalam syncBrowserAudio, import di
+             sini juga. Verifikasi saat eksekusi, jangan asumsi kosong.)
+          3. State yang TETAP di file ini: `export let activeAudioIndex`,
+             `export let _fadeIntervals`, `_lastLoadedVideoId` (privat +
+             `export function resetLastLoadedVideoId()`), `CROSSFADE_DURATION`
+             const (privat, dipakai syncBrowserAudio).
+          4. Fungsi yang TETAP: `syncBrowserAudio` (body persis baris
+             273-398), `initAudio` (400-402, `document.addEventListener("click", unlockBrowserAudio)`).
+          5. RE-EXPORT WAJIB (semua 11 nama dari caller_eksternal_terverifikasi
+             di atas) via named re-export:
+          ```js
+          export { getOrInitAudio, unlockBrowserAudio, _resumeAndPlay, analyser, dataArray } from "./audio-pool.js";
+          export { updateMediaSession } from "./media-session.js";
+          ```
+          Ditambah export lokal: syncBrowserAudio, activeAudioIndex,
+          _fadeIntervals, resetLastLoadedVideoId, initAudio (sudah
+          didefinisikan lokal di file ini, tidak perlu re-export
+          statement terpisah).
+          CATATAN: `export { X } from "./Y.js"` mempertahankan LIVE
+          BINDING untuk `export let` (analyser, dataArray, activeAudioIndex,
+          _fadeIntervals) -- caller yang baca ulang nilainya (bukan
+          destructure sekali di awal) akan tetap dapat nilai terbaru,
+          PERSIS seperti sebelum split. Ini penting untuk
+          `render/player.js` yang import `_fadeIntervals, activeAudioIndex`
+          (nilai yang berubah-ubah saat runtime, bukan konstanta).
+    verifikasi:
+      - "node --check web/static/shared/js/audio/playback-sync.js"
+      - "npx eslint web/static/shared/js/audio/*.js"
+      - |
+        grep -o 'from "\./playback-sync\.js"' -r web/static tests --include="*.js" | wc -l
+        # bandingkan dengan jumlah SEBELUM split (17 file, sudah dihitung
+        # di konteks_terverifikasi) -- harus SAMA, karena tidak ada 1 pun
+        # caller yang perlu diubah pathnya (itu inti tujuan re-export).
+
+  - id: J.4
+    title: "Jalankan test suite vitest penuh + smoke-check circular import J.1<->J.3"
+    verifikasi:
+      - "npx vitest run tests/frontend/audio/playback-sync.test.js -q"
+      - "hasil_diharapkan: semua test di file ini PASS -- ini satu-satunya file test yang punya nama sama persis dengan modul yang di-split, prioritas utama harus tetap hijau."
+      - "npx vitest run  # full suite, baseline sebelum fase ini: 679/679 pass (41 file) menurut PATCH-2026-07-26-240 -- WAJIB tetap 679/679 pass (boleh lebih kalau ada test baru ditambah, TIDAK BOLEH kurang atau ada yang FAIL)"
+      - "npx depcruise web/static/shared/js/audio -T json > /tmp/depcruise-after-J.json  # cek circular dependency audio-pool.js<->playback-sync.js MUNCUL (diharapkan, sudah dianalisis aman di J.1) tapi TIDAK ADA cycle baru yang melibatkan media-session.js atau file DI LUAR folder audio/"
+      - "npx eslint web/static/shared/js/audio/"
+
+patchlog_group: "J.1-J.4 satu entry gabungan setelah J.4 selesai -- 2 modul baru + thin playback-sync.js cuma valid dieksekusi bersama dalam 1 pass (re-export di J.3 butuh J.1/J.2 sudah ada)."
+
+patchlog_cmd: |
+  python automation/patchlog.py add \
+    --type Refactor --area Frontend --priority Medium \
+    --title "Split playback-sync.js jadi 3 modul by concern (audio-pool, media-session, sync inti)" \
+    --reason "playback-sync.js 499 baris mencampur 5 concern audio (pool init, tap-to-play banner, volume fade, unlock browser audio, sync inti, MediaSession API) yang kebetulan semuanya menyentuh elemen <audio> (proposal_god_file_splitting.md Temuan J)" \
+    --files "web/static/shared/js/audio/playback-sync.js,web/static/shared/js/audio/audio-pool.js,web/static/shared/js/audio/media-session.js" \
+    --symbols "analyser,dataArray,_initAnalyser() -- dipindah ke audio-pool.js (koreksi terhadap desain proposal asli, lihat 00_INDEX.yaml)" \
+    --root-cause "'Audio playback sync' terasa seperti 1 domain padahal 3 concern berbeda: browser API pool/unlock, sinkronisasi status server-audio, dan MediaSession OS-level yang sepenuhnya independen" \
+    --solution "Split 3 modul + re-export SEMUA 11 nama publik (bukan 4 seperti klaim awal proposal, diverifikasi ulang lewat grep terhadap 17 file caller nyata) dari playback-sync.js supaya 0 caller eksternal perlu diubah pathnya" \
+    --tests "npx vitest run -> 679/679 pass tetap terjaga (baseline PATCH-2026-07-26-240); npx vitest run tests/frontend/audio/playback-sync.test.js -> pass; depcruise -> cycle audio-pool<->playback-sync teridentifikasi dan dianggap aman (dipakai di dalam function body, bukan top-level module evaluation)" \
+    --breaking No --risk Medium --status Merged \
+    --related PATCH-2026-07-26-240
+checkpoint_cmd: >
+  zip -rq checkpoints/lunawave-J.zip . -x ".git/*" -x "*__pycache__*"
+  -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+  -x "*.DS_Store" -x "checkpoints/*"
+
+verifikasi_fase_selesai:
+  - "npx vitest run -> 679/679 pass (atau lebih, tidak boleh kurang)"
+  - "npx eslint web/static/shared/js/audio/ -> 0 error"
+  - "wc -l web/static/shared/js/audio/playback-sync.js -> jauh lebih kecil dari 499"
+  - "1 entry baru muncul di docs/PATCHLOG.md"

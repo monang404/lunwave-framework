@@ -1,0 +1,220 @@
+# 09_tahap3_event_bus_events_index.yaml
+# Tahap 3 dari proposal_event_bus_frontend.md — hub events/index.js (15 edge
+# di data_mentah_edge_list_67 milik 04_sesi4_circular_deps.yaml). Katalog di
+# §3.4 proposal sengaja kerangka ("detail final saat tahapnya tiba") -- file
+# ini hasil finalisasi tsb, disusun dari pembacaan langsung events/index.js
+# (184 baris) dan seluruh pengimpornya per 2026-07-25, SETELAH Tahap 1
+# selesai (PATCH-2026-07-25-232). Tahap 2 (08_tahap2_event_bus_ws.yaml)
+# BELUM dieksekusi saat file ini ditulis -- lihat depends_on.
+
+tahap: 3
+proposal_acuan: "docs/rfc/pemulihan_frontend/proposal_event_bus_frontend.md"
+depends_on: ["Tahap 2 (ws.js) selesai + depcruise diregenerate ulang -- urutan ditetapkan proposal §4"]
+parallel_ok: false
+risk: sedang
+butuh_konfirmasi_user_sebelum_mulai: true
+
+catatan_investigasi_penting: >
+  Hasil audit langsung ke 15 edge events/index.js (bukan diasumsikan dari
+  proposal): 14 di antaranya SUDAH legitimate tanpa perlu perubahan kode --
+  13 adalah pemanggilan init<X>Events() ke sub-modul events/* saat bootstrap
+  (peran resmi hub ini, bukan masalah), dan 1 adalah events/index.js ->
+  render/discover-personalize.js (initDiscoverFilterEvents) yang juga
+  fungsi INIT/bootstrap wiring, PERSIS seperti yang sudah diperkirakan
+  proposal §3.4 baris "kemungkinan besar tetap direct import, perlu
+  dikonfirmasi saat Tahap 3" -- dikonfirmasi di sini: TETAP direct import.
+  Edge events/index.js -> audio/playback-sync.js (syncBrowserAudio,
+  unlockBrowserAudio), -> services/auth.js (applyRoleUI, login, logout,
+  submitSetup), -> ws.js (wsSend) semuanya arah MEMERINTAH, legitimate
+  per §2 proposal, tidak diubah.
+
+  SATU-SATUNYA target nyata: fungsi `switchTab()` didefinisikan di
+  events/index.js baris 26-55, tapi ISINYA murni manipulasi DOM (ganti
+  class active tab, aria-selected, fokus search input) -- sebuah fungsi
+  render/UI, cuma kebetulan tinggal di file hub. ini dipanggil balik oleh
+  6 modul lain (semua jadi edge circular-dependency di 04_sesi4):
+    - events/keyboard-shortcut-events.js (shortcut "/")
+    - events/settings-events.js (tidak dipakai langsung -- re-cek: TIDAK
+      ditemukan pemanggilan switchTab di file ini per audit ulang 2026-07-25,
+      kemungkinan edge 04_sesi4 sudah stale / sudah dibersihkan sesi lain.
+      STOP jika ditemukan kembali saat eksekusi -- laporkan, jangan
+      berasumsi.)
+    - events/transport-events.js baris 16 (klik track-info -> balik ke Home)
+    - render/discover-personalize.js baris 219 (setelah play artis -> Home)
+    - render/discover-tab.js baris 102, 126 (setelah play track -> Home)
+    - services/auth.js baris 18, 25 (setelah login/logout -> Home)
+
+keputusan_perlu_konfirmasi_user:
+  - item: "Cara membereskan switchTab"
+    kenapa_bukan_bus_emit: >
+      switchTab BUKAN kasus "modul bawah push render ke atas" seperti
+      audio/playback-sync.js atau ws.js -- ini dipanggil SINKRON sebagai
+      reaksi langsung ke aksi user (klik, shortcut keyboard, hasil aksi
+      admin), butuh efek DOM seketika, dan tidak ada masalah urutan
+      subscribe/import seperti pola bus. Memaksa lewat bus.emit/bus.on di
+      sini nambah indirection tanpa manfaat memutus cycle (root cause-nya
+      lokasi file, bukan arah komunikasi).
+    opsi_direkomendasikan: >
+      Ekstrak switchTab() (persis isi baris 26-55, TANPA ubah logika) ke
+      modul leaf baru web/static/shared/js/render/navigation.js. events/
+      index.js dan 6 pemanggil lain import dari sana, bukan dari hub.
+      events/index.js sendiri tetap butuh switchTab (dipakai di baris 53
+      dalam switchTab() sendiri -- tidak, itu definisinya; dipakai di
+      initEvents() baris 62 lewat mood-card handler) jadi tetap import
+      balik dari leaf module yang baru, itu wajar (leaf modules boleh
+      diimpor siapa saja).
+    opsi_alternatif_kalau_ditolak: >
+      Kalau user tidak mau nambah file baru: dokumentasikan sebagai
+      exception di .dependency-cruiser.js (pola sama seperti
+      playback-sync<->visualizer di Sesi 4), TANPA refactor kode. Konsekuensi:
+      6 edge circular-dependency ini tetap ada permanen di angka akhir
+      Tahap 3 -- lihat verifikasi_selesai.
+
+task:
+  - id: T3.1
+    title: "Buat modul leaf baru render/navigation.js berisi switchTab (pindah verbatim dari events/index.js)"
+    prasyarat: "HANYA jalankan task T3.1-T3.4 kalau user pilih opsi_direkomendasikan di atas. Kalau user pilih opsi_alternatif, lompat ke T3.5."
+    action: create
+    file: "web/static/shared/js/render/navigation.js"
+    isi: |
+      // navigation.js -- switchTab dipindah dari events/index.js (Tahap 3
+      // event bus, docs/rfc/pemulihan_frontend/09_tahap3_event_bus_events_index.yaml).
+      // Alasan pindah: fungsi ini murni manipulasi DOM (render/UI), bukan
+      // logika bootstrap/inisialisasi, tapi sebelumnya tinggal di hub
+      // events/index.js sehingga jadi sumber 6 circular-dependency edge.
+      // Dipindah verbatim, TIDAK ada perubahan logika.
+      import { TABS } from "../config.js";
+      import { dom } from "../dom.js";
+      import { store } from "../store.js";
+      import { wsSend } from "../ws.js";
+
+      export function switchTab(tab) {
+          store.active_tab = tab;
+          document.body.dataset.activeTab = tab;
+
+          TABS.forEach((t) => {
+              const panel = dom["tab" + t.charAt(0).toUpperCase() + t.slice(1)];
+              if (panel) {
+                  if (t === tab) panel.classList.add("active");
+                  else panel.classList.remove("active");
+              }
+          });
+
+          /** @type {NodeListOf<HTMLElement>} */
+          (document.querySelectorAll(".nav-btn")).forEach((btn) => {
+              if (btn.dataset.tab === tab) {
+                  btn.classList.add("active");
+                  btn.setAttribute("aria-selected", "true");
+              } else {
+                  btn.classList.remove("active");
+                  btn.setAttribute("aria-selected", "false");
+              }
+          });
+
+          if (tab === "search") {
+              setTimeout(() => dom.searchInput.focus(), 100);
+          }
+          if (tab === "discover" || tab === "home") {
+              wsSend("discover");
+          }
+      }
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/render/navigation.js"
+
+  - id: T3.2
+    title: "events/index.js -- hapus definisi switchTab lokal, import dari navigation.js"
+    action: edit
+    file: "web/static/shared/js/events/index.js"
+    catatan_stop: >
+      Nomor baris hasil pembacaan langsung 2026-07-25 pasca-Tahap-1 (file
+      ini tidak disentuh Tahap 1/2). Kalau sudah berubah: STOP, laporkan.
+    hapus_baris:
+      - "baris 26-55: seluruh definisi export function switchTab(tab) { ... }"
+    tambah_import:
+      - 'import { switchTab } from "../render/navigation.js";  // baris baru, taruh dekat import render/discover-personalize.js yang sudah ada'
+    catatan: "Semua pemanggilan switchTab yang tersisa di file ini (baris 62 di initEvents(), lewat handler mood-card) tidak berubah -- tinggal pastikan referensinya sekarang resolve ke import, bukan ke fungsi lokal yang sudah dihapus."
+    verifikasi:
+      - "node --input-type=module --check < web/static/shared/js/events/index.js"
+
+  - id: T3.3
+    title: "Ganti sumber import switchTab di 6 pemanggil, dari events/index.js ke render/navigation.js"
+    action: edit
+    per_file:
+      - file: "web/static/shared/js/events/keyboard-shortcut-events.js"
+        baris: 3
+        lama: 'import { switchTab } from "./index.js";'
+        baru: 'import { switchTab } from "../render/navigation.js";'
+      - file: "web/static/shared/js/events/transport-events.js"
+        baris: 3
+        lama: 'import { switchTab } from "./index.js";'
+        baru: 'import { switchTab } from "../render/navigation.js";'
+      - file: "web/static/shared/js/render/discover-personalize.js"
+        baris: 2
+        lama: 'import { switchTab } from "../events/index.js";'
+        baru: 'import { switchTab } from "./navigation.js";'
+        catatan: "path relatif berubah jadi same-folder (render/) karena navigation.js sekarang tetangga discover-personalize.js."
+      - file: "web/static/shared/js/render/discover-tab.js"
+        baris: 2
+        lama: 'import { switchTab } from "../events/index.js";'
+        baru: 'import { switchTab } from "./navigation.js";'
+      - file: "web/static/shared/js/services/auth.js"
+        baris: 3
+        lama: 'import { switchTab } from "../events/index.js";'
+        baru: 'import { switchTab } from "../render/navigation.js";'
+    catatan_events_settings_events: >
+      Sesuai catatan_investigasi_penting: audit ulang 2026-07-25 TIDAK
+      menemukan pemanggilan switchTab di events/settings-events.js. Kalau
+      saat eksekusi ternyata ADA (file berubah sejak audit ini): tambahkan
+      task edit yang sama (import dari "../render/navigation.js"), laporkan
+      penyimpangan ini ke user, jangan diam-diam ditambahkan tanpa catatan.
+    verifikasi:
+      - "node --input-type=module --check untuk tiap 5 file di atas"
+      - "npx eslint web/static/shared/js/events/index.js web/static/shared/js/render/navigation.js web/static/shared/js/events/keyboard-shortcut-events.js web/static/shared/js/events/transport-events.js web/static/shared/js/render/discover-personalize.js web/static/shared/js/render/discover-tab.js web/static/shared/js/services/auth.js"
+
+  - id: T3.4
+    title: "Regenerate depcruise, bandingkan ke baseline Tahap 2"
+    action: verify
+    verifikasi:
+      - "npx depcruise --config .dependency-cruiser.js web/static/shared/js > /tmp/depcruise_t3.txt -- catat angka circular-dependencies, bandingkan ke baseline Tahap 2 (lihat entry PATCHLOG Tahap 2 untuk angka persisnya)"
+    catatan: "TARGET REALISTIS bukan 0 (§3.5 proposal). Edge events/index.js -> render/discover-personalize.js (initDiscoverFilterEvents, bootstrap init) TETAP ada di graph dan TETAP muncul sebagai warning -- itu diharapkan, sudah dikonfirmasi legitimate di atas."
+
+  - id: T3.5
+    title: "Dokumentasikan exception yang tersisa di .dependency-cruiser.js"
+    action: edit
+    file: ".dependency-cruiser.js"
+    detail: >
+      Tambah comment block pada rule 'circular-dependencies' (pola sama
+      seperti exception playback-sync<->visualizer dari Sesi 4) yang
+      menyebutkan: (a) events/index.js -> render/discover-personalize.js
+      (initDiscoverFilterEvents) adalah bootstrap-init call, sengaja
+      dibiarkan; (b) events/index.js -> events/*.js (13 edge) adalah peran
+      resmi hub inisialisasi, sengaja dibiarkan; (c) kalau user memilih
+      opsi_alternatif di T3 (tidak ekstrak switchTab), tambahkan juga
+      catatan bahwa 6 edge switchTab sengaja dibiarkan dengan alasan yang
+      sama seperti (a).
+    verifikasi:
+      - "python automation/verify_docs.py --json -> tetap PASS (kalau ada script serupa untuk .dependency-cruiser.js, jalankan juga)"
+
+  - id: T3.6
+    title: "Manual test navigasi tab (WAJIB, bukan cuma automated check)"
+    action: manual_test
+    checklist:
+      - "Klik tiap nav-btn (Home/Discover/Search/dst) -- tab aktif berpindah, aria-selected benar"
+      - "Shortcut '/' -- pindah ke tab Search, fokus ke search input"
+      - "Klik mood-card (kalau userRole admin) -- pindah ke Search, isi input dengan '<mood> mix'"
+      - "Klik track-info di player bar saat bukan di tab Home -- pindah ke Home"
+      - "Play track dari Discover / Discover artist detail -- pindah ke Home"
+      - "Login admin lalu logout -- keduanya balik ke Home"
+    laporan: "Laporkan hasil tiap item eksplisit ke user, jangan asumsikan lolos."
+
+  - id: T3.7
+    title: "Patchlog + checkpoint"
+    action: patchlog_cmd
+    detail: "Cek dulu `python automation/patchlog.py latest --n 1 --json` untuk nomor patch berikutnya sebelum menulis entry."
+    checkpoint_cmd: "zip checkpoint ke checkpoints/lunawave-T3-eventbus.zip"
+
+verifikasi_selesai:
+  - "render/navigation.js ada, berisi switchTab (kalau opsi_direkomendasikan dipilih)"
+  - "events/index.js tidak lagi mendefinisikan switchTab secara lokal"
+  - "6 (atau kurang, sesuai catatan_events_settings_events) pemanggil switchTab sudah import dari render/navigation.js"
+  - "npx depcruise -- angka circular-dependencies TURUN dari baseline Tahap 2 sebesar edge switchTab yang berhasil dipindah, TAPI TIDAK 0 -- sisa edge bootstrap-init (events/index.js -> events/*.js, -> render/discover-personalize.js) tetap muncul sebagai warning, itu WAJAR dan sudah didokumentasikan sebagai exception di T3.5"

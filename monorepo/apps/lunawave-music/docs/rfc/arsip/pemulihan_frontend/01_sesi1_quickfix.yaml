@@ -1,0 +1,142 @@
+# 01_sesi1_quickfix.yaml
+# Sesi 1 — Quick fixes zero-risk. Boleh paralel dengan sesi 2 dan 3.
+# Estimasi total: ~15 menit. Tidak mengubah behavior aplikasi sama sekali.
+
+session: 1
+parallel_ok: true
+risk: zero
+depends_on: []
+
+tasks:
+  - id: S1.1
+    title: "Buat .gitignore (hilang total sejak awal, verify_security.py FAIL)"
+    files:
+      - path: ".gitignore"
+        action: create
+        isi_lengkap: |
+          # Credentials & secrets
+          .env
+          .env.*
+          *.key
+          secrets/
+
+          # Database files
+          *.db
+          *.sqlite
+          *.sqlite3
+
+          # Dependencies
+          node_modules/
+          .venv/
+          venv/
+
+          # Python
+          __pycache__/
+          *.pyc
+          .pytest_cache/
+
+          # Cache runtime aplikasi
+          .cache/
+          cache/mp3/
+          cache/sockets/
+
+          # Checkpoint zip hasil task breakdown (bukan bagian source)
+          checkpoints/
+
+          # OS/editor
+          .DS_Store
+          .vscode/
+          *.swp
+    verifikasi:
+      - "python automation/verify_security.py --json"
+      - "hasil_diharapkan: status PASS (sebelumnya FAIL karena .gitignore tidak ada sama sekali)"
+    patchlog_cmd: |
+      python automation/patchlog.py add \
+        --type Build --area Tooling --priority Low \
+        --title "Tambah .gitignore yang sebelumnya hilang total" \
+        --reason "verify_security.py FAIL sejak audit pertama karena repo tidak punya .gitignore sama sekali" \
+        --files ".gitignore" \
+        --root-cause "Repo tidak pernah punya .gitignore, credential/DB file berisiko ter-commit tanpa sengaja" \
+        --solution "Tambah .gitignore minimal: kredensial (.env, *.key, secrets/), file DB (*.db, *.sqlite), node_modules/, __pycache__/, .cache/, cache/mp3, cache/sockets, checkpoints/" \
+        --tests "python automation/verify_security.py --json -> PASS" \
+        --breaking No --risk Low --status Merged
+    checkpoint_cmd: >
+      zip -rq checkpoints/lunawave-S1.1.zip . -x ".git/*" -x "*__pycache__*"
+      -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+      -x "*.DS_Store" -x "checkpoints/*"
+
+  - id: S1.2
+    title: "Perbaiki assertion stale di tests/unit/server/handlers/test_http.py"
+    catatan_penting: >
+      KOREKSI terhadap rencana-perbaikan-frontend.md: test ini BUKAN tentang
+      admin-logs.html seperti diklaim dokumen. Ini test untuk serve_index
+      (index.html). Sudah dikonfirmasi dengan pytest sungguhan: FAIL karena
+      assert path lama, production code sudah pindah ke pages/app/index.html
+      sejak migrasi pages. Kode produksi (server/handlers/http.py baris 45)
+      SUDAH BENAR — jangan diubah. Hanya assertion test yang perlu diupdate.
+    files:
+      - path: "tests/unit/server/handlers/test_http.py"
+        action: edit
+        cari_persis: |
+          mock_file_response.assert_called_once_with(Path("/fake/static/index.html"))
+        ganti_dengan: |
+          mock_file_response.assert_called_once_with(Path("/fake/static/pages/app/index.html"))
+        lokasi: "fungsi test_serve_index_returns_file_response, baris 61"
+    verifikasi:
+      - "python -m pytest tests/unit/server/handlers/test_http.py -q"
+      - "hasil_diharapkan: semua test di file ini PASS (sebelumnya 1 FAILED: test_serve_index_returns_file_response)"
+    patchlog_cmd: |
+      python automation/patchlog.py add \
+        --type Test --area Backend --priority Low \
+        --title "Perbaiki assertion stale test_serve_index_returns_file_response" \
+        --reason "Test masih assert path lama static/index.html, padahal server/handlers/http.py sudah serve dari pages/app/index.html sejak migrasi pages — test basi, bukan bug produksi" \
+        --files "tests/unit/server/handlers/test_http.py" \
+        --root-cause "Test tidak di-update saat migrasi struktur pages/ dilakukan di sesi RFC sebelumnya" \
+        --solution "Update assertion Path expected dari /fake/static/index.html ke /fake/static/pages/app/index.html, tanpa menyentuh kode produksi" \
+        --tests "pytest tests/unit/server/handlers/test_http.py -> pass" \
+        --breaking No --risk Low --status Merged \
+        --related PATCH-2026-07-24-223
+    checkpoint_cmd: >
+      zip -rq checkpoints/lunawave-S1.2.zip . -x ".git/*" -x "*__pycache__*"
+      -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+      -x "*.DS_Store" -x "checkpoints/*"
+
+  - id: S1.3
+    title: "Perbaiki assertion stale di tests/unit/server/handlers/test_log_dashboard.py"
+    catatan_penting: >
+      Ini yang benar-benar tentang admin-logs.html seperti diklaim dokumen.
+      Production code (server/handlers/log_dashboard.py baris 43) sudah
+      benar serve dari pages/admin-logs/admin-logs.html sejak sesi 6.
+    files:
+      - path: "tests/unit/server/handlers/test_log_dashboard.py"
+        action: edit
+        cari_persis: |
+          mock_file_response.assert_called_once_with(Path("/fake/static/admin-logs.html"))
+        ganti_dengan: |
+          mock_file_response.assert_called_once_with(Path("/fake/static/pages/admin-logs/admin-logs.html"))
+        lokasi: "fungsi test_serve_log_dashboard_returns_file_response, baris 42"
+    verifikasi:
+      - "python -m pytest tests/unit/server/handlers/test_log_dashboard.py -q"
+      - "hasil_diharapkan: semua test di file ini PASS (sebelumnya 1 FAILED: test_serve_log_dashboard_returns_file_response)"
+    patchlog_cmd: |
+      python automation/patchlog.py add \
+        --type Test --area Backend --priority Low \
+        --title "Perbaiki assertion stale test_serve_log_dashboard_returns_file_response" \
+        --reason "Test masih assert path lama static/admin-logs.html, padahal server/handlers/log_dashboard.py sudah serve dari pages/admin-logs/admin-logs.html sejak sesi 6 RFC frontend_refactor" \
+        --files "tests/unit/server/handlers/test_log_dashboard.py" \
+        --root-cause "Test tidak di-update saat migrasi struktur pages/ dilakukan di sesi 6" \
+        --solution "Update assertion Path expected dari /fake/static/admin-logs.html ke /fake/static/pages/admin-logs/admin-logs.html, tanpa menyentuh kode produksi" \
+        --tests "pytest tests/unit/server/handlers/test_log_dashboard.py -> pass" \
+        --breaking No --risk Low --status Merged \
+        --related PATCH-2026-07-24-223
+    checkpoint_cmd: >
+      zip -rq checkpoints/lunawave-S1.3.zip . -x ".git/*" -x "*__pycache__*"
+      -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+      -x "*.DS_Store" -x "checkpoints/*"
+
+patchlog_group: null  # 3 task ini masing-masing punya entry PATCHLOG sendiri (bukan digabung), karena tiap task independen dan bisa selesai/gagal terpisah
+
+verifikasi_sesi_selesai:
+  - "python automation/verify_security.py --json -> PASS"
+  - "python -m pytest tests/unit/server/handlers/test_http.py tests/unit/server/handlers/test_log_dashboard.py -q -> semua pass"
+  - "3 entry baru muncul di docs/PATCHLOG.md (cek dengan: python automation/patchlog.py latest --n 3 --json)"

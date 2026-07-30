@@ -1,0 +1,149 @@
+# 01_fase1_discover_repo_extract.yaml
+# Fase 1 -- Temuan K. Risiko rendah, independen total dari fase lain.
+# Estimasi: ~20 menit. Signature publik search_tracks() TIDAK berubah --
+# non-breaking murni, extract-only.
+
+fase: 1
+temuan: K
+parallel_ok: true
+risk: low
+depends_on: []
+
+konteks_terverifikasi:
+  file: "persistence/discover_repo.py"
+  baris_total: 446
+  method_sasaran: "DiscoverRepository.search_tracks() -- baris 233-384 (140 baris di dalam class 446 baris)"
+  caller_eksternal: "server/handlers/ws_discovery.py (satu-satunya caller non-test) -- signature (query, kategori, decade, limit) -> list[dict] TIDAK berubah, jadi caller ini TIDAK perlu disentuh."
+  test_ada: "tests/unit/persistence/test_discover_repo_search.py (baseline dijalankan saat penyusunan RFC ini: PASS, tidak ada test lain yang perlu diubah)"
+
+tasks:
+  - id: K.1
+    title: "Extract _fetch_tracks() nested function -> method privat _search_tracks_only()"
+    files:
+      - path: "persistence/discover_repo.py"
+        action: edit
+        deskripsi: >
+          Pindahkan isi nested async function `_fetch_tracks()` (baris
+          322-324 di dalam search_tracks) jadi method privat baru
+          `_search_tracks_only()` pada class DiscoverRepository. Method
+          baru menerima parameter yang saat ini di-closure
+          (sql_tracks, track_params_full) sebagai argumen eksplisit,
+          BUKAN lewat closure lagi -- supaya method ini bisa di-unit-test
+          berdiri sendiri (mock query lebih sempit, sesuai manfaat yang
+          disebut proposal §4.K).
+        cari_persis: |
+          async def _fetch_tracks():
+                  async with self._conn.execute(sql_tracks, track_params_full) as cursor:
+                      return [dict(r) for r in await cursor.fetchall()]
+        ganti_dengan: |
+          async def _search_tracks_only(self, sql_tracks: str, params: list) -> list[dict]:
+              """Isi lama nested function `_fetch_tracks()` di
+              `search_tracks()` -- diekstrak jadi method privat biasa
+              (Temuan K, proposal_god_file_splitting.md §4.K) supaya
+              bisa di-unit-test terpisah dari `_search_songs_only`.
+              """
+              async with self._conn.execute(sql_tracks, params) as cursor:
+                  return [dict(r) for r in await cursor.fetchall()]
+        catatan: >
+          Baris pemanggilan di dalam search_tracks() (`track_rows, song_rows
+          = await asyncio.gather(_fetch_tracks(), _fetch_songs())`) diubah
+          di task K.3 setelah kedua method privat baru ada -- jangan ubah
+          baris pemanggilan di task ini dulu supaya tiap task tetap
+          independen dan bisa diverifikasi satu-satu.
+
+  - id: K.2
+    title: "Extract _fetch_songs() nested function -> method privat _search_songs_only()"
+    files:
+      - path: "persistence/discover_repo.py"
+        action: edit
+        cari_persis: |
+          async def _fetch_songs():
+                  async with self._conn.execute(sql_songs, song_params_full) as cursor:
+                      return [dict(r) for r in await cursor.fetchall()]
+        ganti_dengan: |
+          async def _search_songs_only(self, sql_songs: str, params: list) -> list[dict]:
+              """Isi lama nested function `_fetch_songs()` -- lihat
+              `_search_tracks_only` untuk rationale yang sama."""
+              async with self._conn.execute(sql_songs, params) as cursor:
+                  return [dict(r) for r in await cursor.fetchall()]
+
+  - id: K.3
+    title: "Extract _sort_key nested function -> staticmethod _search_sort_key(), dan sambungkan 3 method baru di search_tracks()"
+    files:
+      - path: "persistence/discover_repo.py"
+        action: edit
+        cari_persis: |
+                    track_rows, song_rows = await asyncio.gather(_fetch_tracks(), _fetch_songs())
+        ganti_dengan: |
+                    track_rows, song_rows = await asyncio.gather(
+                        self._search_tracks_only(sql_tracks, track_params_full),
+                        self._search_songs_only(sql_songs, song_params_full),
+                    )
+      - path: "persistence/discover_repo.py"
+        action: edit
+        cari_persis: |
+          def _sort_key(row: dict):
+                  title_l = (row["title"] or "").lower()
+                  artist_l = (row["artist"] or "").lower()
+                  is_phrase_match = full_phrase in title_l or full_phrase in artist_l
+                  return (0 if is_phrase_match else 1, row["rank"])
+
+              rows = sorted(merged.values(), key=_sort_key)
+        ganti_dengan: |
+          rows = sorted(merged.values(), key=lambda row: self._search_sort_key(row, full_phrase))
+        catatan_penting: >
+          `_sort_key` lama pakai closure atas `full_phrase` (variabel lokal
+          search_tracks). Karena diusulkan jadi @staticmethod (proposal
+          §4.K, supaya tidak butuh `self` state), `full_phrase` HARUS
+          dilewatkan sebagai parameter eksplisit -- makanya dipanggil
+          lewat lambda di `sorted(..., key=lambda row: ...)`, bukan
+          `key=self._search_sort_key` langsung (staticmethod 2-parameter
+          tidak cocok signature `key=` yang cuma terima 1 arg per elemen).
+      - path: "persistence/discover_repo.py"
+        action: edit
+        deskripsi: "Tambahkan staticmethod _search_sort_key setelah search_tracks(), sebelum get_artist_detail()"
+        cari_persis: |
+          async def get_artist_detail(self, nama: str) -> dict | None:
+        ganti_dengan: |
+          @staticmethod
+          def _search_sort_key(row: dict, full_phrase: str):
+              """Isi lama nested function `_sort_key()` di dalam
+              `search_tracks()` -- diekstrak jadi staticmethod (Temuan K).
+              `full_phrase` dulu diambil dari closure, sekarang parameter
+              eksplisit."""
+              title_l = (row["title"] or "").lower()
+              artist_l = (row["artist"] or "").lower()
+              is_phrase_match = full_phrase in title_l or full_phrase in artist_l
+              return (0 if is_phrase_match else 1, row["rank"])
+
+          async def get_artist_detail(self, nama: str) -> dict | None:
+
+    verifikasi:
+      - "python -m pytest tests/unit/persistence/test_discover_repo_search.py tests/unit/persistence/test_discover_repo.py -q"
+      - "hasil_diharapkan: semua test PASS, sama seperti baseline sebelum perubahan (31 passed, tidak ada test baru wajib ditambah di task ini -- opsional kalau mau langsung unit-test _search_tracks_only/_search_songs_only terpisah, TAPI tidak wajib untuk non-breaking-ness)."
+      - "python -m pytest tests/unit/server/handlers/test_ws_discovery.py -q"
+      - "hasil_diharapkan: PASS -- caller ws_discovery.py tidak disentuh, harus tetap hijau tanpa perubahan apapun di file itu."
+      - "python -m pytest tests/unit/persistence -q  # tidak ada automation/verify_architecture.py di repo ini (dicek: automation/ cuma punya verify_docs.py, verify_security.py, verify_structure.py) -- kalau lint-imports (.importlinter) tersedia di environment eksekusi, jalankan juga: lint-imports"
+    patchlog_cmd: |
+      python automation/patchlog.py add \
+        --type Refactor --area Backend --priority Low \
+        --title "Extract DiscoverRepository.search_tracks() jadi 3 unit lebih kecil" \
+        --reason "search_tracks() 140 dari 446 baris file berisi 2 nested async function (_fetch_tracks, _fetch_songs) dan 1 nested _sort_key -- pola method-di-dalam-method adalah sinyal method itu sudah pantas jadi unit terpisah (proposal_god_file_splitting.md Temuan K)" \
+        --files "persistence/discover_repo.py" \
+        --symbols "_search_tracks_only(),_search_songs_only(),_search_sort_key()" \
+        --root-cause "1 method menangani 2 search-path (tracks vs songs) sekaligus sorting gabungannya dalam 1 scope" \
+        --solution "Extract 2 nested function jadi method privat (_search_tracks_only, _search_songs_only) dan 1 nested function jadi staticmethod (_search_sort_key), signature publik search_tracks() tidak berubah" \
+        --tests "pytest tests/unit/persistence/test_discover_repo_search.py tests/unit/persistence/test_discover_repo.py -> 31 passed; pytest tests/unit/server/handlers/test_ws_discovery.py -> pass (caller tidak disentuh)" \
+        --breaking No --risk Low --status Merged \
+        --related PATCH-2026-07-26-240
+    checkpoint_cmd: >
+      zip -rq checkpoints/lunawave-K.zip . -x ".git/*" -x "*__pycache__*"
+      -x "*.pyc" -x ".pytest_cache/*" -x ".venv/*" -x "node_modules/*"
+      -x "*.DS_Store" -x "checkpoints/*"
+
+patchlog_group: "K.1-K.3 satu entry gabungan setelah K.3 selesai -- ketiga task cuma valid dieksekusi bersama (K.1/K.2 membuat method baru yang belum dipakai, K.3 menyambungkannya; search_tracks() tidak konsisten kalau berhenti di tengah)."
+
+verifikasi_fase_selesai:
+  - "python -m pytest tests/unit/persistence -q -> semua pass"
+  - "1 entry baru muncul di docs/PATCHLOG.md (python automation/patchlog.py latest --n 1 --json)"
+  - "grep -n 'def search_tracks' persistence/discover_repo.py -> signature identik dengan sebelum perubahan (query, kategori=None, decade=None, limit=20)"
